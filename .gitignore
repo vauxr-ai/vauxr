@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.env
+certs/
+.vscode/settings.json
+data/

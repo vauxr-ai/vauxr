@@ -1,0 +1,60 @@
+services:
+
+  vauxr:
+    build: .
+    image: vauxr:latest
+    container_name: vauxr
+    restart: unless-stopped
+    depends_on:
+      whisper:
+        condition: service_healthy
+      piper:
+        condition: service_healthy
+    environment:
+      WHISPER_URL: tcp://whisper:10300
+      PIPER_URL: tcp://piper:10200
+      OPENCLAW_URL: ${OPENCLAW_URL}
+      OPENCLAW_TOKEN: ${OPENCLAW_TOKEN:-}
+      DEVICE_TOKEN: ${DEVICE_TOKEN}
+      PIPER_VOICE: en_US-libritts_r-medium
+      DATA_DIR: /data
+      NODE_EXTRA_CA_CERTS: /certs/caddy-local-ca.crt
+    volumes:
+      - vauxr-data:/data
+      - ./certs/caddy-local-ca.crt:/certs/caddy-local-ca.crt:ro
+    ports:
+      - "8765:8765"
+      - "8080:8080"
+  
+  whisper:
+    image: rhasspy/wyoming-whisper
+    container_name: whisper
+    restart: unless-stopped
+    command: --model small-int8 --language en --uri tcp://0.0.0.0:10300
+    volumes:
+      - whisper-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.create_connection(('localhost',10300),1); s.close()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 300s
+
+  piper:
+    image: rhasspy/wyoming-piper
+    container_name: piper
+    restart: unless-stopped
+    command: --voice en_US-libritts_r-medium --uri tcp://0.0.0.0:10200
+    volumes:
+      - piper-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.create_connection(('localhost',10200),1); s.close()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 300s
+
+volumes:
+  whisper-data:
+  piper-data:
+  vauxr-data:

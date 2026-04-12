@@ -1,0 +1,45 @@
+# Vauxr Roadmap
+
+---
+
+## Planned
+
+Features grouped by theme. No ordering assigned.
+
+### Conversation Quality
+- **Follow-up mode** — server sends `follow_up` flag; device stays in listening state automatically after a response
+- **Interruption** — wake word fires during playback to abort and start a new turn; full-duplex + AEC via ESP-SR AFE (ESP32-S3 supports simultaneous I2S TX/RX, AEC built into the same AFE framework as VAD)
+
+### Device Setup
+- **Device pairing web UI** — browser-based UI for adding and naming devices
+
+### Device Context & Voice Formatting
+- **Server-side device registry** (`devices.json` keyed by `device_id`, fields: `name`, `voice: bool`)
+- **Session preamble injection** — on first turn of each session, server prepends hidden context to `chat.send` with device name and voice formatting rules (no emojis, no markdown, concise spoken sentences)
+
+### Transcription Accuracy
+- **Conversation context for Whisper** — pass recent conversation history as an initial prompt to the Whisper API (`initial_prompt` field); primes the model with relevant vocabulary, proper nouns, and topic context from the current session, improving accuracy especially for domain-specific terms and follow-up questions
+
+### Audio Quality
+- **Sibilance / hiss on "s" sounds** — TTS output has white noise on sibilants (sounds like "sh"); needs investigation: Piper voice model selection, sample rate / bit depth in the audio pipeline, MP3 encoding settings
+
+### Multi-Device & Proximity Detection
+- **Wake word dedup** — when multiple devices hear the wake word simultaneously, server arbitrates: devices include a confidence score with the wake event, server holds a ~500ms dedup window, highest-confidence device wins (closest device naturally tends to win), losers receive a `cancel` frame to abort listening; prevents duplicate STT submissions and overlapping spoken responses
+
+### Server-Initiated Control *(architecture TBD — likely shared HTTP server)*
+- **Audio stream playback** — server sends a `device.play` control frame over WS containing a URL; device connects to the URL and streams + plays the audio as it downloads; enables music playback, internet radio, audio clips, or any audio source reachable by the device
+- **Stop playback** — server sends a `device.stop` control frame to interrupt any currently playing audio (TTS or stream)
+- **Push TTS / announce** — `POST /api/devices/{id}/announce` synthesizes text via Piper and streams as `0x03` push audio frames to device; enables cron jobs, heartbeats, and proactive agent alerts to speak through the device
+- **Device control from OpenClaw** — `POST /api/devices/{id}/command` sends a `device.control` JSON frame (e.g. `set_volume`, `mute`, `reboot`); enables voice commands like "set the volume to 10" to actually change device state
+- **Device queries / telemetry** — bidirectional: server can request data from the device and await a response (e.g. "what's your battery level?"); device responds with a `device.response` frame; server surfaces the answer back to OpenClaw
+
+### OpenClaw Channel Plugin (`vauxr-openclaw`)
+- Optional plugin for deeper OpenClaw integration
+- **Relay mode**: plugin opens outbound WS from local OpenClaw to Vauxr Cloud — no port forwarding needed, private local OpenClaw works with Vauxr Cloud
+- Device appears in OpenClaw `/status`, `/pair` command support
+
+### Security
+- **WSS (TLS) transport** — currently using plain `ws://`; production deployments should use `wss://`; needs TLS cert handling on the server side and `esp_tls` on the ESP32 (ESP-IDF has built-in support)
+- **Certificate validation** — device should verify server cert; for self-hosted setups, support custom CA bundle baked into firmware
+- **Token rotation** — per-device bearer tokens should be rotatable without re-pairing
+
