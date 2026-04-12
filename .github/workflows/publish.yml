@@ -23,22 +23,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TODAY=$(date -u +%Y.%m.%d)
-          EXISTING=$(gh api repos/${{ github.repository }}/git/matching-refs/tags/${TODAY}. \
-            --jq '.[].ref' 2>/dev/null || true)
+          TODAY=$(date -u +%-Y.%-m.%-d)
+          EXISTING=$(gh api repos/${{ github.repository }}/git/refs/tags \
+            --paginate --jq '.[].ref' 2>/dev/null \
+            | grep "^refs/tags/${TODAY}-" || true)
 
           if [ -z "$EXISTING" ]; then
             N=0
           else
             MAX=$(echo "$EXISTING" \
-              | sed 's|refs/tags/||' \
-              | awk -F. '{print $NF}' \
+              | sed "s|refs/tags/${TODAY}-||" \
               | sort -n \
               | tail -1)
             N=$((MAX + 1))
           fi
 
-          VERSION="${TODAY}.${N}"
+          VERSION="${TODAY}-${N}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Computed version: ${VERSION}"
 
