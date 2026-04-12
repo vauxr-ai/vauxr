@@ -1,0 +1,87 @@
+name: Publish Docker Image
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  # On push to main: compute version and create a draft release
+  draft-release:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute version tag
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TODAY=$(date -u +%Y.%m.%d)
+          EXISTING=$(gh api repos/${{ github.repository }}/git/matching-refs/tags/${TODAY}. \
+            --jq '.[].ref' 2>/dev/null || true)
+
+          if [ -z "$EXISTING" ]; then
+            N=0
+          else
+            MAX=$(echo "$EXISTING" \
+              | sed 's|refs/tags/||' \
+              | awk -F. '{print $NF}' \
+              | sort -n \
+              | tail -1)
+            N=$((MAX + 1))
+          fi
+
+          VERSION="${TODAY}.${N}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Computed version: ${VERSION}"
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "${{ steps.version.outputs.version }}" \
+            --draft \
+            --notes "## What's Changed\n\n<!-- Add release notes here before publishing -->"
+
+  # On release published: build and push to Docker Hub
+  publish:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Derive image name
+        id: image
+        run: |
+          REPO_NAME="${{ github.event.repository.name }}"
+          echo "name=vauxr/${REPO_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ github.event.release.tag_name }}
+            ${{ steps.image.outputs.name }}:latest
