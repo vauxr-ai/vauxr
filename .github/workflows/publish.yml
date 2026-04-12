@@ -3,9 +3,13 @@ name: Publish Docker Image
 on:
   push:
     branches: [main]
+  release:
+    types: [published]
 
 jobs:
-  publish:
+  # On push to main: compute version and create a draft release
+  draft-release:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -20,14 +24,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TODAY=$(date -u +%Y.%m.%d)
-          # List existing tags matching today's date prefix
           EXISTING=$(gh api repos/${{ github.repository }}/git/matching-refs/tags/${TODAY}. \
             --jq '.[].ref' 2>/dev/null || true)
 
           if [ -z "$EXISTING" ]; then
             N=0
           else
-            # Extract the trailing number from each tag and find the max
             MAX=$(echo "$EXISTING" \
               | sed 's|refs/tags/||' \
               | awk -F. '{print $NF}' \
@@ -39,6 +41,26 @@ jobs:
           VERSION="${TODAY}.${N}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Computed version: ${VERSION}"
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "${{ steps.version.outputs.version }}" \
+            --draft \
+            --notes "## What's Changed\n\n<!-- Add release notes here before publishing -->"
+
+  # On release published: build and push to Docker Hub
+  publish:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -61,12 +83,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ steps.image.outputs.name }}:${{ steps.version.outputs.version }}
+            ${{ steps.image.outputs.name }}:${{ github.event.release.tag_name }}
             ${{ steps.image.outputs.name }}:latest
-
-      - name: Create and push git tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.version }}"
