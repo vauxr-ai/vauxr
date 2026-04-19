@@ -36,12 +36,12 @@ Features grouped by theme. No ordering assigned.
 ### Server-Initiated Control *(architecture TBD — likely shared HTTP server)*
 - **Audio stream playback** — server sends a `device.play` control frame over WS containing a URL; device connects to the URL and streams + plays the audio as it downloads; enables music playback, internet radio, audio clips, or any audio source reachable by the device
 - **Stop playback** — server sends a `device.stop` control frame to interrupt any currently playing audio (TTS or stream)
-- **Push TTS / announce** — `POST /api/devices/{id}/announce` synthesizes text via Piper and streams as `0x03` push audio frames to device; enables cron jobs, heartbeats, and proactive agent alerts to speak through the device
-- **Device control from OpenClaw** — `POST /api/devices/{id}/command` sends a `device.control` JSON frame (e.g. `set_volume`, `mute`, `reboot`); enables voice commands like "set the volume to 10" to actually change device state
+- ~~**Push TTS / announce** — `POST /api/devices/{id}/announce` synthesizes text via Piper and streams as `0x03` push audio frames to device; enables cron jobs, heartbeats, and proactive agent alerts to speak through the device~~ ✅
+- ~~**Device control from OpenClaw** — `POST /api/devices/{id}/command` sends a `device.control` JSON frame (e.g. `set_volume`, `mute`, `reboot`); enables voice commands like "set the volume to 10" to actually change device state~~ ✅
 - **Device queries / telemetry** — bidirectional: server can request data from the device and await a response (e.g. "what's your battery level?"); device responds with a `device.response` frame; server surfaces the answer back to OpenClaw
 
 ### OpenClaw Channel Plugin (`vauxr-openclaw`)
-- Optional plugin for deeper OpenClaw integration
+- ~~Optional plugin for deeper OpenClaw integration~~ ✅
 - **Relay mode**: plugin opens outbound WS from local OpenClaw to Vauxr Cloud — no port forwarding needed, private local OpenClaw works with Vauxr Cloud
 - Device appears in OpenClaw `/status`, `/pair` command support
 
