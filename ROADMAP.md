@@ -22,7 +22,7 @@ Features grouped by theme. No ordering assigned.
 
 ### Device Context & Voice Formatting
 - **Server-side device registry** (`devices.json` keyed by `device_id`, fields: `name`, `voice: bool`)
-- **Session preamble injection** — on first turn of each session, server prepends hidden context to `chat.send` with device name and voice formatting rules (no emojis, no markdown, concise spoken sentences)
+- ~~**Session preamble injection** — on first turn of each session, server prepends hidden context to `chat.send` with device name and voice formatting rules (no emojis, no markdown, concise spoken sentences)~~ ✅ *(via `vauxr-openclaw` channel plugin's `voiceSystemPrompt`)*
 
 ### Transcription Accuracy
 - **Conversation context for Whisper** — pass recent conversation history as an initial prompt to the Whisper API (`initial_prompt` field); primes the model with relevant vocabulary, proper nouns, and topic context from the current session, improving accuracy especially for domain-specific terms and follow-up questions
@@ -42,7 +42,7 @@ Features grouped by theme. No ordering assigned.
 
 ### OpenClaw Channel Plugin (`vauxr-openclaw`)
 - ~~Optional plugin for deeper OpenClaw integration~~ ✅
-- **Relay mode**: plugin opens outbound WS from local OpenClaw to Vauxr Cloud — no port forwarding needed, private local OpenClaw works with Vauxr Cloud
+- ~~**Relay mode**: plugin opens outbound WS from local OpenClaw to Vauxr — no port forwarding needed~~ ✅
 - Device appears in OpenClaw `/status`, `/pair` command support
 
 ### Security
