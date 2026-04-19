@@ -1,24 +1,26 @@
 # Vauxr
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+![Open Protocol](https://img.shields.io/badge/protocol-Vauxr_1.0-8B5CF6?style=flat-square)
+![Docker Build](https://img.shields.io/github/actions/workflow/status/vauxr-ai/vauxr/publish.yml?branch=main&style=flat-square&label=docker%20build&color=8B5CF6)
+![Docker Pulls](https://img.shields.io/docker/pulls/vauxr/vauxr?style=flat-square&logo=docker&color=8B5CF6)
+![Latest Release](https://img.shields.io/github/v/release/vauxr-ai/vauxr?style=flat-square&include_prereleases&color=8B5CF6)
+![Last Commit](https://img.shields.io/github/last-commit/vauxr-ai/vauxr/develop?style=flat-square&color=8B5CF6)
 
-Self-hosted voice gateway for [Vauxr](https://vauxr.ai) — connects voice hardware to OpenClaw (or any LLM backend) with zero cloud dependency, zero port forwarding, and zero sidecar setup.
+**Vauxr is an open protocol for voice assistants** — a hardware-agnostic, ecosystem-agnostic standard for connecting microphones, speakers, and wake-word devices to any voice backend.
 
-## What it is
+Voice is becoming a natural interface for AI, but today it's locked in — Alexa only works with Amazon, Google Assistant only with Google, Home Assistant voice only with HA, and ESPHome devices only with HA. Vauxr is an open wire protocol any device and any agent provider can implement (think MQTT for messaging, or USB for peripherals): speak Vauxr on the device and on the server, swap STT, TTS, or agent providers freely, and nothing needs re-flashing or rewriting to move between them.
 
-A self-hosted Docker stack: voice gateway server + pluggable STT and TTS backends. One `docker compose up` and your voice device has a full AI voice assistant pipeline.
+## This repository
 
-The default stack ships with [Wyoming](https://github.com/rhasspy/wyoming)-compatible STT and TTS — no API keys, no cloud required. Wyoming is an open protocol for local AI voice services; drop in any compatible provider as your needs change.
+This repo is the **reference server implementation** — a self-hosted Docker stack that speaks the Vauxr protocol and ships with [Wyoming](https://github.com/rhasspy/wyoming)-compatible Whisper (STT) and Piper (TTS) out of the box. Use it as-is, or as a blueprint for your own implementation.
 
 ## How it works
 
 ```
-Device (mic) → vauxr → Whisper (STT) → OpenClaw (LLM) → Piper (TTS) → Device (speaker)
+Device (mic) → vauxr → Whisper (STT) → LLM backend → Piper (TTS) → Device (speaker)
 ```
 
-Any device that speaks the Vauxr WS protocol can connect.
-
-The HTTP API (`/api/devices`) lets your OpenClaw agent push announcements to devices and send control commands without a voice turn.
+Any device that speaks the Vauxr WS protocol can connect. The HTTP API (`/api/devices`) lets your backend push announcements to devices and send control commands without a voice turn.
 
 ## Quick Start
 
@@ -30,11 +32,9 @@ cd vauxr
 cp .env.example .env
 ```
 
-2. Edit `.env` with your values:
+2. Edit `.env` — only one value required:
 
 ```env
-OPENCLAW_URL=wss://your-openclaw:18789
-OPENCLAW_TOKEN=your-token
 DEVICE_TOKEN=your-device-shared-secret
 ```
 
@@ -45,6 +45,20 @@ docker compose up -d
 ```
 
 Devices connect to `ws://your-server-ip:8765`. HTTP API at `http://your-server-ip:8080`.
+
+## Connecting to OpenClaw
+
+The recommended path is the [vauxr-openclaw](https://github.com/vauxr-ai/vauxr-openclaw) channel plugin, installed from [ClaWHub](https://clawhub.ai):
+
+```bash
+openclaw plugins install clawhub:@vauxr/openclaw
+```
+
+The plugin wires OpenClaw to your Vauxr server and exposes device announcements and controls as agent tools. See the [vauxr-openclaw README](https://github.com/vauxr-ai/vauxr-openclaw) for configuration.
+
+## Connecting to other backends
+
+Vauxr is backend-agnostic. If you're not using OpenClaw, connect your own LLM or agent service to the Vauxr WS protocol — see [ARCHITECTURE.md](./ARCHITECTURE.md) for the protocol spec.
 
 ## HTTP API
 
@@ -60,15 +74,15 @@ A Postman collection is included at `postman/vauxr.postman_collection.json`.
 
 ## Architecture
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design, protocol spec, and roadmap.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design and protocol spec, and [ROADMAP.md](./ROADMAP.md) for what's planned.
 
 ## Related
 
-- [vauxr-openclaw](https://github.com/vauxr-ai/vauxr-openclaw) — OpenClaw plugin: exposes the HTTP API as agent tools so your OpenClaw agent can announce and control devices automatically
-- [vauxr-assistant](https://github.com/lillianama/vauxr-assistant) — Reference firmware for ESP32-S3 voice devices
-- [vauxr.ai](https://vauxr.ai) — Hosted cloud version (coming soon)
+- [vauxr-openclaw](https://github.com/vauxr-ai/vauxr-openclaw) — OpenClaw channel plugin: exposes the HTTP API as agent tools so your OpenClaw agent can announce and control devices automatically
 
 ## License
+
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-8B5CF6?style=flat-square)](https://www.gnu.org/licenses/agpl-3.0)
 
 Copyright © 2026 Lillian Mikus
 
