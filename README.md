@@ -20,8 +20,8 @@ Every new LLM, agent platform, or creative application has to reinvent the voice
 Vauxr is an open wire protocol any device and any backend can implement — like MQTT for messaging, or USB for peripherals. Speak Vauxr on the device, speak Vauxr on the server, and the pieces compose freely.
 
 - Any hardware (ESPHome, custom firmware, desktop app) can be a Vauxr device
-- Any backend (OpenClaw, custom LLM stack, home automation) can be a Vauxr server
-- Swap STT, TTS, or LLM providers without re-flashing devices or rewriting integrations
+- Any agent provider (OpenClaw, custom LLM stack, home automation) can sit behind a Vauxr server
+- Swap STT, TTS, or agent providers without re-flashing devices or rewriting integrations
 
 ## This repository
 
