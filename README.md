@@ -92,7 +92,6 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design and protocol
 ## Related
 
 - [vauxr-openclaw](https://github.com/vauxr-ai/vauxr-openclaw) — OpenClaw channel plugin: exposes the HTTP API as agent tools so your OpenClaw agent can announce and control devices automatically
-- [vauxr.ai](https://vauxr.ai) — Hosted cloud version (coming soon)
 
 ## License
 
