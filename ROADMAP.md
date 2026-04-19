@@ -10,8 +10,15 @@ Features grouped by theme. No ordering assigned.
 - **Follow-up mode** — server sends `follow_up` flag; device stays in listening state automatically after a response
 - **Interruption** — wake word fires during playback to abort and start a new turn; full-duplex + AEC via ESP-SR AFE (ESP32-S3 supports simultaneous I2S TX/RX, AEC built into the same AFE framework as VAD)
 
-### Device Setup
-- **Device pairing web UI** — browser-based UI for adding and naming devices
+### Device Management
+- **Device management REST API** — `/api/devices` endpoints for creating, listing, renaming, and revoking devices; each device gets its own unique token at registration. Replaces the single shared `DEVICE_TOKEN` `.env` bootstrap with proper per-device identity, auditability, and rotation.
+- **Device management web UI** — section in the existing web-client for adding, naming, and revoking devices via the browser; shows connection state, last-seen time, and per-device token management. Pairs with the REST API above and replaces the earlier "device pairing web UI" idea with a full device lifecycle surface.
+
+### Home Assistant Integration
+- **Vauxr STT/TTS providers for HA** — HA sees stable "Vauxr STT" and "Vauxr TTS" entities that speak the Vauxr WS protocol under the hood. HA users can route their voice pipeline through Vauxr without ever exposing Whisper/Piper TCP ports directly. Whisper/Piper TCP endpoints are internal to the Vauxr stack — HA integration goes through the Vauxr protocol, not around it. Lets HA users benefit from Vauxr's backend flexibility while keeping HA's conversation agent and intent system for automations.
+
+### Provider Abstraction
+- **STTProvider / TTSProvider extension system** — pluggable provider interface so Whisper and Piper become one option among many. Swap in Deepgram, ElevenLabs, Groq Whisper, Coqui, or any other STT/TTS backend without touching device firmware or the WS protocol. Keeps the device-facing protocol stable while the backend evolves.
 
 ### Device Context & Voice Formatting
 - **Server-side device registry** (`devices.json` keyed by `device_id`, fields: `name`, `voice: bool`)
