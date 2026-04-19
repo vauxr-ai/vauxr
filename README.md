@@ -8,7 +8,7 @@
 
 **Vauxr is an open protocol for voice assistants** — a hardware-agnostic, ecosystem-agnostic standard for connecting microphones, speakers, and wake-word devices to any voice backend.
 
-Voice is becoming a natural interface for AI, but today it's locked in — Alexa only works with Amazon, Google Assistant only with Google, Home Assistant voice only with HA, and ESPHome devices only with HA. Every new LLM or agent platform has to reinvent the voice stack from scratch, or give up and plug into someone else's walled garden. Vauxr is an open wire protocol any device and any agent provider can implement (think MQTT for messaging, or USB for peripherals): speak Vauxr on the device and on the server, swap STT, TTS, or agent providers freely, and nothing needs re-flashing or rewriting to move between them.
+Voice is becoming a natural interface for AI, but today it's locked in — Alexa only works with Amazon, Google Assistant only with Google, Home Assistant voice only with HA, and ESPHome devices only with HA. Vauxr is an open wire protocol any device and any agent provider can implement (think MQTT for messaging, or USB for peripherals): speak Vauxr on the device and on the server, swap STT, TTS, or agent providers freely, and nothing needs re-flashing or rewriting to move between them.
 
 ## This repository
 
