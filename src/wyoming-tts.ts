@@ -25,23 +25,56 @@ function encodeEvent(event: WyomingEvent): Buffer {
 }
 
 /**
- * Resample a 16-bit signed LE PCM buffer using linear interpolation.
- * Returns the input unchanged when fromRate === toRate.
+ * Stateful resampler: low-pass biquad filter + linear interpolation.
+ * The filter removes frequencies above the target Nyquist before
+ * downsampling to prevent aliasing (the "hissy" sibilant distortion).
+ * State is carried across chunks so the filter rings smoothly.
  */
-function resamplePcm(buf: Buffer, fromRate: number, toRate: number): Buffer {
-  if (fromRate === toRate) return buf;
-  const srcSamples = buf.length >> 1;
-  const dstSamples = Math.round(srcSamples * toRate / fromRate);
-  const out = Buffer.alloc(dstSamples * 2);
-  for (let i = 0; i < dstSamples; i++) {
-    const pos = i * fromRate / toRate;
-    const idx = Math.floor(pos);
-    const frac = pos - idx;
-    const s0 = buf.readInt16LE(idx * 2);
-    const s1 = idx + 1 < srcSamples ? buf.readInt16LE((idx + 1) * 2) : s0;
-    out.writeInt16LE(Math.round(s0 * (1 - frac) + s1 * frac), i * 2);
-  }
-  return out;
+function createResampler(fromRate: number, toRate: number) {
+  // Biquad low-pass filter coefficients (2nd-order Butterworth)
+  // Cutoff at 0.9 * targetNyquist to leave a gentle rolloff margin
+  const cutoff = (toRate / 2) * 0.9;
+  const w0 = (2 * Math.PI * cutoff) / fromRate;
+  const sinW0 = Math.sin(w0);
+  const cosW0 = Math.cos(w0);
+  const alpha = sinW0 / Math.SQRT2; // Q = 1/sqrt(2) for Butterworth
+  const a0 = 1 + alpha;
+  const b0 = ((1 - cosW0) / 2) / a0;
+  const b1 = (1 - cosW0) / a0;
+  const b2 = b0;
+  const a1 = (-2 * cosW0) / a0;
+  const a2 = (1 - alpha) / a0;
+
+  // Filter delay registers (persist across chunks)
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+
+  return function resample(buf: Buffer): Buffer {
+    const srcSamples = buf.length >> 1;
+
+    // Apply biquad low-pass in-place (working in float)
+    const filtered = new Float64Array(srcSamples);
+    for (let i = 0; i < srcSamples; i++) {
+      const x0 = buf.readInt16LE(i * 2);
+      const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+      x2 = x1; x1 = x0;
+      y2 = y1; y1 = y0;
+      filtered[i] = y0;
+    }
+
+    // Linear interpolation downsample
+    const dstSamples = Math.round(srcSamples * toRate / fromRate);
+    const out = Buffer.alloc(dstSamples * 2);
+    for (let i = 0; i < dstSamples; i++) {
+      const pos = i * fromRate / toRate;
+      const idx = Math.floor(pos);
+      const frac = pos - idx;
+      const s0 = filtered[idx];
+      const s1 = idx + 1 < srcSamples ? filtered[idx + 1] : s0;
+      const val = Math.round(s0 * (1 - frac) + s1 * frac);
+      out.writeInt16LE(Math.max(-32768, Math.min(32767, val)), i * 2);
+    }
+    return out;
+  };
 }
 
 export interface SynthesizeOptions {
@@ -63,6 +96,7 @@ export async function* synthesize(text: string, opts?: SynthesizeOptions): Async
   let error: Error | null = null;
   let resolveWait: (() => void) | null = null;
   let piperRate = 0; // detected from audio-start event
+  let resample: ((buf: Buffer) => Buffer) | null = null;
 
   function notifyWait() {
     if (resolveWait) {
@@ -133,7 +167,8 @@ export async function* synthesize(text: string, opts?: SynthesizeOptions): Async
           opts!.onSampleRate = undefined;
         }
         if (targetRate && piperRate && piperRate !== targetRate) {
-          yield resamplePcm(chunk, piperRate, targetRate);
+          if (!resample) resample = createResampler(piperRate, targetRate);
+          yield resample(chunk);
         } else {
           yield chunk;
         }
