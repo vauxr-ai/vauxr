@@ -3,8 +3,11 @@ import { transcribe } from "./wyoming-stt.js";
 import { synthesize } from "./wyoming-tts.js";
 import { OpenClawClient } from "./openclaw-client.js";
 import { ChannelServer } from "./channel-server.js";
-import { nextSeq } from "./device-registry.js";
+import { nextSeq, getConfigFor } from "./device-registry.js";
+import type { FollowUpMode } from "./device-config.js";
 import { makeBinaryFrame } from "./utils.js";
+
+const FOLLOW_UP_TAG = "[[follow_up]]";
 
 function sendJSON(ws: WebSocket, obj: Record<string, unknown>): void {
   if (ws.readyState === ws.OPEN) {
@@ -12,11 +15,46 @@ function sendJSON(ws: WebSocket, obj: Record<string, unknown>): void {
   }
 }
 
+function sendAudioEnd(ws: WebSocket, followUp: boolean): void {
+  sendJSON(ws, { type: "audio.end", follow_up: followUp });
+}
+
 function sendBinary(ws: WebSocket, deviceId: string, type: number, payload: Buffer): void {
   if (ws.readyState === ws.OPEN) {
     const seq = nextSeq(deviceId);
     ws.send(makeBinaryFrame(type, seq, payload));
   }
+}
+
+interface FollowUpResult {
+  followUp: boolean;
+  replyText: string;
+}
+
+export function resolveFollowUp(fullReply: string, mode: FollowUpMode): FollowUpResult {
+  const trimmed = fullReply.trim();
+
+  if (mode === "always") {
+    return { followUp: true, replyText: stripFollowUpTag(trimmed) };
+  }
+  if (mode === "never") {
+    return { followUp: false, replyText: stripFollowUpTag(trimmed) };
+  }
+
+  // "auto"
+  if (trimmed.includes(FOLLOW_UP_TAG)) {
+    return { followUp: true, replyText: stripFollowUpTag(trimmed) };
+  }
+  const trimmedEnd = trimmed.trimEnd();
+  if (trimmedEnd.endsWith("?") || trimmedEnd.endsWith("？")) {
+    return { followUp: true, replyText: trimmed };
+  }
+  return { followUp: false, replyText: trimmed };
+}
+
+function stripFollowUpTag(text: string): string {
+  // Remove the tag plus any surrounding whitespace, then trim ends.
+  return text.replace(/\s*\[\[follow_up\]\]\s*/g, " ").trim();
 }
 
 async function synthesizeAndSend(ws: WebSocket, deviceId: string, text: string, signal: AbortSignal): Promise<void> {
@@ -44,6 +82,10 @@ async function synthesizeError(ws: WebSocket, deviceId: string, signal: AbortSig
   }
 }
 
+function getFollowUpMode(deviceId: string): FollowUpMode {
+  return getConfigFor(deviceId).follow_up_mode ?? "auto";
+}
+
 async function routeViaOpenClawDirect(
   deviceId: string,
   transcript: string,
@@ -61,16 +103,16 @@ async function routeViaOpenClawDirect(
   } catch (err) {
     sendJSON(ws, { type: "error", code: "BACKEND_ERROR", message: (err as Error).message });
     await synthesizeError(ws, deviceId, signal);
-    if (!signal.aborted) sendJSON(ws, { type: "audio.end" });
+    if (!signal.aborted) sendAudioEnd(ws, false);
     return;
   }
 
   if (signal.aborted) return;
 
-  const replyText = fullReply.trim();
-  console.log(`[pipeline] LLM reply (${replyText.length} chars): ${replyText.substring(0, 200)}`);
+  const { followUp, replyText } = resolveFollowUp(fullReply, getFollowUpMode(deviceId));
+  console.log(`[pipeline] LLM reply (${replyText.length} chars, follow_up=${followUp}): ${replyText.substring(0, 200)}`);
   await synthesizeAndSend(ws, deviceId, replyText, signal);
-  if (!signal.aborted) sendJSON(ws, { type: "audio.end" });
+  if (!signal.aborted) sendAudioEnd(ws, followUp);
 }
 
 const CHANNEL_RESPONSE_TIMEOUT_MS = 60_000;
@@ -85,7 +127,7 @@ async function routeViaChannel(
   const sent = channelServer.sendTranscript(deviceId, transcript);
   if (!sent) {
     sendJSON(ws, { type: "error", code: "NO_CHANNEL", message: "Active channel not connected" });
-    if (!signal.aborted) sendJSON(ws, { type: "audio.end" });
+    if (!signal.aborted) sendAudioEnd(ws, false);
     return;
   }
   console.log(`[pipeline] Awaiting channel response for ${deviceId}`);
@@ -139,16 +181,16 @@ async function routeViaChannel(
     if (signal.aborted) return;
     sendJSON(ws, { type: "error", code: "BACKEND_ERROR", message: (err as Error).message });
     await synthesizeError(ws, deviceId, signal);
-    if (!signal.aborted) sendJSON(ws, { type: "audio.end" });
+    if (!signal.aborted) sendAudioEnd(ws, false);
     return;
   }
 
   if (signal.aborted) return;
 
-  const replyText = fullReply.trim();
-  console.log(`[pipeline] Channel reply (${replyText.length} chars): ${replyText.substring(0, 200)}`);
+  const { followUp, replyText } = resolveFollowUp(fullReply, getFollowUpMode(deviceId));
+  console.log(`[pipeline] Channel reply (${replyText.length} chars, follow_up=${followUp}): ${replyText.substring(0, 200)}`);
   await synthesizeAndSend(ws, deviceId, replyText, signal);
-  if (!signal.aborted) sendJSON(ws, { type: "audio.end" });
+  if (!signal.aborted) sendAudioEnd(ws, followUp);
 }
 
 export async function runVoiceTurn(
@@ -175,7 +217,7 @@ export async function runVoiceTurn(
 
   if (!transcript || transcript.trim().length === 0) {
     console.log(`[pipeline] Empty transcript for ${deviceId} — ending turn`);
-    sendJSON(ws, { type: "audio.end" });
+    sendAudioEnd(ws, false);
     return;
   }
 
@@ -198,6 +240,6 @@ export async function runVoiceTurn(
   } else {
     console.warn("[pipeline] No active channel or backend available — dropping turn");
     sendJSON(ws, { type: "error", code: "NO_CHANNEL", message: "No active channel configured" });
-    sendJSON(ws, { type: "audio.end" });
+    sendAudioEnd(ws, false);
   }
 }

@@ -21,6 +21,9 @@ vi.mock("../src/device-registry.js", () => ({
   register: vi.fn(),
   unregister: vi.fn(),
   abortActiveTurn: vi.fn(),
+  loadConfigs: vi.fn(),
+  getConfigFor: vi.fn(() => ({})),
+  updateConfig: vi.fn((_id: string, patch: Record<string, unknown>) => ({ ...patch })),
 }));
 
 // Mock channel-registry
@@ -69,6 +72,7 @@ function makeDevice(overrides: Partial<DeviceEntry> = {}): DeviceEntry {
     lastSeen: new Date("2026-04-06T20:00:00.000Z"),
     seq: 0,
     abortController: null,
+    config: {},
     ...overrides,
   };
 }
@@ -156,6 +160,7 @@ describe("GET /api/devices", () => {
       name: "Living Room",
       state: "idle",
       lastSeen: "2026-04-06T20:00:00.000Z",
+      config: {},
     });
   });
 

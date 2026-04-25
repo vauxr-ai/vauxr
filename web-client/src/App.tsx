@@ -5,12 +5,14 @@ import TalkButton from "./components/TalkButton";
 import EventLog from "./components/EventLog";
 import HttpApiPanel from "./components/HttpApiPanel";
 import ChannelsPanel from "./components/ChannelsPanel";
+import DevicesPanel from "./components/DevicesPanel";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAudio } from "./hooks/useAudio";
 
 export default function App() {
   const [transcript, setTranscript] = useState("");
   const [talking, setTalking] = useState(false);
+  const [followUpListening, setFollowUpListening] = useState(false);
   const talkingRef = useRef(false);
   const [wsUrl, setWsUrl] = useState("");
   const [wsToken, setWsToken] = useState("");
@@ -23,8 +25,9 @@ export default function App() {
         ws.setState("speaking");
         audio.queuePlayback(pcm);
       },
-      onAudioEnd: () => {
+      onAudioEnd: (followUp: boolean) => {
         audio.resetPlayback();
+        setFollowUpListening(followUp);
       },
       onError: (_code: string, _message: string) => {},
     }),
@@ -47,8 +50,9 @@ export default function App() {
     ws.setState("speaking");
     audio.queuePlayback(pcm);
   };
-  wsOpts.onAudioEnd = () => {
+  wsOpts.onAudioEnd = (followUp: boolean) => {
     audio.resetPlayback();
+    setFollowUpListening(followUp);
   };
 
   const handleConnect = useCallback(
@@ -63,6 +67,7 @@ export default function App() {
   const handleTalkStart = useCallback(async () => {
     talkingRef.current = true;
     setTalking(true);
+    setFollowUpListening(false);
     ws.sendVoiceStart();
     ws.setState("listening");
     try {
@@ -94,7 +99,7 @@ export default function App() {
     !window.isSecureContext || !navigator.mediaDevices?.getUserMedia;
 
   return (
-    <div className="flex h-screen flex-col gap-4 p-6 max-w-2xl mx-auto">
+    <div className="flex h-screen flex-col gap-4 p-6 max-w-4xl mx-auto">
       <h1 className="text-lg font-bold tracking-tight">
         Vauxr Portal
       </h1>
@@ -126,6 +131,9 @@ export default function App() {
             ws.state === "processing"
           }
           active={talking}
+          processing={ws.state === "processing"}
+          speaking={ws.state === "speaking"}
+          followUp={followUpListening && !talking && ws.state !== "processing" && ws.state !== "speaking"}
           onTalkStart={handleTalkStart}
           onTalkEnd={handleTalkEnd}
         />
@@ -136,6 +144,13 @@ export default function App() {
       </p>
 
       <ChannelsPanel
+        wsUrl={wsUrl}
+        token={wsToken}
+        wsState={ws.state}
+        addLog={ws.addLog}
+      />
+
+      <DevicesPanel
         wsUrl={wsUrl}
         token={wsToken}
         wsState={ws.state}
