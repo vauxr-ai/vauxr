@@ -21,7 +21,7 @@ export default function EventLog({ entries }: { entries: LogEntry[] }) {
   }, [entries.length]);
 
   return (
-    <div className="flex-1 overflow-y-auto rounded bg-gray-900 p-3 font-mono text-xs leading-5 min-h-0">
+    <div className="flex-1 overflow-y-auto rounded bg-gray-900 p-3 font-mono text-xs leading-5 min-h-48">
       {entries.map((e, i) => (
         <div key={i} className="whitespace-pre-wrap break-all">
           <span className="text-gray-600">

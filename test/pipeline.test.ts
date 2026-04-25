@@ -31,16 +31,32 @@ vi.mock("../src/channel-registry.js", () => ({
   validateChannelToken: vi.fn(),
 }));
 
-import { runVoiceTurn } from "../src/pipeline.js";
+// Mock device-registry to control per-device config used by pipeline
+vi.mock("../src/device-registry.js", () => ({
+  nextSeq: vi.fn(() => 0),
+  getConfigFor: vi.fn(() => ({})),
+  register: vi.fn(),
+  unregister: vi.fn(),
+  get: vi.fn(),
+  getAll: vi.fn(() => []),
+  setState: vi.fn(),
+  abortActiveTurn: vi.fn(),
+  loadConfigs: vi.fn(),
+  updateConfig: vi.fn(),
+}));
+
+import { runVoiceTurn, resolveFollowUp } from "../src/pipeline.js";
 import { transcribe } from "../src/wyoming-stt.js";
 import { synthesize } from "../src/wyoming-tts.js";
 import { OpenClawClient } from "../src/openclaw-client.js";
 import { ChannelServer } from "../src/channel-server.js";
 import { resetConfig } from "../src/config.js";
 import * as channelRegistry from "../src/channel-registry.js";
+import * as deviceRegistry from "../src/device-registry.js";
 import type { WebSocket } from "ws";
 
 const mockGetActive = vi.mocked(channelRegistry.getActive);
+const mockGetConfigFor = vi.mocked(deviceRegistry.getConfigFor);
 
 const mockTranscribe = vi.mocked(transcribe);
 const mockSynthesize = vi.mocked(synthesize);
@@ -77,6 +93,7 @@ describe("pipeline", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetConfig();
+    mockGetConfigFor.mockReturnValue({});
     // Default: openclaw-direct active so existing tests route through OpenClawClient
     mockGetActive.mockReturnValue({
       id: "openclaw-direct",
@@ -276,6 +293,199 @@ describe("pipeline", () => {
 
     expect(jsonMessages.find((m) => m.type === "error" && m.code === "NO_CHANNEL")).toBeTruthy();
     expect(jsonMessages.find((m) => m.type === "audio.end")).toBeTruthy();
+  });
+
+  // ── Follow-up mode ──
+
+  describe("resolveFollowUp", () => {
+    it("'always' → follow_up: true regardless of reply text", () => {
+      expect(resolveFollowUp("Just a statement.", "always")).toEqual({
+        followUp: true,
+        replyText: "Just a statement.",
+      });
+    });
+
+    it("'never' → follow_up: false regardless of reply text", () => {
+      expect(resolveFollowUp("Are you there?", "never")).toEqual({
+        followUp: false,
+        replyText: "Are you there?",
+      });
+    });
+
+    it("'auto' + [[follow_up]] tag → true and tag stripped before TTS", () => {
+      const r = resolveFollowUp("Sure thing. [[follow_up]]", "auto");
+      expect(r.followUp).toBe(true);
+      expect(r.replyText).toBe("Sure thing.");
+    });
+
+    it("'auto' + ends with '?' → true", () => {
+      expect(resolveFollowUp("How are you?", "auto")).toEqual({
+        followUp: true,
+        replyText: "How are you?",
+      });
+    });
+
+    it("'auto' + ends with full-width '？' → true", () => {
+      expect(resolveFollowUp("元気ですか？", "auto")).toEqual({
+        followUp: true,
+        replyText: "元気ですか？",
+      });
+    });
+
+    it("'auto' + no tag, no '?' → false", () => {
+      expect(resolveFollowUp("All done.", "auto")).toEqual({
+        followUp: false,
+        replyText: "All done.",
+      });
+    });
+
+    it("'auto' + tag AND '?' → tag wins, tag stripped", () => {
+      const r = resolveFollowUp("Anything else? [[follow_up]]", "auto");
+      expect(r.followUp).toBe(true);
+      expect(r.replyText).toBe("Anything else?");
+    });
+
+    it("strips tag from middle of reply", () => {
+      const r = resolveFollowUp("Hello [[follow_up]] there.", "always");
+      expect(r.replyText).toBe("Hello there.");
+    });
+  });
+
+  describe("audio.end follow_up flag", () => {
+    function getAudioEnd(ws: WebSocket & { _sent: Array<string | Buffer> }): { type: string; follow_up?: boolean } | undefined {
+      return ws._sent
+        .filter((m): m is string => typeof m === "string")
+        .map((m) => JSON.parse(m) as { type: string; follow_up?: boolean })
+        .find((m) => m.type === "audio.end");
+    }
+
+    it("'always' mode: follow_up=true even on a statement", async () => {
+      mockGetConfigFor.mockReturnValue({ follow_up_mode: "always" });
+      mockTranscribe.mockResolvedValue("status please");
+      mockSynthesize.mockImplementation((() => fakeSynthesize()) as unknown as typeof synthesize);
+
+      const ws = createMockWs();
+      const oc = createMockOpenClaw(["All systems normal."]);
+      await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, oc, createChannelServer(), new AbortController().signal);
+
+      expect(getAudioEnd(ws)).toEqual({ type: "audio.end", follow_up: true });
+    });
+
+    it("'never' mode: follow_up=false even on a question", async () => {
+      mockGetConfigFor.mockReturnValue({ follow_up_mode: "never" });
+      mockTranscribe.mockResolvedValue("anything");
+      mockSynthesize.mockImplementation((() => fakeSynthesize()) as unknown as typeof synthesize);
+
+      const ws = createMockWs();
+      const oc = createMockOpenClaw(["Want me to keep going?"]);
+      await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, oc, createChannelServer(), new AbortController().signal);
+
+      expect(getAudioEnd(ws)).toEqual({ type: "audio.end", follow_up: false });
+    });
+
+    it("'auto' + [[follow_up]] tag: follow_up=true, tag stripped from TTS input", async () => {
+      mockGetConfigFor.mockReturnValue({ follow_up_mode: "auto" });
+      mockTranscribe.mockResolvedValue("anything");
+      const ttsCalls: string[] = [];
+      mockSynthesize.mockImplementation((async function* (text: string) {
+        ttsCalls.push(text);
+        yield Buffer.from("audio");
+      }) as unknown as typeof synthesize);
+
+      const ws = createMockWs();
+      const oc = createMockOpenClaw(["Sure, here you go. [[follow_up]]"]);
+      await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, oc, createChannelServer(), new AbortController().signal);
+
+      expect(getAudioEnd(ws)).toEqual({ type: "audio.end", follow_up: true });
+      expect(ttsCalls).toEqual(["Sure, here you go."]);
+    });
+
+    it("'auto' + trailing '?' (no tag): follow_up=true", async () => {
+      mockGetConfigFor.mockReturnValue({ follow_up_mode: "auto" });
+      mockTranscribe.mockResolvedValue("anything");
+      mockSynthesize.mockImplementation((() => fakeSynthesize()) as unknown as typeof synthesize);
+
+      const ws = createMockWs();
+      const oc = createMockOpenClaw(["Did you mean the kitchen lights?"]);
+      await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, oc, createChannelServer(), new AbortController().signal);
+
+      expect(getAudioEnd(ws)).toEqual({ type: "audio.end", follow_up: true });
+    });
+
+    it("'auto' + trailing full-width '？' (no tag): follow_up=true", async () => {
+      mockGetConfigFor.mockReturnValue({ follow_up_mode: "auto" });
+      mockTranscribe.mockResolvedValue("anything");
+      mockSynthesize.mockImplementation((() => fakeSynthesize()) as unknown as typeof synthesize);
+
+      const ws = createMockWs();
+      const oc = createMockOpenClaw(["何時に予定しますか？"]);
+      await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, oc, createChannelServer(), new AbortController().signal);
+
+      expect(getAudioEnd(ws)).toEqual({ type: "audio.end", follow_up: true });
+    });
+
+    it("'auto' + no tag, no '?': follow_up=false", async () => {
+      mockGetConfigFor.mockReturnValue({ follow_up_mode: "auto" });
+      mockTranscribe.mockResolvedValue("anything");
+      mockSynthesize.mockImplementation((() => fakeSynthesize()) as unknown as typeof synthesize);
+
+      const ws = createMockWs();
+      const oc = createMockOpenClaw(["All set."]);
+      await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, oc, createChannelServer(), new AbortController().signal);
+
+      expect(getAudioEnd(ws)).toEqual({ type: "audio.end", follow_up: false });
+    });
+
+    it("'auto' + tag AND trailing '?': tag wins, tag stripped", async () => {
+      mockGetConfigFor.mockReturnValue({ follow_up_mode: "auto" });
+      mockTranscribe.mockResolvedValue("anything");
+      const ttsCalls: string[] = [];
+      mockSynthesize.mockImplementation((async function* (text: string) {
+        ttsCalls.push(text);
+        yield Buffer.from("audio");
+      }) as unknown as typeof synthesize);
+
+      const ws = createMockWs();
+      const oc = createMockOpenClaw(["Are you sure? [[follow_up]]"]);
+      await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, oc, createChannelServer(), new AbortController().signal);
+
+      expect(getAudioEnd(ws)).toEqual({ type: "audio.end", follow_up: true });
+      expect(ttsCalls).toEqual(["Are you sure?"]);
+    });
+
+    it("no config set defaults to 'auto' behavior", async () => {
+      mockGetConfigFor.mockReturnValue({});
+      mockTranscribe.mockResolvedValue("anything");
+      mockSynthesize.mockImplementation((() => fakeSynthesize()) as unknown as typeof synthesize);
+
+      const ws = createMockWs();
+      const oc = createMockOpenClaw(["Need anything else?"]);
+      await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, oc, createChannelServer(), new AbortController().signal);
+
+      expect(getAudioEnd(ws)).toEqual({ type: "audio.end", follow_up: true });
+    });
+
+    it("audio.end always carries the follow_up field (empty transcript path)", async () => {
+      mockTranscribe.mockResolvedValue("");
+      const ws = createMockWs();
+      const oc = createMockOpenClaw([]);
+      await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, oc, createChannelServer(), new AbortController().signal);
+
+      const end = getAudioEnd(ws);
+      expect(end).toBeTruthy();
+      expect(end!.follow_up).toBe(false);
+    });
+
+    it("audio.end always carries the follow_up field (no active channel path)", async () => {
+      mockGetActive.mockReturnValue(undefined);
+      mockTranscribe.mockResolvedValue("hello");
+      const ws = createMockWs();
+      await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, null, createChannelServer(), new AbortController().signal);
+
+      const end = getAudioEnd(ws);
+      expect(end).toBeTruthy();
+      expect(end!.follow_up).toBe(false);
+    });
   });
 
   it("drops turn with warning when active channel has no live WS connection", async () => {

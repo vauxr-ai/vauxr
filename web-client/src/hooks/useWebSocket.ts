@@ -17,7 +17,7 @@ interface UseWebSocketOpts {
   onReady: () => void;
   onTranscript: (text: string) => void;
   onAudioFrame: (pcm: ArrayBuffer) => void;
-  onAudioEnd: () => void;
+  onAudioEnd: (followUp: boolean) => void;
   onError: (code: string, message: string) => void;
 }
 
@@ -77,12 +77,14 @@ export function useWebSocket(opts: UseWebSocketOpts) {
               setState("processing");
               opts.onTranscript(msg.text);
               break;
-            case "audio.end":
-              addLog("sys", `Playback done, ${rxAudioFrames.current} audio frames received`);
+            case "audio.end": {
+              const followUp = msg.follow_up === true;
+              addLog("sys", `Playback done, ${rxAudioFrames.current} audio frames received${followUp ? " (follow-up)" : ""}`);
               rxAudioFrames.current = 0;
               setState("connected");
-              opts.onAudioEnd();
+              opts.onAudioEnd(followUp);
               break;
+            }
             case "error":
               opts.onError(msg.code, msg.message);
               break;
