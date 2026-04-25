@@ -57,10 +57,20 @@ function stripFollowUpTag(text: string): string {
   return text.replace(/\s*\[\[follow_up\]\]\s*/g, " ").trim();
 }
 
-async function synthesizeAndSend(ws: WebSocket, deviceId: string, text: string, signal: AbortSignal): Promise<void> {
+async function synthesizeAndSend(ws: WebSocket, deviceId: string, text: string, signal: AbortSignal, targetRate?: number): Promise<void> {
   if (text.length > 0) {
     try {
-      for await (const chunk of synthesize(text, signal)) {
+      let sentStart = false;
+      for await (const chunk of synthesize(text, {
+        targetRate,
+        signal,
+        onSampleRate: (rate) => {
+          if (!sentStart) {
+            sendJSON(ws, { type: "audio.start", sample_rate: rate });
+            sentStart = true;
+          }
+        },
+      })) {
         if (signal.aborted) return;
         sendBinary(ws, deviceId, 0x02, chunk);
       }
@@ -70,10 +80,20 @@ async function synthesizeAndSend(ws: WebSocket, deviceId: string, text: string, 
   }
 }
 
-async function synthesizeError(ws: WebSocket, deviceId: string, signal: AbortSignal): Promise<void> {
+async function synthesizeError(ws: WebSocket, deviceId: string, signal: AbortSignal, targetRate?: number): Promise<void> {
   const errorMsg = "Sorry, I couldn't reach the backend. Please try again later.";
   try {
-    for await (const chunk of synthesize(errorMsg, signal)) {
+    let sentStart = false;
+    for await (const chunk of synthesize(errorMsg, {
+      targetRate,
+      signal,
+      onSampleRate: (rate) => {
+        if (!sentStart) {
+          sendJSON(ws, { type: "audio.start", sample_rate: rate });
+          sentStart = true;
+        }
+      },
+    })) {
       if (signal.aborted) return;
       sendBinary(ws, deviceId, 0x02, chunk);
     }
@@ -92,6 +112,7 @@ async function routeViaOpenClawDirect(
   ws: WebSocket,
   openclawClient: OpenClawClient,
   signal: AbortSignal,
+  targetRate?: number,
 ): Promise<void> {
   const sessionKey = `vauxr:${deviceId}`;
   let fullReply = "";
@@ -102,7 +123,7 @@ async function routeViaOpenClawDirect(
     });
   } catch (err) {
     sendJSON(ws, { type: "error", code: "BACKEND_ERROR", message: (err as Error).message });
-    await synthesizeError(ws, deviceId, signal);
+    await synthesizeError(ws, deviceId, signal, targetRate);
     if (!signal.aborted) sendAudioEnd(ws, false);
     return;
   }
@@ -111,7 +132,7 @@ async function routeViaOpenClawDirect(
 
   const { followUp, replyText } = resolveFollowUp(fullReply, getFollowUpMode(deviceId));
   console.log(`[pipeline] LLM reply (${replyText.length} chars, follow_up=${followUp}): ${replyText.substring(0, 200)}`);
-  await synthesizeAndSend(ws, deviceId, replyText, signal);
+  await synthesizeAndSend(ws, deviceId, replyText, signal, targetRate);
   if (!signal.aborted) sendAudioEnd(ws, followUp);
 }
 
@@ -123,6 +144,7 @@ async function routeViaChannel(
   ws: WebSocket,
   channelServer: ChannelServer,
   signal: AbortSignal,
+  targetRate?: number,
 ): Promise<void> {
   const sent = channelServer.sendTranscript(deviceId, transcript);
   if (!sent) {
@@ -180,7 +202,7 @@ async function routeViaChannel(
   } catch (err) {
     if (signal.aborted) return;
     sendJSON(ws, { type: "error", code: "BACKEND_ERROR", message: (err as Error).message });
-    await synthesizeError(ws, deviceId, signal);
+    await synthesizeError(ws, deviceId, signal, targetRate);
     if (!signal.aborted) sendAudioEnd(ws, false);
     return;
   }
@@ -189,7 +211,7 @@ async function routeViaChannel(
 
   const { followUp, replyText } = resolveFollowUp(fullReply, getFollowUpMode(deviceId));
   console.log(`[pipeline] Channel reply (${replyText.length} chars, follow_up=${followUp}): ${replyText.substring(0, 200)}`);
-  await synthesizeAndSend(ws, deviceId, replyText, signal);
+  await synthesizeAndSend(ws, deviceId, replyText, signal, targetRate);
   if (!signal.aborted) sendAudioEnd(ws, followUp);
 }
 
@@ -200,6 +222,7 @@ export async function runVoiceTurn(
   openclawClient: OpenClawClient | null,
   channelServer: ChannelServer,
   signal: AbortSignal,
+  targetRate?: number,
 ): Promise<void> {
   // Step 1: STT
   if (signal.aborted) return;
@@ -233,10 +256,10 @@ export async function runVoiceTurn(
 
   if (active && active.type === "openclaw-direct" && openclawClient) {
     console.log(`[pipeline] Routing via openclaw-direct for ${deviceId}`);
-    await routeViaOpenClawDirect(deviceId, transcript, ws, openclawClient, signal);
+    await routeViaOpenClawDirect(deviceId, transcript, ws, openclawClient, signal, targetRate);
   } else if (active && active.type !== "openclaw-direct") {
     console.log(`[pipeline] Routing via channel "${active.name}" (${active.type}) for ${deviceId}`);
-    await routeViaChannel(deviceId, transcript, ws, channelServer, signal);
+    await routeViaChannel(deviceId, transcript, ws, channelServer, signal, targetRate);
   } else {
     console.warn("[pipeline] No active channel or backend available — dropping turn");
     sendJSON(ws, { type: "error", code: "NO_CHANNEL", message: "No active channel configured" });

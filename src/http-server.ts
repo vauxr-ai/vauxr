@@ -166,7 +166,16 @@ async function handleAnnounce(req: IncomingMessage, res: ServerResponse, deviceI
   const abortController = new AbortController();
   let chunkCount = 0;
   try {
-    for await (const chunk of synthesize(text, abortController.signal)) {
+    let sentStart = false;
+    for await (const chunk of synthesize(text, {
+      signal: abortController.signal,
+      onSampleRate: (rate) => {
+        if (!sentStart && device.ws.readyState === device.ws.OPEN) {
+          device.ws.send(JSON.stringify({ type: "audio.start", sample_rate: rate }));
+          sentStart = true;
+        }
+      },
+    })) {
       const seq = registry.nextSeq(deviceId);
       const frame = makeBinaryFrame(0x03, seq, chunk);
       device.ws.send(frame);
