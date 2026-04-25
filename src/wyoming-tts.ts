@@ -25,40 +25,49 @@ function encodeEvent(event: WyomingEvent): Buffer {
 }
 
 /**
- * Stateful resampler: low-pass biquad filter + linear interpolation.
- * The filter removes frequencies above the target Nyquist before
- * downsampling to prevent aliasing (the "hissy" sibilant distortion).
- * State is carried across chunks so the filter rings smoothly.
+ * Create a biquad low-pass filter section. Returns a function that
+ * filters one sample at a time, carrying state across calls.
  */
-function createResampler(fromRate: number, toRate: number) {
-  // Biquad low-pass filter coefficients (2nd-order Butterworth)
-  // Cutoff at 0.9 * targetNyquist to leave a gentle rolloff margin
-  const cutoff = (toRate / 2) * 0.9;
-  const w0 = (2 * Math.PI * cutoff) / fromRate;
+function createBiquadLPF(cutoffHz: number, sampleRate: number, Q: number) {
+  const w0 = (2 * Math.PI * cutoffHz) / sampleRate;
   const sinW0 = Math.sin(w0);
   const cosW0 = Math.cos(w0);
-  const alpha = sinW0 / Math.SQRT2; // Q = 1/sqrt(2) for Butterworth
+  const alpha = sinW0 / (2 * Q);
   const a0 = 1 + alpha;
   const b0 = ((1 - cosW0) / 2) / a0;
   const b1 = (1 - cosW0) / a0;
   const b2 = b0;
   const a1 = (-2 * cosW0) / a0;
   const a2 = (1 - alpha) / a0;
-
-  // Filter delay registers (persist across chunks)
   let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+
+  return (x0: number): number => {
+    const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    x2 = x1; x1 = x0;
+    y2 = y1; y1 = y0;
+    return y0;
+  };
+}
+
+/**
+ * Stateful resampler: 4th-order Butterworth low-pass (two cascaded
+ * biquads) + linear interpolation. The steeper rolloff eliminates
+ * aliasing artifacts on sibilant sounds when downsampling.
+ * State is carried across chunks for seamless audio.
+ */
+function createResampler(fromRate: number, toRate: number) {
+  const cutoff = (toRate / 2) * 0.9;
+  // 4th-order Butterworth = two biquad sections with specific Q values
+  const lpf1 = createBiquadLPF(cutoff, fromRate, 0.54119610);  // 1st section Q
+  const lpf2 = createBiquadLPF(cutoff, fromRate, 1.3065630);   // 2nd section Q
 
   return function resample(buf: Buffer): Buffer {
     const srcSamples = buf.length >> 1;
 
-    // Apply biquad low-pass in-place (working in float)
+    // Apply cascaded biquad low-pass (working in float)
     const filtered = new Float64Array(srcSamples);
     for (let i = 0; i < srcSamples; i++) {
-      const x0 = buf.readInt16LE(i * 2);
-      const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-      x2 = x1; x1 = x0;
-      y2 = y1; y1 = y0;
-      filtered[i] = y0;
+      filtered[i] = lpf2(lpf1(buf.readInt16LE(i * 2)));
     }
 
     // Linear interpolation downsample
