@@ -14,6 +14,7 @@ interface ConnectionCtx {
   state: ConnectionState;
   deviceId: string | null;
   audioChunks: Buffer[];
+  sampleRate: number | undefined;
 }
 
 let openclawClient: OpenClawClient | null = null;
@@ -26,7 +27,7 @@ function sendJSON(ws: WebSocket, obj: Record<string, unknown>): void {
 }
 
 function handleTextMessage(ws: WebSocket, ctx: ConnectionCtx, data: string): void {
-  let msg: { type: string; device_id?: string; token?: string };
+  let msg: { type: string; device_id?: string; token?: string; output_sample_rate?: number; sample_rate?: number; name?: string };
   try {
     msg = JSON.parse(data);
   } catch {
@@ -55,8 +56,9 @@ function handleTextMessage(ws: WebSocket, ctx: ConnectionCtx, data: string): voi
 
       ctx.deviceId = msg.device_id;
       ctx.audioChunks = [];
+      ctx.sampleRate = msg.output_sample_rate ?? msg.sample_rate;
       ctx.state = "LISTENING";
-      registry.register(msg.device_id, ws, (msg as Record<string, string>).name ?? msg.device_id);
+      registry.register(msg.device_id, ws, msg.name ?? msg.device_id);
       registry.setState(msg.device_id, "listening");
       sendJSON(ws, { type: "ready" });
       break;
@@ -80,7 +82,7 @@ function handleTextMessage(ws: WebSocket, ctx: ConnectionCtx, data: string): voi
       const entry = registry.get(deviceId);
       if (entry) entry.abortController = abortController;
 
-      runVoiceTurn(deviceId, chunks, ws, openclawClient, channelServer, abortController.signal)
+      runVoiceTurn(deviceId, chunks, ws, openclawClient, channelServer, abortController.signal, ctx.sampleRate)
         .catch((err) => {
           console.error(`[server] Pipeline error for ${deviceId}:`, err);
           sendJSON(ws, { type: "error", code: "PIPELINE_ERROR", message: (err as Error).message });
@@ -167,6 +169,7 @@ async function main(): Promise<void> {
       state: "IDLE",
       deviceId: null,
       audioChunks: [],
+      sampleRate: undefined,
     };
 
     ws.on("message", (raw: Buffer, isBinary: boolean) => {

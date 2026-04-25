@@ -24,7 +24,36 @@ function encodeEvent(event: WyomingEvent): Buffer {
   return line;
 }
 
-export async function* synthesize(text: string, signal?: AbortSignal): AsyncGenerator<Buffer> {
+/**
+ * Resample a 16-bit signed LE PCM buffer using linear interpolation.
+ * Returns the input unchanged when fromRate === toRate.
+ */
+function resamplePcm(buf: Buffer, fromRate: number, toRate: number): Buffer {
+  if (fromRate === toRate) return buf;
+  const srcSamples = buf.length >> 1;
+  const dstSamples = Math.round(srcSamples * toRate / fromRate);
+  const out = Buffer.alloc(dstSamples * 2);
+  for (let i = 0; i < dstSamples; i++) {
+    const pos = i * fromRate / toRate;
+    const idx = Math.floor(pos);
+    const frac = pos - idx;
+    const s0 = buf.readInt16LE(idx * 2);
+    const s1 = idx + 1 < srcSamples ? buf.readInt16LE((idx + 1) * 2) : s0;
+    out.writeInt16LE(Math.round(s0 * (1 - frac) + s1 * frac), i * 2);
+  }
+  return out;
+}
+
+export interface SynthesizeOptions {
+  targetRate?: number;
+  signal?: AbortSignal;
+  onSampleRate?: (rate: number) => void;
+}
+
+export async function* synthesize(text: string, opts?: SynthesizeOptions): AsyncGenerator<Buffer> {
+  const targetRate = opts?.targetRate;
+  const signal = opts?.signal;
+  const onSampleRate = opts?.onSampleRate;
   const config = getConfig();
   const { host, port } = config.piper;
 
@@ -33,6 +62,7 @@ export async function* synthesize(text: string, signal?: AbortSignal): AsyncGene
   let done = false;
   let error: Error | null = null;
   let resolveWait: (() => void) | null = null;
+  let piperRate = 0; // detected from audio-start event
 
   function notifyWait() {
     if (resolveWait) {
@@ -50,8 +80,15 @@ export async function* synthesize(text: string, signal?: AbortSignal): AsyncGene
     buf = result.remainder;
 
     for (const ev of result.events) {
-      if (ev.type === "audio-chunk" && ev.payload) {
-        chunks.push(ev.payload);
+      if (ev.type === "audio-start" && typeof ev.data.rate === "number") {
+        piperRate = ev.data.rate;
+      } else if (ev.type === "audio-chunk") {
+        if (piperRate === 0 && typeof ev.data.rate === "number") {
+          piperRate = ev.data.rate;
+        }
+        if (ev.payload) {
+          chunks.push(ev.payload);
+        }
       } else if (ev.type === "audio-stop") {
         done = true;
       }
@@ -89,7 +126,17 @@ export async function* synthesize(text: string, signal?: AbortSignal): AsyncGene
       }
 
       if (chunks.length > 0) {
-        yield chunks.shift()!;
+        const chunk = chunks.shift()!;
+        if (onSampleRate && piperRate) {
+          onSampleRate(targetRate && targetRate !== piperRate ? targetRate : piperRate);
+          // Only fire once
+          opts!.onSampleRate = undefined;
+        }
+        if (targetRate && piperRate && piperRate !== targetRate) {
+          yield resamplePcm(chunk, piperRate, targetRate);
+        } else {
+          yield chunk;
+        }
       } else if (!done) {
         await new Promise<void>((r) => {
           resolveWait = r;
