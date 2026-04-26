@@ -55,9 +55,10 @@ async function waitForDevices() {
 
 describe("HttpApiPanel", () => {
   describe("rendering", () => {
-    it("returns null when wsState === 'disconnected'", () => {
-      const { container } = renderPanel({ wsState: "disconnected" });
-      expect(container.innerHTML).toBe("");
+    it("renders a connect-prompt placeholder when wsState === 'disconnected'", () => {
+      renderPanel({ wsState: "disconnected" });
+      expect(screen.getByText(/connect to a server/i)).toBeInTheDocument();
+      expect(screen.queryByText("HTTP API")).not.toBeInTheDocument();
     });
 
     it("renders when wsState === 'connected'", () => {

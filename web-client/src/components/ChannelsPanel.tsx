@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { deriveHttpUrl } from "../hooks/useHttpApi";
 import { type ApiChannel, useChannels } from "../hooks/useChannels";
 import type { ConnectionState, LogEntry } from "../hooks/useWebSocket";
+import Icon from "./Icon";
 
 interface Props {
   wsUrl: string;
@@ -10,6 +11,21 @@ interface Props {
   addLog: (dir: LogEntry["dir"], text: string) => void;
 }
 
+const inputClass =
+  "rounded-lg border border-white/5 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/30";
+
+const primaryBtn =
+  "focus-ring rounded-lg bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50";
+
+const ghostBtn =
+  "focus-ring inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:bg-white/5 hover:text-zinc-200";
+
+const dangerBtn =
+  "focus-ring inline-flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1.5 text-xs font-medium text-red-300 hover:bg-red-500/20";
+
+const subtleBtn =
+  "focus-ring inline-flex items-center gap-1.5 rounded-md bg-white/5 px-2.5 py-1.5 text-xs font-medium text-zinc-300 hover:bg-white/10";
+
 export default function ChannelsPanel({ wsUrl, token, wsState, addLog }: Props) {
   const httpUrl = deriveHttpUrl(wsUrl);
   const api = useChannels(httpUrl, token);
@@ -17,17 +33,13 @@ export default function ChannelsPanel({ wsUrl, token, wsState, addLog }: Props) 
   const [channels, setChannels] = useState<ApiChannel[]>([]);
   const [error, setError] = useState("");
 
-  // Add channel form
   const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState("");
 
-  // Token display modal
-  const [tokenModal, setTokenModal] = useState<{ token: string; label: string } | null>(null);
-
-  // Confirm delete
+  const [tokenModal, setTokenModal] = useState<
+    { token: string; label: string } | null
+  >(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-
-  // Confirm rotate
   const [confirmRotate, setConfirmRotate] = useState<string | null>(null);
 
   const refreshChannels = useCallback(async () => {
@@ -101,59 +113,58 @@ export default function ChannelsPanel({ wsUrl, token, wsState, addLog }: Props) 
     }
   };
 
-  if (wsState === "disconnected") return null;
-
-  const btnClass =
-    "rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium hover:bg-indigo-700";
-  const btnSmClass =
-    "rounded px-2 py-1 text-xs font-medium";
-  const errorClass = "text-xs text-red-400 mt-1";
+  if (wsState === "disconnected") {
+    return (
+      <div className="card p-6 text-sm text-zinc-500">
+        Connect to a server to manage channels.
+      </div>
+    );
+  }
 
   return (
-    <div className="rounded border border-gray-700 bg-gray-900 text-sm">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-700 px-4 py-2">
-        <span className="font-semibold text-gray-200">Channels</span>
-        <div className="flex gap-2">
-          <button
-            className="text-xs text-gray-400 hover:text-white"
-            onClick={refreshChannels}
-          >
-            Refresh &#8635;
+    <div className="card overflow-hidden">
+      <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
+        <div>
+          <h2 className="text-base font-semibold text-zinc-100">Channels</h2>
+          <p className="text-xs text-zinc-500">
+            One channel routes voice traffic at a time.
+          </p>
+        </div>
+        <div className="flex gap-1">
+          <button className={ghostBtn} onClick={refreshChannels}>
+            <Icon name="refresh" size={14} />
+            Refresh
           </button>
           <button
-            className="text-xs text-indigo-400 hover:text-indigo-300"
+            className={ghostBtn + " text-indigo-300 hover:text-indigo-200"}
             onClick={() => setShowAddForm(!showAddForm)}
           >
-            {showAddForm ? "Cancel" : "+ Add Channel"}
+            <Icon name="plus" size={14} />
+            {showAddForm ? "Cancel" : "Add channel"}
           </button>
         </div>
       </div>
 
-      {/* Add Channel Form */}
       {showAddForm && (
-        <div className="border-b border-gray-700 px-4 py-3">
-          <div className="flex items-end gap-2">
-            <label className="flex flex-1 flex-col gap-1 text-xs text-gray-400">
+        <div className="border-b border-white/5 px-5 py-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-1 flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
               Name
               <input
-                className="rounded bg-gray-800 px-3 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                className={inputClass}
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="e.g. Home OpenClaw"
               />
             </label>
-            <label className="flex flex-col gap-1 text-xs text-gray-400">
+            <label className="flex flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
               Type
-              <select
-                className="rounded bg-gray-800 px-3 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-indigo-500"
-                disabled
-              >
+              <select className={inputClass} disabled>
                 <option value="openclaw">openclaw</option>
               </select>
             </label>
             <button
-              className={btnClass}
+              className={primaryBtn}
               onClick={handleCreate}
               disabled={!newName.trim()}
             >
@@ -163,41 +174,54 @@ export default function ChannelsPanel({ wsUrl, token, wsState, addLog }: Props) 
         </div>
       )}
 
-      {/* Channel List */}
-      <div className="px-4 py-3">
-        {error && <p className={errorClass}>{error}</p>}
+      <div className="px-5 py-4">
+        {error && (
+          <p className="mb-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+            {error}
+          </p>
+        )}
         {channels.length === 0 && !error && (
-          <p className="text-xs text-gray-500">No channels</p>
+          <p className="text-xs text-zinc-500">No channels.</p>
         )}
         <ul className="space-y-2">
           {channels.map((ch) => (
             <li
               key={ch.id}
-              className={`flex items-center gap-2 rounded px-2 py-1.5 ${ch.active ? "bg-gray-800 ring-1 ring-indigo-500/50" : ""}`}
+              className={`flex flex-wrap items-center gap-3 rounded-lg border border-white/5 bg-zinc-900/40 px-3 py-2.5 ${
+                ch.active ? "ring-1 ring-indigo-500/40" : ""
+              }`}
             >
               <span
-                className={`inline-block h-2 w-2 rounded-full ${ch.active ? "bg-green-500" : "bg-gray-500"}`}
+                className={`inline-block h-2 w-2 rounded-full ${
+                  ch.active
+                    ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]"
+                    : "bg-zinc-600"
+                }`}
               />
-              <span className="flex-1 text-gray-300">
-                {ch.name}
-                {ch.builtin && (
-                  <span className="ml-2 rounded bg-orange-600/20 px-1.5 py-0.5 text-[10px] uppercase text-orange-400/80">
-                    Limited features
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-medium text-zinc-200">
+                    {ch.name}
                   </span>
-                )}
-                {ch.active && (
-                  <span className="ml-2 rounded bg-indigo-600/30 px-1.5 py-0.5 text-[10px] uppercase text-indigo-300">
-                    Active
-                  </span>
-                )}
-              </span>
-              <span className="text-xs text-gray-500">{ch.type}</span>
+                  {ch.builtin && (
+                    <span className="pill border-amber-500/30 bg-amber-500/10 text-amber-300">
+                      Limited
+                    </span>
+                  )}
+                  {ch.active && (
+                    <span className="pill border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-zinc-500">
+                  {ch.type}
+                  {ch.id ? ` · ${ch.id}` : ""}
+                </div>
+              </div>
 
               {!ch.active && (
-                <button
-                  className={`${btnSmClass} bg-indigo-600 text-white hover:bg-indigo-700`}
-                  onClick={() => handleActivate(ch.id)}
-                >
+                <button className={primaryBtn} onClick={() => handleActivate(ch.id)}>
                   Activate
                 </button>
               )}
@@ -205,15 +229,17 @@ export default function ChannelsPanel({ wsUrl, token, wsState, addLog }: Props) 
               {!ch.builtin && (
                 <>
                   <button
-                    className={`${btnSmClass} bg-gray-700 text-gray-300 hover:bg-gray-600`}
+                    className={subtleBtn}
                     onClick={() => setConfirmRotate(ch.id)}
                   >
-                    Rotate Token
+                    <Icon name="rotate-key" size={13} />
+                    Rotate token
                   </button>
                   <button
-                    className={`${btnSmClass} bg-red-800 text-red-200 hover:bg-red-700`}
+                    className={dangerBtn}
                     onClick={() => setConfirmDelete(ch.id)}
                   >
+                    <Icon name="trash" size={13} />
                     Delete
                   </button>
                 </>
@@ -223,84 +249,108 @@ export default function ChannelsPanel({ wsUrl, token, wsState, addLog }: Props) 
         </ul>
       </div>
 
-      {/* Confirm Delete Dialog */}
       {confirmDelete && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
-          <div className="rounded-lg bg-gray-800 p-6 shadow-xl max-w-sm">
-            <p className="text-sm text-gray-200 mb-4">Delete this channel? This cannot be undone.</p>
-            <div className="flex gap-2 justify-end">
-              <button
-                className="rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-600"
-                onClick={() => setConfirmDelete(null)}
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700"
-                onClick={() => handleDelete(confirmDelete)}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <Dialog
+          message="Delete this channel? This cannot be undone."
+          confirmLabel="Delete"
+          confirmTone="danger"
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => handleDelete(confirmDelete)}
+        />
       )}
-
-      {/* Confirm Rotate Dialog */}
       {confirmRotate && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
-          <div className="rounded-lg bg-gray-800 p-6 shadow-xl max-w-sm">
-            <p className="text-sm text-gray-200 mb-4">
-              Rotate this channel's token? The old token will stop working immediately.
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button
-                className="rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-600"
-                onClick={() => setConfirmRotate(null)}
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700"
-                onClick={() => handleRotate(confirmRotate)}
-              >
-                Rotate
-              </button>
-            </div>
-          </div>
-        </div>
+        <Dialog
+          message="Rotate this channel's token? The old token will stop working immediately."
+          confirmLabel="Rotate"
+          confirmTone="primary"
+          onCancel={() => setConfirmRotate(null)}
+          onConfirm={() => handleRotate(confirmRotate)}
+        />
       )}
-
-      {/* Token Display Modal */}
       {tokenModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
-          <div className="rounded-lg bg-gray-800 p-6 shadow-xl max-w-lg">
-            <p className="text-sm font-semibold text-gray-200 mb-2">{tokenModal.label}</p>
-            <p className="text-xs text-yellow-400 mb-3">
-              This token will not be shown again. Copy it now.
-            </p>
-            <div className="rounded bg-gray-900 p-3 font-mono text-xs text-green-400 break-all select-all mb-4">
-              {tokenModal.token}
-            </div>
-            <div className="flex gap-2 justify-end">
-              <button
-                className="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700"
-                onClick={() => {
-                  navigator.clipboard.writeText(tokenModal.token).catch(() => {});
-                }}
-              >
-                Copy
-              </button>
-              <button
-                className="rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-600"
-                onClick={() => setTokenModal(null)}
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
+        <TokenModal
+          label={tokenModal.label}
+          token={tokenModal.token}
+          onClose={() => setTokenModal(null)}
+        />
       )}
+    </div>
+  );
+}
+
+interface DialogProps {
+  message: string;
+  confirmLabel: string;
+  confirmTone: "primary" | "danger";
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+function Dialog({
+  message,
+  confirmLabel,
+  confirmTone,
+  onCancel,
+  onConfirm,
+}: DialogProps) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="card max-w-sm p-6 shadow-2xl">
+        <p className="mb-5 text-sm text-zinc-200">{message}</p>
+        <div className="flex justify-end gap-2">
+          <button className={subtleBtn} onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            className={
+              confirmTone === "danger"
+                ? "focus-ring rounded-md bg-red-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-400"
+                : primaryBtn
+            }
+            onClick={onConfirm}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TokenModal({
+  label,
+  token,
+  onClose,
+}: {
+  label: string;
+  token: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="card w-full max-w-lg p-6 shadow-2xl">
+        <p className="mb-1 text-sm font-semibold text-zinc-100">{label}</p>
+        <p className="mb-3 text-xs text-amber-300">
+          This token will not be shown again. Copy it now.
+        </p>
+        <div className="mb-4 select-all break-all rounded-lg border border-white/5 bg-black/40 p-3 font-mono text-xs text-emerald-300">
+          {token}
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            className={subtleBtn}
+            onClick={() => {
+              navigator.clipboard.writeText(token).catch(() => {});
+            }}
+          >
+            <Icon name="copy" size={13} />
+            Copy
+          </button>
+          <button className={primaryBtn} onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
