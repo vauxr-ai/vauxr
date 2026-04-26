@@ -6,6 +6,8 @@ process.env.OPENCLAW_TOKEN = "test-token";
 process.env.DEVICE_TOKEN = "test-device-token";
 process.env.WHISPER_URL = "tcp://127.0.0.1:10300";
 process.env.PIPER_URL = "tcp://127.0.0.1:10200";
+// Short idle pause keeps streaming-pipeline tests fast.
+process.env.STREAMING_TTS_IDLE_PAUSE_MS = "20";
 
 // Mock wyoming-stt
 vi.mock("../src/wyoming-stt.js", () => ({
@@ -254,6 +256,71 @@ describe("pipeline", () => {
     await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, null, channelServer, abort.signal);
 
     expect(channelServer.sendTranscript).toHaveBeenCalledWith("dev1", "hello from device");
+  });
+
+  it("streaming TTS: synthesize is invoked >1 time when an idle gap is injected between channel deltas", async () => {
+    const activeChannel = {
+      id: "ch-1",
+      name: "My Channel",
+      type: "openclaw" as const,
+      tokenHash: "hash",
+      active: true,
+      createdAt: new Date().toISOString(),
+    };
+    mockGetActive.mockReturnValue(activeChannel);
+    mockTranscribe.mockResolvedValue("hello there");
+
+    const ttsCallArgs: string[] = [];
+    mockSynthesize.mockImplementation((async function* (text: string) {
+      ttsCallArgs.push(text);
+      yield Buffer.from("audio");
+    }) as unknown as typeof synthesize);
+
+    const ws = createMockWs();
+    const channelServer = createChannelServer();
+
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+    vi.spyOn(channelServer, "sendTranscript").mockImplementation((deviceId: string) => {
+      // Defer so the pipeline has time to register its response listener.
+      setTimeout(() => {
+        void (async () => {
+          const listeners = (channelServer as unknown as Record<string, unknown>)[
+            "responseListeners"
+          ] as Map<string, { onDelta: (runId: string, text: string) => void; onEnd: (runId: string) => void }>;
+          const l = listeners?.get(deviceId);
+          if (!l) return;
+          // First burst — small token-stream-style chunks under the idle window.
+          l.onDelta("run-1", "I checked the calendar and ");
+          await sleep(5);
+          l.onDelta("run-1", "found something. ");
+          // Inject a gap longer than STREAMING_TTS_IDLE_PAUSE_MS (=20ms)
+          // to force a mid-stream flush before any further deltas arrive.
+          await sleep(80);
+          l.onDelta("run-1", "You have a meeting at 3pm.");
+          await sleep(5);
+          l.onEnd("run-1");
+        })();
+      }, 0);
+      return true;
+    });
+
+    const abort = new AbortController();
+    await runVoiceTurn("dev1", [Buffer.alloc(100)], ws, null, channelServer, abort.signal);
+
+    // Expect at least one mid-stream flush plus the end-of-run flush.
+    expect(mockSynthesize.mock.calls.length).toBeGreaterThan(1);
+    expect(ttsCallArgs.length).toBeGreaterThan(1);
+    // Order is preserved by the segment queue and the joined segments equal the full reply.
+    expect(ttsCallArgs.join("")).toBe(
+      "I checked the calendar and found something. You have a meeting at 3pm.",
+    );
+    // audio.end should still fire exactly once after all segments drain.
+    const audioEnds = ws._sent
+      .filter((m): m is string => typeof m === "string")
+      .map((m) => JSON.parse(m) as { type: string })
+      .filter((m) => m.type === "audio.end");
+    expect(audioEnds.length).toBe(1);
   });
 
   it("routes to openclaw-direct (OpenClawClient) when openclaw-direct is active and OPENCLAW_URL set", async () => {

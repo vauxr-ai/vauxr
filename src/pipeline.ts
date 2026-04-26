@@ -6,6 +6,9 @@ import { ChannelServer } from "./channel-server.js";
 import { nextSeq, getConfigFor } from "./device-registry.js";
 import type { FollowUpMode } from "./device-config.js";
 import { makeBinaryFrame } from "./utils.js";
+import { getConfig } from "./config.js";
+import { IdleSegmenter } from "./idle-segmenter.js";
+import { SegmentQueue } from "./segment-queue.js";
 
 const FOLLOW_UP_TAG = "[[follow_up]]";
 
@@ -55,6 +58,12 @@ export function resolveFollowUp(fullReply: string, mode: FollowUpMode): FollowUp
 function stripFollowUpTag(text: string): string {
   // Remove the tag plus any surrounding whitespace, then trim ends.
   return text.replace(/\s*\[\[follow_up\]\]\s*/g, " ").trim();
+}
+
+// In-stream variant: strip the follow_up tag but keep surrounding
+// whitespace so consecutive flushed segments concatenate cleanly.
+function stripFollowUpTagInline(text: string): string {
+  return text.replace(/\s*\[\[follow_up\]\]\s*/g, " ");
 }
 
 async function synthesizeAndSend(ws: WebSocket, deviceId: string, text: string, signal: AbortSignal, targetRate?: number): Promise<void> {
@@ -138,6 +147,30 @@ async function routeViaOpenClawDirect(
 
 const CHANNEL_RESPONSE_TIMEOUT_MS = 60_000;
 
+async function synthesizeSegment(
+  ws: WebSocket,
+  deviceId: string,
+  text: string,
+  signal: AbortSignal,
+  targetRate: number | undefined,
+  state: { sentStart: boolean },
+): Promise<void> {
+  if (text.length === 0) return;
+  for await (const chunk of synthesize(text, {
+    targetRate,
+    signal,
+    onSampleRate: (rate) => {
+      if (!state.sentStart) {
+        sendJSON(ws, { type: "audio.start", sample_rate: rate });
+        state.sentStart = true;
+      }
+    },
+  })) {
+    if (signal.aborted) return;
+    sendBinary(ws, deviceId, 0x02, chunk);
+  }
+}
+
 async function routeViaChannel(
   deviceId: string,
   transcript: string,
@@ -154,16 +187,42 @@ async function routeViaChannel(
   }
   console.log(`[pipeline] Awaiting channel response for ${deviceId}`);
 
-  // Collect deltas from channel until response.end or response.error
+  const idlePauseMs = getConfig().streamingTts.idlePauseMs;
+  const startState = { sentStart: false };
+
+  const queue = new SegmentQueue({
+    synthesize: (text) => synthesizeSegment(ws, deviceId, text, signal, targetRate, startState),
+    signal,
+  });
+
+  // Stream deltas through the idle-segmenter into the synth queue.
+  // fullReply is accumulated independently for resolveFollowUp.
   let fullReply: string;
   try {
     fullReply = await new Promise<string>((resolve, reject) => {
       let accumulated = "";
       let resolved = false;
 
+      const segmenter = new IdleSegmenter({
+        idlePauseMs,
+        onSegment: (segment) => {
+          const cleaned = stripFollowUpTagInline(segment);
+          if (cleaned.length > 0) queue.push(cleaned);
+        },
+        onEnd: (finalSegment) => {
+          if (finalSegment !== null) {
+            const cleaned = stripFollowUpTagInline(finalSegment);
+            if (cleaned.length > 0) queue.push(cleaned);
+          }
+          queue.close();
+        },
+      });
+
       const timeout = setTimeout(() => {
         if (!resolved) {
           cleanup();
+          segmenter.abort();
+          queue.close();
           reject(new Error(`Channel response timeout after ${CHANNEL_RESPONSE_TIMEOUT_MS / 1000}s`));
         }
       }, CHANNEL_RESPONSE_TIMEOUT_MS);
@@ -176,30 +235,35 @@ async function routeViaChannel(
 
       channelServer.addResponseListener(deviceId, {
         onDelta: (_runId, text) => {
-          if (!resolved) accumulated += text;
+          if (resolved) return;
+          accumulated += text;
+          segmenter.push(text);
         },
         onEnd: (_runId) => {
-          if (!resolved) {
-            cleanup();
-            resolve(accumulated);
-          }
+          if (resolved) return;
+          cleanup();
+          segmenter.end();
+          resolve(accumulated);
         },
         onError: (_runId, message) => {
-          if (!resolved) {
-            cleanup();
-            reject(new Error(message));
-          }
+          if (resolved) return;
+          cleanup();
+          segmenter.abort();
+          queue.close();
+          reject(new Error(message));
         },
       });
 
       signal.addEventListener("abort", () => {
-        if (!resolved) {
-          cleanup();
-          reject(new Error("Aborted"));
-        }
+        if (resolved) return;
+        cleanup();
+        segmenter.abort();
+        queue.close();
+        reject(new Error("Aborted"));
       }, { once: true });
     });
   } catch (err) {
+    await queue.done();
     if (signal.aborted) return;
     sendJSON(ws, { type: "error", code: "BACKEND_ERROR", message: (err as Error).message });
     await synthesizeError(ws, deviceId, signal, targetRate);
@@ -207,12 +271,13 @@ async function routeViaChannel(
     return;
   }
 
+  // Wait for the synth worker to drain all flushed segments.
+  await queue.done();
   if (signal.aborted) return;
 
   const { followUp, replyText } = resolveFollowUp(fullReply, getFollowUpMode(deviceId));
   console.log(`[pipeline] Channel reply (${replyText.length} chars, follow_up=${followUp}): ${replyText.substring(0, 200)}`);
-  await synthesizeAndSend(ws, deviceId, replyText, signal, targetRate);
-  if (!signal.aborted) sendAudioEnd(ws, followUp);
+  sendAudioEnd(ws, followUp);
 }
 
 export async function runVoiceTurn(

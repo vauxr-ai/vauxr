@@ -9,6 +9,7 @@ Features grouped by theme. No ordering assigned.
 ### Conversation Quality
 - **Follow-up mode** — server sends `follow_up` flag; device stays in listening state automatically after a response
 - **Interruption** — wake word fires during playback to abort and start a new turn; full-duplex + AEC via ESP-SR AFE (ESP32-S3 supports simultaneous I2S TX/RX, AEC built into the same AFE framework as VAD)
+- ~~**Streaming TTS via idle-pause detection** — flush buffered assistant text to Piper whenever the delta stream goes idle (default 400ms) so the device starts speaking while the agent is still thinking or running tools, instead of waiting for the full reply~~ ✅
 
 ### Device Management
 - **Device management REST API** — `/api/devices` endpoints for creating, listing, renaming, and revoking devices; each device gets its own unique token at registration. Replaces the single shared `DEVICE_TOKEN` `.env` bootstrap with proper per-device identity, auditability, and rotation.
