@@ -58,8 +58,11 @@ export class SegmentQueue {
       }
 
       const segment = this.items.shift()!;
+      const pending = this.items.length;
+      console.log(`[segment-queue] synthesizing (${segment.length} chars, ${pending} queued): "${segment.substring(0, 80)}${segment.length > 80 ? "..." : ""}"`);
       try {
         await this.opts.synthesize(segment);
+        console.log(`[segment-queue] done (${segment.length} chars)`);
       } catch (err) {
         if (this.opts.onError) {
           this.opts.onError(err as Error);

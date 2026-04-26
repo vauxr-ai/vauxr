@@ -28,8 +28,10 @@ export class IdleSegmenter {
     if (this.buffer.length > 0) {
       const final = this.buffer;
       this.buffer = "";
+      console.log(`[segmenter] end flush (${final.length} chars): "${final.substring(0, 80)}${final.length > 80 ? "..." : ""}"`);
       this.opts.onEnd(final);
     } else {
+      console.log("[segmenter] end (no remaining buffer)");
       this.opts.onEnd(null);
     }
   }
@@ -61,6 +63,7 @@ export class IdleSegmenter {
     if (this.buffer.length === 0) return;
     const segment = this.buffer;
     this.buffer = "";
+    console.log(`[segmenter] idle flush (${segment.length} chars): "${segment.substring(0, 80)}${segment.length > 80 ? "..." : ""}"`);
     this.opts.onSegment(segment);
   }
 }
