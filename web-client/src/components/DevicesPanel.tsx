@@ -7,7 +7,6 @@ type FollowUpMode = "auto" | "always" | "never";
 
 interface DeviceConfig {
   name?: string;
-  voice?: boolean;
   follow_up_mode?: FollowUpMode;
   output_sample_rate?: number;
 }
@@ -247,7 +246,7 @@ function DeviceCard({
     }
   }, [device.config?.name, device.name]);
 
-  const [annText, setAnnText] = useState("");
+  const [annText, setAnnText] = useState("hello world");
   const [annError, setAnnError] = useState("");
 
   const [ctlCommand, setCtlCommand] = useState<string>(COMMANDS[0]);
@@ -256,10 +255,11 @@ function DeviceCard({
 
   const handleAnnounce = async () => {
     setAnnError("");
+    const text = annText.trim() === "" ? "hello world" : annText;
     try {
-      await api.announce(device.id, annText);
-      addLog("sys", `Announce sent to ${device.id}: "${annText}"`);
-      setAnnText("");
+      await api.announce(device.id, text);
+      addLog("sys", `Announce sent to ${device.id}: "${text}"`);
+      setAnnText("hello world");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setAnnError(msg);
@@ -339,20 +339,6 @@ function DeviceCard({
                   onBlur={handleNameBlur}
                   disabled={saving}
                 />
-              </label>
-              <label className={labelClass}>
-                Voice
-                <span className="flex h-[26px] items-center">
-                  <input
-                    type="checkbox"
-                    className="focus-ring h-4 w-4 rounded border-white/10 bg-zinc-900 text-indigo-500"
-                    checked={device.config?.voice !== false}
-                    onChange={(e) =>
-                      onPatch(device.id, { voice: e.target.checked }, `voice → ${e.target.checked}`)
-                    }
-                    disabled={saving}
-                  />
-                </span>
               </label>
               <label className={labelClass}>
                 Follow-up

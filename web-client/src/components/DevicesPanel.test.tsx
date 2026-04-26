@@ -25,7 +25,6 @@ interface FakeDevice {
   lastSeen: string;
   config: {
     name?: string;
-    voice?: boolean;
     follow_up_mode?: "auto" | "always" | "never";
     output_sample_rate?: number;
   };
@@ -37,14 +36,14 @@ const DEVICES: FakeDevice[] = [
     name: "Living Room",
     state: "idle",
     lastSeen: "2026-01-01T12:00:00Z",
-    config: { name: "Living Room", voice: true, follow_up_mode: "auto" },
+    config: { name: "Living Room", follow_up_mode: "auto" },
   },
   {
     id: "d2",
     name: "Kitchen",
     state: "listening",
     lastSeen: "2026-01-01T12:00:00Z",
-    config: { name: "Kitchen", voice: true, follow_up_mode: "always" },
+    config: { name: "Kitchen", follow_up_mode: "always" },
   },
 ];
 
@@ -224,31 +223,6 @@ describe("DevicesPanel", () => {
       });
     });
 
-    it("changing voice toggle saves voice patch", async () => {
-      const user = userEvent.setup();
-      const updated = {
-        ...DEVICES[0],
-        config: { ...DEVICES[0].config, voice: false },
-      };
-      fetchSpy.mockResolvedValueOnce(jsonResponse(DEVICES));
-      fetchSpy.mockResolvedValueOnce(jsonResponse(updated));
-
-      renderPanel();
-      const card = await expandFirstCard(user);
-
-      const voiceCheckbox = within(card).getByRole("checkbox");
-      expect(voiceCheckbox).toBeChecked();
-      await user.click(voiceCheckbox);
-
-      await waitFor(() => {
-        const patchCall = fetchSpy.mock.calls.find(
-          (c) => typeof c[0] === "string" && (c[0] as string).includes("/api/devices/d1"),
-        );
-        expect(patchCall).toBeDefined();
-        expect(JSON.parse((patchCall![1] as RequestInit).body as string)).toEqual({ voice: false });
-      });
-    });
-
     it("name input saves on blur if changed", async () => {
       const user = userEvent.setup();
       fetchSpy.mockResolvedValueOnce(jsonResponse(DEVICES));
@@ -276,6 +250,18 @@ describe("DevicesPanel", () => {
   });
 
   describe("announce action (per card)", () => {
+    it("announce input is pre-filled with 'hello world'", async () => {
+      const user = userEvent.setup();
+      renderPanel();
+      await waitForDevices();
+      const items = within(screen.getByRole("list")).getAllByRole("listitem");
+      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+
+      const card = items[0];
+      const text = within(card).getByPlaceholderText(/hello from the browser/i) as HTMLInputElement;
+      expect(text.value).toBe("hello world");
+    });
+
     it("Send button calls api.announce with this device's id", async () => {
       const user = userEvent.setup();
       mockAnnounce.mockResolvedValue(undefined);
@@ -287,6 +273,7 @@ describe("DevicesPanel", () => {
 
       const card = items[1];
       const text = within(card).getByPlaceholderText(/hello from the browser/i);
+      await user.clear(text);
       await user.type(text, "Test");
 
       const sendButtons = within(card).getAllByRole("button", { name: "Send" });
@@ -298,7 +285,7 @@ describe("DevicesPanel", () => {
       });
     });
 
-    it("clears text input after a successful announce", async () => {
+    it("resets text input to 'hello world' after a successful announce", async () => {
       const user = userEvent.setup();
       mockAnnounce.mockResolvedValue(undefined);
       renderPanel();
@@ -308,13 +295,36 @@ describe("DevicesPanel", () => {
 
       const card = items[0];
       const text = within(card).getByPlaceholderText(/hello from the browser/i) as HTMLInputElement;
+      await user.clear(text);
       await user.type(text, "Hello");
       expect(text.value).toBe("Hello");
 
       const sendButtons = within(card).getAllByRole("button", { name: "Send" });
       await user.click(sendButtons[0]);
 
-      await waitFor(() => expect(text.value).toBe(""));
+      await waitFor(() => expect(text.value).toBe("hello world"));
+    });
+
+    it("submitting empty text sends 'hello world' instead of erroring", async () => {
+      const user = userEvent.setup();
+      mockAnnounce.mockResolvedValue(undefined);
+      const addLog = vi.fn();
+      renderPanel({ addLog });
+      await waitForDevices();
+      const items = within(screen.getByRole("list")).getAllByRole("listitem");
+      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+
+      const card = items[0];
+      const text = within(card).getByPlaceholderText(/hello from the browser/i) as HTMLInputElement;
+      await user.clear(text);
+      expect(text.value).toBe("");
+
+      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
+      await user.click(sendButtons[0]);
+
+      await waitFor(() => {
+        expect(mockAnnounce).toHaveBeenCalledWith("d1", "hello world");
+      });
     });
 
     it("shows inline error and logs when announce fails", async () => {
@@ -328,6 +338,7 @@ describe("DevicesPanel", () => {
 
       const card = items[0];
       const text = within(card).getByPlaceholderText(/hello from the browser/i);
+      await user.clear(text);
       await user.type(text, "Hi");
       const sendButtons = within(card).getAllByRole("button", { name: "Send" });
       await user.click(sendButtons[0]);

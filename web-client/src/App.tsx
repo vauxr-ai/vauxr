@@ -195,7 +195,7 @@ export default function App() {
       main={
         <ResizableSplit
           top={
-            <div className="flex h-full flex-col gap-5 px-6 py-6">
+            <div className="flex h-full min-h-0 flex-col gap-5 overflow-y-auto px-6 py-6">
               {micUnavailable && <MicWarning />}
               {sectionContent}
             </div>
