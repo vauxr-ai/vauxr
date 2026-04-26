@@ -68,8 +68,8 @@ describe("App shell", () => {
     expect(screen.getByTestId("talk-helper")).toHaveTextContent(/connect/i);
   });
 
-  it("renders the event log title in the bottom pane", () => {
+  it("renders the event log empty-state message in the bottom pane", () => {
     render(<App />);
-    expect(screen.getByText(/event log/i)).toBeInTheDocument();
+    expect(screen.getByText(/no events yet/i)).toBeInTheDocument();
   });
 });

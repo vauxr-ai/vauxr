@@ -207,7 +207,7 @@ export default function App() {
                 <StatusBar state={ws.state} transcript={transcript} />
               </div>
               <div className="min-h-0 flex-1">
-                <EventLog entries={ws.log} />
+                <EventLog entries={ws.log} onClear={ws.clearLog} />
               </div>
             </div>
           }
