@@ -7,10 +7,11 @@ export interface DeviceConfig {
   name?: string;
   voice?: boolean;
   follow_up_mode?: FollowUpMode;
+  output_sample_rate?: number;
 }
 
 const VALID_FOLLOW_UP_MODES: ReadonlySet<FollowUpMode> = new Set(["auto", "always", "never"]);
-const KNOWN_FIELDS: ReadonlySet<keyof DeviceConfig> = new Set(["name", "voice", "follow_up_mode"]);
+const KNOWN_FIELDS: ReadonlySet<keyof DeviceConfig> = new Set(["name", "voice", "follow_up_mode", "output_sample_rate"]);
 
 export function deviceConfigPath(dataDir: string): string {
   return join(dataDir, "devices.json");
@@ -31,6 +32,10 @@ function sanitizeEntry(deviceId: string, raw: unknown): DeviceConfig {
       } else {
         console.warn(`[device-config] Invalid follow_up_mode for ${deviceId}: ${String(value)} — treating as "auto"`);
         cfg.follow_up_mode = "auto";
+      }
+    } else if (key === "output_sample_rate") {
+      if (typeof value === "number" && value > 0) {
+        cfg.output_sample_rate = value;
       }
     }
   }

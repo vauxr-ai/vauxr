@@ -168,6 +168,7 @@ async function handleAnnounce(req: IncomingMessage, res: ServerResponse, deviceI
   try {
     let sentStart = false;
     for await (const chunk of synthesize(text, {
+      targetRate: device.outputSampleRate,
       signal: abortController.signal,
       onSampleRate: (rate) => {
         if (!sentStart && device.ws.readyState === device.ws.OPEN) {

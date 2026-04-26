@@ -16,6 +16,7 @@ export interface LogEntry {
 interface UseWebSocketOpts {
   onReady: () => void;
   onTranscript: (text: string) => void;
+  onAudioStart: (sampleRate: number) => void;
   onAudioFrame: (pcm: ArrayBuffer) => void;
   onAudioEnd: (followUp: boolean) => void;
   onError: (code: string, message: string) => void;
@@ -76,6 +77,11 @@ export function useWebSocket(opts: UseWebSocketOpts) {
             case "transcript":
               setState("processing");
               opts.onTranscript(msg.text);
+              break;
+            case "audio.start":
+              if (typeof msg.sample_rate === "number") {
+                opts.onAudioStart(msg.sample_rate);
+              }
               break;
             case "audio.end": {
               const followUp = msg.follow_up === true;

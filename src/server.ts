@@ -56,9 +56,11 @@ function handleTextMessage(ws: WebSocket, ctx: ConnectionCtx, data: string): voi
 
       ctx.deviceId = msg.device_id;
       ctx.audioChunks = [];
-      ctx.sampleRate = msg.output_sample_rate ?? msg.sample_rate;
       ctx.state = "LISTENING";
-      registry.register(msg.device_id, ws, msg.name ?? msg.device_id);
+      const entry = registry.register(msg.device_id, ws, msg.name ?? msg.device_id);
+      // Device-specified rate overrides config; config is the fallback
+      ctx.sampleRate = msg.output_sample_rate ?? msg.sample_rate ?? entry.config.output_sample_rate;
+      entry.outputSampleRate = ctx.sampleRate;
       registry.setState(msg.device_id, "listening");
       sendJSON(ws, { type: "ready" });
       break;

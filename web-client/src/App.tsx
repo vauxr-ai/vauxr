@@ -21,6 +21,9 @@ export default function App() {
     () => ({
       onReady: () => {},
       onTranscript: (text: string) => setTranscript(text),
+      onAudioStart: (sampleRate: number) => {
+        audio.setPlaybackRate(sampleRate);
+      },
       onAudioFrame: (pcm: ArrayBuffer) => {
         ws.setState("speaking");
         audio.queuePlayback(pcm);
