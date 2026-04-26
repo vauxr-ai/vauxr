@@ -53,9 +53,12 @@ describe("App shell", () => {
 
     await user.click(within(sidebar).getByRole("button", { name: /devices/i }));
     expect(within(main).getByText(/connect to a server to manage devices/i)).toBeInTheDocument();
+  });
 
-    await user.click(within(sidebar).getByRole("button", { name: /http api/i }));
-    expect(within(main).getByText(/connect to a server to use the http api/i)).toBeInTheDocument();
+  it("does not include the legacy 'HTTP API' nav entry", () => {
+    render(<App />);
+    const sidebar = screen.getByRole("complementary", { name: /primary navigation/i });
+    expect(within(sidebar).queryByRole("button", { name: /http api/i })).not.toBeInTheDocument();
   });
 
   it("renders the resize handle between top and bottom panes", () => {

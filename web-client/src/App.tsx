@@ -8,7 +8,6 @@ import EventLog from "./components/EventLog";
 import ConfigPanel from "./components/ConfigPanel";
 import ChannelsPanel from "./components/ChannelsPanel";
 import DevicesPanel from "./components/DevicesPanel";
-import HttpApiPanel from "./components/HttpApiPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAudio } from "./hooks/useAudio";
@@ -269,15 +268,6 @@ function renderSection(id: SectionId, props: SectionProps) {
     case "devices":
       return (
         <DevicesPanel
-          wsUrl={props.wsUrl}
-          token={props.wsToken}
-          wsState={props.wsState}
-          addLog={props.addLog}
-        />
-      );
-    case "api":
-      return (
-        <HttpApiPanel
           wsUrl={props.wsUrl}
           token={props.wsToken}
           wsState={props.wsState}

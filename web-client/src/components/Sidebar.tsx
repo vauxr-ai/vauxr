@@ -5,7 +5,6 @@ export type SectionId =
   | "connection"
   | "channels"
   | "devices"
-  | "api"
   | "settings";
 
 interface NavItem {
@@ -18,7 +17,6 @@ const NAV_ITEMS: NavItem[] = [
   { id: "connection", label: "Connection", icon: "connection" },
   { id: "channels", label: "Channels", icon: "channels" },
   { id: "devices", label: "Devices", icon: "devices" },
-  { id: "api", label: "HTTP API", icon: "api" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
 

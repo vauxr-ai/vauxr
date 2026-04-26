@@ -16,13 +16,17 @@ describe("Sidebar", () => {
     return { onSelect };
   }
 
-  it("renders all five nav items", () => {
+  it("renders all four nav items", () => {
     renderSidebar();
     expect(screen.getByRole("button", { name: /connection/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /channels/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /devices/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /http api/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /settings/i })).toBeInTheDocument();
+  });
+
+  it("does not render an 'HTTP API' nav entry", () => {
+    renderSidebar();
+    expect(screen.queryByRole("button", { name: /http api/i })).not.toBeInTheDocument();
   });
 
   it("marks the active item with aria-current=page", () => {
@@ -41,8 +45,8 @@ describe("Sidebar", () => {
     await user.click(screen.getByRole("button", { name: /devices/i }));
     expect(onSelect).toHaveBeenCalledWith("devices");
 
-    await user.click(screen.getByRole("button", { name: /http api/i }));
-    expect(onSelect).toHaveBeenCalledWith("api");
+    await user.click(screen.getByRole("button", { name: /settings/i }));
+    expect(onSelect).toHaveBeenCalledWith("settings");
   });
 
   it("shows 'Disconnected' pill when state is disconnected", () => {
