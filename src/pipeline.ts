@@ -145,7 +145,7 @@ async function routeViaOpenClawDirect(
   if (!signal.aborted) sendAudioEnd(ws, followUp);
 }
 
-const CHANNEL_RESPONSE_TIMEOUT_MS = 60_000;
+const CHANNEL_RESPONSE_TIMEOUT_MS = 120_000;
 
 async function synthesizeSegment(
   ws: WebSocket,
@@ -218,14 +218,19 @@ async function routeViaChannel(
         },
       });
 
-      const timeout = setTimeout(() => {
-        if (!resolved) {
-          cleanup();
-          segmenter.abort();
-          queue.close();
-          reject(new Error(`Channel response timeout after ${CHANNEL_RESPONSE_TIMEOUT_MS / 1000}s`));
-        }
-      }, CHANNEL_RESPONSE_TIMEOUT_MS);
+      let timeout: ReturnType<typeof setTimeout>;
+      const armTimeout = () => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => {
+          if (!resolved) {
+            cleanup();
+            segmenter.abort();
+            queue.close();
+            reject(new Error(`Channel response timeout after ${CHANNEL_RESPONSE_TIMEOUT_MS / 1000}s`));
+          }
+        }, CHANNEL_RESPONSE_TIMEOUT_MS);
+      };
+      armTimeout();
 
       const cleanup = () => {
         resolved = true;
@@ -236,6 +241,7 @@ async function routeViaChannel(
       channelServer.addResponseListener(deviceId, {
         onDelta: (_runId, text) => {
           if (resolved) return;
+          armTimeout();
           accumulated += text;
           segmenter.push(text);
         },
