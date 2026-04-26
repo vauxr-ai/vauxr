@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
 
 const MIC_SAMPLE_RATE = 16000;
-const PLAYBACK_SAMPLE_RATE = 22050;
+const DEFAULT_PLAYBACK_SAMPLE_RATE = 22050;
 const CHUNK_SAMPLES = 1600; // ~100ms at 16kHz
 
 // Served as a static asset from /public so it's delivered as plain JS with
@@ -16,6 +16,7 @@ export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
 
   // Playback scheduling
   const playCtxRef = useRef<AudioContext | null>(null);
+  const playRateRef = useRef(DEFAULT_PLAYBACK_SAMPLE_RATE);
   const nextStartRef = useRef(0);
 
   const startCapture = useCallback(async () => {
@@ -62,9 +63,19 @@ export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
     ctxRef.current = null;
   }, []);
 
+  const setPlaybackRate = useCallback((rate: number) => {
+    if (rate === playRateRef.current) return;
+    playRateRef.current = rate;
+    // Close existing context so it gets recreated at the new rate
+    if (playCtxRef.current && playCtxRef.current.state !== "closed") {
+      playCtxRef.current.close();
+      playCtxRef.current = null;
+    }
+  }, []);
+
   const ensurePlayCtx = useCallback(() => {
     if (!playCtxRef.current || playCtxRef.current.state === "closed") {
-      playCtxRef.current = new AudioContext({ sampleRate: PLAYBACK_SAMPLE_RATE });
+      playCtxRef.current = new AudioContext({ sampleRate: playRateRef.current });
     }
     return playCtxRef.current;
   }, []);
@@ -82,7 +93,7 @@ export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
         float32[i] = int16[i] / 32768;
       }
 
-      const buf = ctx.createBuffer(1, float32.length, PLAYBACK_SAMPLE_RATE);
+      const buf = ctx.createBuffer(1, float32.length, playRateRef.current);
       buf.copyToChannel(float32, 0);
 
       const source = ctx.createBufferSource();
@@ -97,5 +108,5 @@ export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
     [ensurePlayCtx],
   );
 
-  return { startCapture, stopCapture, queuePlayback, resetPlayback };
+  return { startCapture, stopCapture, queuePlayback, resetPlayback, setPlaybackRate };
 }

@@ -13,6 +13,7 @@ export interface DeviceEntry {
   seq: number;
   abortController: AbortController | null;
   config: DeviceConfig;
+  outputSampleRate: number | undefined;
 }
 
 const devices = new Map<string, DeviceEntry>();
@@ -58,6 +59,7 @@ export function register(deviceId: string, ws: WebSocket, name?: string): Device
     seq: 0,
     abortController: null,
     config,
+    outputSampleRate: undefined,
   };
   devices.set(deviceId, entry);
   return entry;

@@ -8,6 +8,7 @@ interface DeviceConfig {
   name?: string;
   voice?: boolean;
   follow_up_mode?: FollowUpMode;
+  output_sample_rate?: number;
 }
 
 interface ApiDeviceWithConfig {
@@ -88,8 +89,8 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
     return () => clearInterval(id);
   }, [wsState, refresh]);
 
-  const updateFollowUp = useCallback(
-    async (deviceId: string, mode: FollowUpMode) => {
+  const updateDeviceConfig = useCallback(
+    async (deviceId: string, patch: Partial<DeviceConfig>, label: string) => {
       setSaveStatus((s) => ({ ...s, [deviceId]: { status: "saving" } }));
       try {
         const res = await fetch(`${baseUrlRef.current}/api/devices/${encodeURIComponent(deviceId)}`, {
@@ -98,7 +99,7 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
             Authorization: `Bearer ${tokenRef.current}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ follow_up_mode: mode }),
+          body: JSON.stringify(patch),
         });
         if (!res.ok) {
           let msg = res.statusText;
@@ -111,7 +112,7 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
         const updated = await res.json() as ApiDeviceWithConfig;
         setDevices((list) => list.map((d) => (d.id === deviceId ? updated : d)));
         setSaveStatus((s) => ({ ...s, [deviceId]: { status: "saved" } }));
-        addLog("sys", `Device ${deviceId}: follow_up_mode → ${mode}`);
+        addLog("sys", `Device ${deviceId}: ${label}`);
         setTimeout(() => {
           setSaveStatus((s) => {
             if (s[deviceId]?.status !== "saved") return s;
@@ -150,6 +151,7 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
         <ul className="space-y-2">
           {devices.map((d) => {
             const mode: FollowUpMode = d.config?.follow_up_mode ?? "auto";
+            const sampleRate = d.config?.output_sample_rate;
             const status = saveStatus[d.id];
             return (
               <li
@@ -174,7 +176,7 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
                   <select
                     className="rounded bg-gray-800 px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
                     value={mode}
-                    onChange={(e) => updateFollowUp(d.id, e.target.value as FollowUpMode)}
+                    onChange={(e) => updateDeviceConfig(d.id, { follow_up_mode: e.target.value as FollowUpMode }, `follow_up_mode → ${e.target.value}`)}
                     disabled={status?.status === "saving"}
                   >
                     {FOLLOW_UP_OPTIONS.map((m) => (
@@ -182,6 +184,26 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
                         {m}
                       </option>
                     ))}
+                  </select>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs text-gray-400">
+                  Sample rate
+                  <select
+                    className="rounded bg-gray-800 px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                    value={sampleRate ?? ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const patch = val === "" ? { output_sample_rate: undefined } : { output_sample_rate: parseInt(val, 10) };
+                      updateDeviceConfig(d.id, patch, `output_sample_rate → ${val || "default"}`);
+                    }}
+                    disabled={status?.status === "saving"}
+                  >
+                    <option value="">default</option>
+                    <option value="16000">16000</option>
+                    <option value="22050">22050</option>
+                    <option value="24000">24000</option>
+                    <option value="44100">44100</option>
                   </select>
                 </label>
 
