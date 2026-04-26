@@ -35,6 +35,10 @@ export function useWebSocket(opts: UseWebSocketOpts) {
     setLog((prev) => [...prev, { ts: Date.now(), dir, text }]);
   }, []);
 
+  const clearLog = useCallback(() => {
+    setLog([]);
+  }, []);
+
   const connect = useCallback(
     (url: string, deviceId: string, token: string) => {
       if (wsRef.current) return;
@@ -159,6 +163,7 @@ export function useWebSocket(opts: UseWebSocketOpts) {
     setState,
     log,
     addLog,
+    clearLog,
     connect,
     disconnect,
     sendVoiceStart,

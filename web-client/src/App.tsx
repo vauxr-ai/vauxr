@@ -1,13 +1,18 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import ConfigPanel from "./components/ConfigPanel";
+import Layout from "./components/Layout";
+import Sidebar, { type SectionId } from "./components/Sidebar";
+import TalkPanel, { type TalkMode } from "./components/TalkPanel";
+import ResizableSplit from "./components/ResizableSplit";
 import StatusBar from "./components/StatusBar";
-import TalkButton from "./components/TalkButton";
 import EventLog from "./components/EventLog";
-import HttpApiPanel from "./components/HttpApiPanel";
+import ConfigPanel from "./components/ConfigPanel";
 import ChannelsPanel from "./components/ChannelsPanel";
 import DevicesPanel from "./components/DevicesPanel";
+import SettingsPanel from "./components/SettingsPanel";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAudio } from "./hooks/useAudio";
+
+const CONNECTED_STATES = ["connected", "listening", "processing", "speaking"] as const;
 
 export default function App() {
   const [transcript, setTranscript] = useState("");
@@ -16,6 +21,17 @@ export default function App() {
   const talkingRef = useRef(false);
   const [wsUrl, setWsUrl] = useState("");
   const [wsToken, setWsToken] = useState("");
+  const [deviceId, setDeviceId] = useState("");
+
+  const [activeSection, setActiveSection] = useState<SectionId>("connection");
+  const [talkMode, setTalkMode] = useState<TalkMode>("hold");
+  const [inputLevel, setInputLevel] = useState(0);
+  const [outputVolume, setOutputVolumeState] = useState(0.85);
+  const [outputMuted, setOutputMutedState] = useState(false);
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+
+  // Round-trip latency: voice.end → first audio frame back from server.
+  const pendingLatencyStart = useRef<number | null>(null);
 
   const wsOpts = useMemo(
     () => ({
@@ -25,6 +41,10 @@ export default function App() {
         audio.setPlaybackRate(sampleRate);
       },
       onAudioFrame: (pcm: ArrayBuffer) => {
+        if (pendingLatencyStart.current != null) {
+          setLatencyMs(Math.round(performance.now() - pendingLatencyStart.current));
+          pendingLatencyStart.current = null;
+        }
         ws.setState("speaking");
         audio.queuePlayback(pcm);
       },
@@ -39,17 +59,24 @@ export default function App() {
   );
 
   const ws = useWebSocket(wsOpts);
-  const audio = useAudio(
-    useCallback(
+  const audio = useAudio({
+    onPcmChunk: useCallback(
       (pcm: Int16Array) => {
         if (talkingRef.current) ws.sendAudioFrame(pcm);
       },
       [ws],
     ),
-  );
+    onInputLevel: useCallback((level: number) => {
+      setInputLevel(level);
+    }, []),
+  });
 
   // Patch the memoized opts to use live refs
   wsOpts.onAudioFrame = (pcm: ArrayBuffer) => {
+    if (pendingLatencyStart.current != null) {
+      setLatencyMs(Math.round(performance.now() - pendingLatencyStart.current));
+      pendingLatencyStart.current = null;
+    }
     ws.setState("speaking");
     audio.queuePlayback(pcm);
   };
@@ -59,15 +86,16 @@ export default function App() {
   };
 
   const handleConnect = useCallback(
-    (url: string, deviceId: string, token: string) => {
+    (url: string, dev: string, token: string) => {
       setWsUrl(url);
       setWsToken(token);
-      ws.connect(url, deviceId, token);
+      setDeviceId(dev);
+      ws.connect(url, dev, token);
     },
     [ws],
   );
 
-  const handleTalkStart = useCallback(async () => {
+  const startActualTalking = useCallback(async () => {
     talkingRef.current = true;
     setTalking(true);
     setFollowUpListening(false);
@@ -89,85 +117,180 @@ export default function App() {
     }
   }, [ws, audio]);
 
-  const handleTalkEnd = useCallback(() => {
+  const stopActualTalking = useCallback(() => {
+    if (!talkingRef.current) return;
     talkingRef.current = false;
     setTalking(false);
     audio.stopCapture();
     ws.sendJson({ type: "voice.end" });
     ws.setState("processing");
+    pendingLatencyStart.current = performance.now();
   }, [ws, audio]);
 
-  const isConnected = ws.state !== "disconnected";
+  const handleTalkStart = useCallback(async () => {
+    if (talkMode === "toggle") {
+      if (talkingRef.current) stopActualTalking();
+      else await startActualTalking();
+      return;
+    }
+    await startActualTalking();
+  }, [talkMode, startActualTalking, stopActualTalking]);
+
+  const handleTalkEnd = useCallback(() => {
+    if (talkMode === "toggle") return;
+    stopActualTalking();
+  }, [talkMode, stopActualTalking]);
+
+  const handleInterrupt = useCallback(() => {
+    audio.stopPlayback();
+    ws.setState("connected");
+    ws.addLog("sys", "Playback interrupted");
+  }, [audio, ws]);
+
+  const handleSetVolume = useCallback(
+    (value: number) => {
+      setOutputVolumeState(value);
+      audio.setOutputVolume(value);
+      if (outputMuted && value > 0) {
+        setOutputMutedState(false);
+        audio.setMuted(false);
+      }
+    },
+    [audio, outputMuted],
+  );
+
+  const handleToggleMute = useCallback(() => {
+    setOutputMutedState((m) => {
+      const next = !m;
+      audio.setMuted(next);
+      return next;
+    });
+  }, [audio]);
+
+  const isConnected = (CONNECTED_STATES as readonly string[]).includes(ws.state);
   const micUnavailable =
-    !window.isSecureContext || !navigator.mediaDevices?.getUserMedia;
+    typeof window !== "undefined" &&
+    (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia);
+
+  const sectionContent = renderSection(activeSection, {
+    isConnected,
+    onConnect: handleConnect,
+    onDisconnect: ws.disconnect,
+    wsUrl,
+    wsToken,
+    wsState: ws.state,
+    addLog: ws.addLog,
+  });
 
   return (
-    <div className="flex h-screen flex-col gap-4 p-6 max-w-4xl mx-auto">
-      <h1 className="text-lg font-bold tracking-tight">
-        Vauxr Portal
-      </h1>
-
-      {micUnavailable && (
-        <div className="rounded border border-amber-600/40 bg-amber-900/30 px-3 py-2 text-sm text-amber-200">
-          <strong className="font-semibold">Microphone unavailable.</strong>{" "}
-          Voice input requires a secure context. Load this page over HTTPS or
-          via <code className="font-mono">http://localhost</code> — browsers
-          block <code className="font-mono">getUserMedia</code> on plain HTTP
-          origins like <code className="font-mono">{window.location.host}</code>.
-        </div>
-      )}
-
-      <ConfigPanel
-        connected={isConnected}
-        onConnect={handleConnect}
-        onDisconnect={ws.disconnect}
-      />
-
-      <StatusBar state={ws.state} transcript={transcript} />
-
-      <div className="flex justify-center py-4">
-        <TalkButton
-          disabled={
-            !isConnected ||
-            micUnavailable ||
-            ws.state === "speaking" ||
-            ws.state === "processing"
+    <Layout
+      sidebar={
+        <Sidebar
+          active={activeSection}
+          onSelect={setActiveSection}
+          connectionState={ws.state}
+          deviceId={deviceId}
+        />
+      }
+      main={
+        <ResizableSplit
+          top={
+            <div className="flex h-full min-h-0 flex-col gap-5 overflow-y-auto px-6 py-6">
+              {micUnavailable && <MicWarning />}
+              {sectionContent}
+            </div>
           }
-          active={talking}
-          processing={ws.state === "processing"}
-          speaking={ws.state === "speaking"}
-          followUp={followUpListening && !talking && ws.state !== "processing" && ws.state !== "speaking"}
+          bottom={
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="border-b border-white/5 px-6 py-2">
+                <StatusBar state={ws.state} transcript={transcript} />
+              </div>
+              <div className="min-h-0 flex-1">
+                <EventLog entries={ws.log} onClear={ws.clearLog} />
+              </div>
+            </div>
+          }
+        />
+      }
+      talk={
+        <TalkPanel
+          connectionState={ws.state}
+          isConnected={isConnected}
+          micUnavailable={micUnavailable}
+          talking={talking}
+          followUpListening={followUpListening}
+          inputLevel={inputLevel}
+          outputVolume={outputVolume}
+          outputMuted={outputMuted}
+          talkMode={talkMode}
+          latencyMs={latencyMs}
           onTalkStart={handleTalkStart}
           onTalkEnd={handleTalkEnd}
+          onSetVolume={handleSetVolume}
+          onToggleMute={handleToggleMute}
+          onSetTalkMode={setTalkMode}
+          onInterrupt={handleInterrupt}
         />
-      </div>
+      }
+    />
+  );
+}
 
-      <p className="text-xs text-gray-500 text-center">
-        Hold the button or press Spacebar to talk
+interface SectionProps {
+  isConnected: boolean;
+  onConnect: (url: string, deviceId: string, token: string) => void;
+  onDisconnect: () => void;
+  wsUrl: string;
+  wsToken: string;
+  wsState: ReturnType<typeof useWebSocket>["state"];
+  addLog: ReturnType<typeof useWebSocket>["addLog"];
+}
+
+function renderSection(id: SectionId, props: SectionProps) {
+  switch (id) {
+    case "connection":
+      return (
+        <ConfigPanel
+          connected={props.isConnected}
+          onConnect={props.onConnect}
+          onDisconnect={props.onDisconnect}
+        />
+      );
+    case "channels":
+      return (
+        <ChannelsPanel
+          wsUrl={props.wsUrl}
+          token={props.wsToken}
+          wsState={props.wsState}
+          addLog={props.addLog}
+        />
+      );
+    case "devices":
+      return (
+        <DevicesPanel
+          wsUrl={props.wsUrl}
+          token={props.wsToken}
+          wsState={props.wsState}
+          addLog={props.addLog}
+        />
+      );
+    case "settings":
+      return <SettingsPanel />;
+  }
+}
+
+function MicWarning() {
+  return (
+    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+      <p>
+        <strong className="font-semibold">Microphone unavailable.</strong> Voice
+        input requires a secure context. Load this page over HTTPS or via{" "}
+        <code className="font-mono text-amber-100">http://localhost</code> —
+        browsers block{" "}
+        <code className="font-mono text-amber-100">getUserMedia</code> on plain
+        HTTP origins like{" "}
+        <code className="font-mono text-amber-100">{window.location.host}</code>.
       </p>
-
-      <ChannelsPanel
-        wsUrl={wsUrl}
-        token={wsToken}
-        wsState={ws.state}
-        addLog={ws.addLog}
-      />
-
-      <DevicesPanel
-        wsUrl={wsUrl}
-        token={wsToken}
-        wsState={ws.state}
-        addLog={ws.addLog}
-      />
-
-      <HttpApiPanel
-        wsUrl={wsUrl}
-        token={wsToken}
-        wsState={ws.state}
-        addLog={ws.addLog}
-      />
-
-      <EventLog entries={ws.log} />
     </div>
   );
 }

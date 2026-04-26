@@ -1,3 +1,36 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    font-feature-settings:
+      "cv01" 1,
+      "cv02" 1,
+      "cv11" 1;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-white/5 bg-[#15151a] shadow-inner-border;
+  }
+
+  .card-section-title {
+    @apply text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium;
+  }
+
+  .focus-ring {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60 focus-visible:ring-offset-0;
+  }
+}
