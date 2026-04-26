@@ -5,13 +5,28 @@
     "description": "vauxr HTTP API — device management endpoints"
   },
   "variable": [
-    { "key": "base_url", "value": "http://localhost:8080" },
-    { "key": "token", "value": "YOUR_TOKEN_HERE" },
-    { "key": "device_id", "value": "test-device" }
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "token",
+      "value": "YOUR_TOKEN_HERE"
+    },
+    {
+      "key": "device_id",
+      "value": "test-device"
+    }
   ],
   "auth": {
     "type": "bearer",
-    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
   },
   "item": [
     {
@@ -22,7 +37,16 @@
           "request": {
             "method": "GET",
             "url": "{{base_url}}/api/devices",
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] }
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
           },
           "event": [
             {
@@ -31,6 +55,44 @@
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));",
                   "pm.test('Response is array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update device config (follow_up_mode)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/api/devices/{{device_id}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"follow_up_mode\": \"auto\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('follow_up_mode updated', () => pm.expect(pm.response.json().config.follow_up_mode).to.be.a('string'));"
                 ]
               }
             }
@@ -46,9 +108,26 @@
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/devices/{{device_id}}/announce",
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{ \"text\": \"Hello from Postman\" }" }
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"text\": \"Hello from Postman\" }"
+            }
           },
           "event": [
             {
@@ -67,9 +146,26 @@
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/devices/unknown-id/announce",
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{ \"text\": \"Hello\" }" }
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"text\": \"Hello\" }"
+            }
           },
           "event": [
             {
@@ -87,9 +183,26 @@
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/devices/{{device_id}}/announce",
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{}" }
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
           },
           "event": [
             {
@@ -112,9 +225,26 @@
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/devices/{{device_id}}/command",
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{ \"command\": \"set_volume\", \"params\": { \"volume\": 50 } }" }
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"command\": \"set_volume\", \"params\": { \"volume\": 50 } }"
+            }
           },
           "event": [
             {
@@ -132,9 +262,26 @@
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/devices/{{device_id}}/command",
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{ \"command\": \"mute\" }" }
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"command\": \"mute\" }"
+            }
           },
           "event": [
             {
@@ -152,9 +299,26 @@
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/devices/{{device_id}}/command",
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{ \"command\": \"unmute\" }" }
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"command\": \"unmute\" }"
+            }
           },
           "event": [
             {
@@ -172,9 +336,26 @@
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/devices/{{device_id}}/command",
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{ \"command\": \"reboot\" }" }
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"command\": \"reboot\" }"
+            }
           },
           "event": [
             {
@@ -192,9 +373,26 @@
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/devices/{{device_id}}/command",
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{ \"command\": \"self_destruct\" }" }
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"command\": \"self_destruct\" }"
+            }
           },
           "event": [
             {
@@ -217,7 +415,9 @@
           "request": {
             "method": "GET",
             "url": "{{base_url}}/api/devices",
-            "auth": { "type": "noauth" }
+            "auth": {
+              "type": "noauth"
+            }
           },
           "event": [
             {

@@ -165,7 +165,7 @@ describe("useHttpApi", () => {
       );
     });
 
-    it("calls with body { command: 'set_volume', volume: 75 } when params provided", async () => {
+    it("calls with body { command: 'set_volume', params: { volume: 75 } } when params provided", async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({}),
@@ -178,7 +178,7 @@ describe("useHttpApi", () => {
         `${BASE_URL}/api/devices/dev-1/command`,
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ command: "set_volume", volume: 75 }),
+          body: JSON.stringify({ command: "set_volume", params: { volume: 75 } }),
         }),
       );
     });

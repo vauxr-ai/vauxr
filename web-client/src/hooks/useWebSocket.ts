@@ -16,8 +16,9 @@ export interface LogEntry {
 interface UseWebSocketOpts {
   onReady: () => void;
   onTranscript: (text: string) => void;
+  onAudioStart: (sampleRate: number) => void;
   onAudioFrame: (pcm: ArrayBuffer) => void;
-  onAudioEnd: () => void;
+  onAudioEnd: (followUp: boolean) => void;
   onError: (code: string, message: string) => void;
 }
 
@@ -32,6 +33,10 @@ export function useWebSocket(opts: UseWebSocketOpts) {
 
   const addLog = useCallback((dir: LogEntry["dir"], text: string) => {
     setLog((prev) => [...prev, { ts: Date.now(), dir, text }]);
+  }, []);
+
+  const clearLog = useCallback(() => {
+    setLog([]);
   }, []);
 
   const connect = useCallback(
@@ -77,12 +82,19 @@ export function useWebSocket(opts: UseWebSocketOpts) {
               setState("processing");
               opts.onTranscript(msg.text);
               break;
-            case "audio.end":
-              addLog("sys", `Playback done, ${rxAudioFrames.current} audio frames received`);
+            case "audio.start":
+              if (typeof msg.sample_rate === "number") {
+                opts.onAudioStart(msg.sample_rate);
+              }
+              break;
+            case "audio.end": {
+              const followUp = msg.follow_up === true;
+              addLog("sys", `Playback done, ${rxAudioFrames.current} audio frames received${followUp ? " (follow-up)" : ""}`);
               rxAudioFrames.current = 0;
               setState("connected");
-              opts.onAudioEnd();
+              opts.onAudioEnd(followUp);
               break;
+            }
             case "error":
               opts.onError(msg.code, msg.message);
               break;
@@ -151,6 +163,7 @@ export function useWebSocket(opts: UseWebSocketOpts) {
     setState,
     log,
     addLog,
+    clearLog,
     connect,
     disconnect,
     sendVoiceStart,

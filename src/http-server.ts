@@ -8,6 +8,7 @@ import { makeBinaryFrame } from "./utils.js";
 import { getConfig } from "./config.js";
 import { validateChannelHttpToken, validateToken } from "./auth.js";
 import type { ChannelServer } from "./channel-server.js";
+import type { DeviceConfig, FollowUpMode } from "./device-config.js";
 
 const VALID_COMMANDS = new Set(["set_volume", "mute", "unmute", "reboot"]);
 
@@ -68,9 +69,66 @@ async function handleDevices(_req: IncomingMessage, res: ServerResponse): Promis
     name: d.name,
     state: d.state,
     lastSeen: d.lastSeen.toISOString(),
+    config: d.config,
   }));
   console.log(`[http] 200 devices listed: ${devices.length}`);
   sendJSON(res, 200, devices);
+}
+
+const VALID_FOLLOW_UP_MODES: ReadonlySet<FollowUpMode> = new Set(["auto", "always", "never"]);
+
+async function handleUpdateDevice(req: IncomingMessage, res: ServerResponse, deviceId: string): Promise<void> {
+  const device = registry.get(deviceId);
+  if (!device) {
+    console.log(`[http] 404 device not found: ${deviceId}`);
+    sendJSON(res, 404, { error: "device not found" });
+    return;
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await parseBody(req) as Record<string, unknown>;
+  } catch {
+    console.log(`[http] 400 invalid JSON`);
+    sendJSON(res, 400, { error: "invalid JSON" });
+    return;
+  }
+
+  const patch: DeviceConfig = {};
+  if (body.name !== undefined) {
+    if (typeof body.name !== "string") {
+      sendJSON(res, 400, { error: "name must be a string" });
+      return;
+    }
+    patch.name = body.name;
+  }
+  if (body.voice !== undefined) {
+    if (typeof body.voice !== "boolean") {
+      sendJSON(res, 400, { error: "voice must be a boolean" });
+      return;
+    }
+    patch.voice = body.voice;
+  }
+  if (body.follow_up_mode !== undefined) {
+    if (typeof body.follow_up_mode !== "string" || !VALID_FOLLOW_UP_MODES.has(body.follow_up_mode as FollowUpMode)) {
+      sendJSON(res, 400, { error: "follow_up_mode must be 'auto' | 'always' | 'never'" });
+      return;
+    }
+    patch.follow_up_mode = body.follow_up_mode as FollowUpMode;
+  }
+
+  const next = registry.updateConfig(deviceId, patch);
+  if (next.name) {
+    device.name = next.name;
+  }
+  console.log(`[http] 200 device updated: ${deviceId}`);
+  sendJSON(res, 200, {
+    id: device.id,
+    name: device.name,
+    state: device.state,
+    lastSeen: device.lastSeen.toISOString(),
+    config: next,
+  });
 }
 
 async function handleAnnounce(req: IncomingMessage, res: ServerResponse, deviceId: string): Promise<void> {
@@ -108,7 +166,17 @@ async function handleAnnounce(req: IncomingMessage, res: ServerResponse, deviceI
   const abortController = new AbortController();
   let chunkCount = 0;
   try {
-    for await (const chunk of synthesize(text, abortController.signal)) {
+    let sentStart = false;
+    for await (const chunk of synthesize(text, {
+      targetRate: device.outputSampleRate,
+      signal: abortController.signal,
+      onSampleRate: (rate) => {
+        if (!sentStart && device.ws.readyState === device.ws.OPEN) {
+          device.ws.send(JSON.stringify({ type: "audio.start", sample_rate: rate }));
+          sentStart = true;
+        }
+      },
+    })) {
       const seq = registry.nextSeq(deviceId);
       const frame = makeBinaryFrame(0x03, seq, chunk);
       device.ws.send(frame);
@@ -291,7 +359,7 @@ export function startHttpServer(_channelServer: ChannelServer): ReturnType<typeo
 
       // CORS headers on every response
       res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
       res.setHeader("Access-Control-Max-Age", "86400");
 
@@ -322,6 +390,16 @@ export function startHttpServer(_channelServer: ChannelServer): ReturnType<typeo
           return;
         }
         await handleDevices(req, res);
+        return;
+      }
+
+      // PATCH /api/devices/{id}
+      if (segments[0] === "api" && segments[1] === "devices" && segments.length === 3) {
+        if (method !== "PATCH") {
+          sendJSON(res, 405, { error: "method not allowed" });
+          return;
+        }
+        await handleUpdateDevice(req, res, segments[2]!);
         return;
       }
 

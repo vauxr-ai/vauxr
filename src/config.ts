@@ -38,6 +38,9 @@ export function loadConfig() {
     http: {
       port: parseInt(optional("HTTP_PORT", "8080"), 10),
     },
+    streamingTts: {
+      idlePauseMs: parseInt(optional("STREAMING_TTS_IDLE_PAUSE_MS", "400"), 10),
+    },
     logLevel: optional("LOG_LEVEL", "info"),
   };
 }

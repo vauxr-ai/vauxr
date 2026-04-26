@@ -62,7 +62,11 @@ The core of the stack. A Node.js WebSocket server that:
 - Forwards audio to Whisper (Wyoming) for transcription
 - Sends transcript to OpenClaw via native WS protocol (`chat.send`)
 - Subscribes to `chat` events for streaming reply deltas
-- Streams TTS audio back to the device via Piper
+- Streams TTS audio back to the device via Piper, flushing buffered
+  text early whenever the agent's delta stream goes idle long enough
+  to indicate a real pause (e.g. tool call or reasoning) so playback
+  starts before the full reply is generated. Idle threshold is
+  configurable via `STREAMING_TTS_IDLE_PAUSE_MS` (default `400`).
 
 ### 2. wyoming-faster-whisper (STT)
 

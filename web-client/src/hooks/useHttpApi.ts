@@ -63,7 +63,7 @@ export function useHttpApi(baseUrl: string, token: string) {
     async (deviceId: string, cmd: string, params?: Record<string, unknown>): Promise<void> => {
       await request(`/api/devices/${encodeURIComponent(deviceId)}/command`, {
         method: "POST",
-        body: JSON.stringify({ command: cmd, ...params }),
+        body: JSON.stringify({ command: cmd, params }),
       });
     },
     [request],
