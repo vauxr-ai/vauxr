@@ -9,7 +9,20 @@ const CHUNK_SAMPLES = 1600; // ~100ms at 16kHz
 // Vite's TS/bundler transforms don't apply anyway.
 const WORKLET_URL = "/pcm-capture.worklet.js";
 
-export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
+interface UseAudioOpts {
+  /** Optional callback invoked with each captured PCM chunk (16-bit mono). */
+  onPcmChunk?: (pcm: Int16Array) => void;
+  /** Optional callback for input level updates (RMS in [0, 1]). Fires per chunk. */
+  onInputLevel?: (level: number) => void;
+}
+
+export function useAudio(arg: ((pcm: Int16Array) => void) | UseAudioOpts) {
+  // Backwards-compatible: callers may pass a bare onPcmChunk function.
+  const opts: UseAudioOpts =
+    typeof arg === "function" ? { onPcmChunk: arg } : arg;
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
+
   const ctxRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
@@ -18,6 +31,9 @@ export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
   const playCtxRef = useRef<AudioContext | null>(null);
   const playRateRef = useRef(DEFAULT_PLAYBACK_SAMPLE_RATE);
   const nextStartRef = useRef(0);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  const volumeRef = useRef(1);
+  const mutedRef = useRef(false);
 
   const startCapture = useCallback(async () => {
     const ctx = new AudioContext({ sampleRate: MIC_SAMPLE_RATE });
@@ -41,18 +57,24 @@ export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
 
     workletNode.port.onmessage = (ev: MessageEvent) => {
       const float32: Float32Array = ev.data;
+      let sumSq = 0;
       const int16 = new Int16Array(float32.length);
       for (let i = 0; i < float32.length; i++) {
         const s = Math.max(-1, Math.min(1, float32[i]));
         int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        sumSq += s * s;
       }
-      onPcmChunk(int16);
+      optsRef.current.onPcmChunk?.(int16);
+      if (optsRef.current.onInputLevel) {
+        const rms = Math.sqrt(sumSq / float32.length);
+        optsRef.current.onInputLevel(rms);
+      }
     };
 
     const source = ctx.createMediaStreamSource(stream);
     source.connect(workletNode);
     // Don't connect worklet to destination — we don't want to hear ourselves
-  }, [onPcmChunk]);
+  }, []);
 
   const stopCapture = useCallback(() => {
     workletNodeRef.current?.disconnect();
@@ -61,6 +83,7 @@ export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
     streamRef.current = null;
     ctxRef.current?.close();
     ctxRef.current = null;
+    optsRef.current.onInputLevel?.(0);
   }, []);
 
   const setPlaybackRate = useCallback((rate: number) => {
@@ -70,12 +93,18 @@ export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
     if (playCtxRef.current && playCtxRef.current.state !== "closed") {
       playCtxRef.current.close();
       playCtxRef.current = null;
+      gainNodeRef.current = null;
     }
   }, []);
 
   const ensurePlayCtx = useCallback(() => {
     if (!playCtxRef.current || playCtxRef.current.state === "closed") {
-      playCtxRef.current = new AudioContext({ sampleRate: playRateRef.current });
+      const ctx = new AudioContext({ sampleRate: playRateRef.current });
+      const gain = ctx.createGain();
+      gain.gain.value = mutedRef.current ? 0 : volumeRef.current;
+      gain.connect(ctx.destination);
+      playCtxRef.current = ctx;
+      gainNodeRef.current = gain;
     }
     return playCtxRef.current;
   }, []);
@@ -84,9 +113,34 @@ export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
     nextStartRef.current = 0;
   }, []);
 
+  const stopPlayback = useCallback(() => {
+    nextStartRef.current = 0;
+    if (playCtxRef.current && playCtxRef.current.state !== "closed") {
+      playCtxRef.current.close();
+    }
+    playCtxRef.current = null;
+    gainNodeRef.current = null;
+  }, []);
+
+  const setOutputVolume = useCallback((value: number) => {
+    const v = Math.max(0, Math.min(1, value));
+    volumeRef.current = v;
+    if (gainNodeRef.current && !mutedRef.current) {
+      gainNodeRef.current.gain.value = v;
+    }
+  }, []);
+
+  const setMuted = useCallback((muted: boolean) => {
+    mutedRef.current = muted;
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = muted ? 0 : volumeRef.current;
+    }
+  }, []);
+
   const queuePlayback = useCallback(
     (pcmBytes: ArrayBuffer) => {
       const ctx = ensurePlayCtx();
+      const gain = gainNodeRef.current!;
       const int16 = new Int16Array(pcmBytes);
       const float32 = new Float32Array(int16.length);
       for (let i = 0; i < int16.length; i++) {
@@ -98,7 +152,7 @@ export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
 
       const source = ctx.createBufferSource();
       source.buffer = buf;
-      source.connect(ctx.destination);
+      source.connect(gain);
 
       const now = ctx.currentTime;
       const start = Math.max(now, nextStartRef.current);
@@ -108,5 +162,14 @@ export function useAudio(onPcmChunk: (pcm: Int16Array) => void) {
     [ensurePlayCtx],
   );
 
-  return { startCapture, stopCapture, queuePlayback, resetPlayback, setPlaybackRate };
+  return {
+    startCapture,
+    stopCapture,
+    queuePlayback,
+    resetPlayback,
+    stopPlayback,
+    setPlaybackRate,
+    setOutputVolume,
+    setMuted,
+  };
 }
