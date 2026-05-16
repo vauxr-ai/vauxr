@@ -56,7 +56,12 @@ function createBiquadLPF(cutoffHz: number, sampleRate: number, Q: number) {
  * State is carried across chunks for seamless audio.
  */
 function createResampler(fromRate: number, toRate: number) {
-  const cutoff = (toRate / 2) * 0.9;
+  // Cutoff must be below BOTH rates' Nyquist limits. The biquad runs at
+  // fromRate, so cutoff > fromRate/2 produces invalid coefficients (w0
+  // approaches 2π, the filter goes unstable and saturates output to
+  // -32768). This matters for upsampling — e.g., 22050→48000 with the
+  // old (toRate/2)*0.9 = 21600 Hz cutoff > source Nyquist 11025 Hz.
+  const cutoff = (Math.min(fromRate, toRate) / 2) * 0.9;
   // 4th-order Butterworth = two biquad sections with specific Q values
   const lpf1 = createBiquadLPF(cutoff, fromRate, 0.54119610);  // 1st section Q
   const lpf2 = createBiquadLPF(cutoff, fromRate, 1.3065630);   // 2nd section Q
