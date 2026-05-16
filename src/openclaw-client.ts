@@ -130,8 +130,8 @@ export class OpenClawClient {
           });
 
           const connectParams: Record<string, unknown> = {
-            minProtocol: 3,
-            maxProtocol: 3,
+            minProtocol: 4,
+            maxProtocol: 4,
             client: {
               id: clientId,
               displayName: "Vauxr",
