@@ -18,10 +18,10 @@ services:
       DEVICE_TOKEN: ${DEVICE_TOKEN}
       PIPER_VOICE: en_US-libritts_r-medium
       DATA_DIR: /data
-      NODE_EXTRA_CA_CERTS: /certs/caddy-local-ca.crt
+      NODE_EXTRA_CA_CERTS: /certs/root.crt
     volumes:
       - vauxr-data:/data
-      - ./certs/caddy-local-ca.crt:/certs/caddy-local-ca.crt:ro
+      - ./certs/root.crt:/certs/root.crt:ro
     ports:
       - "8765:8765"
       - "8080:8080"
