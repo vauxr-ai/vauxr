@@ -78,22 +78,31 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setenv("DEVICE_TOKEN", "tok")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("STREAMING_TTS_IDLE_PAUSE_MS", "20")
+    # openclaw-direct requires OPENCLAW_URL to materialize as an active channel.
+    monkeypatch.setenv("OPENCLAW_URL", "wss://test.invalid/")
     dev_reg.reset()
-    channel_registry._set_active_for_tests(None)
+    channel_registry._reset_for_tests()
     yield
-    channel_registry._set_active_for_tests(None)
+    channel_registry._reset_for_tests()
     dev_reg.reset()
     cfg_mod.reset_config()
 
 
 def _set_direct_active():
-    channel_registry._set_active_for_tests(
-        FakeChannel(id="openclaw-direct", name="OpenClaw Direct", type="openclaw-direct")
-    )
+    # Reach into the registry to flip openclaw-direct on without disk I/O.
+    channel_registry._openclaw_direct_active = True  # type: ignore[attr-defined]
 
 
 def _set_channel_active():
-    channel_registry._set_active_for_tests(FakeChannel(id="ch-1", name="My Channel", type="openclaw"))
+    ch = channel_registry.Channel(
+        id="ch-1",
+        name="My Channel",
+        type="openclaw",
+        tokenHash="hash",
+        active=True,
+        createdAt="2026-05-17T00:00:00Z",
+    )
+    channel_registry._set_active_for_tests(ch)
 
 
 async def _fake_synth_yielding(text: str, **_k):
