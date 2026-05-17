@@ -14,8 +14,8 @@ import struct
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from .config import get_config
-from .wyoming_stt import WyomingEvent, encode_event, parse_wyoming_events
+from config import get_config
+from wyoming_stt import WyomingEvent, encode_event, parse_wyoming_events
 
 log = logging.getLogger("vauxr.wyoming_tts")
 

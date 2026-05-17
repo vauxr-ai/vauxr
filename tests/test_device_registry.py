@@ -9,7 +9,7 @@ import pytest
 
 from vauxr import config as cfg_mod
 from vauxr import device_registry as reg
-from vauxr.device_config import save_device_configs
+from device_config import save_device_configs
 
 
 @pytest.fixture(autouse=True)
@@ -97,7 +97,7 @@ def test_update_config_merges_and_persists(tmp_path: Path) -> None:
 
     # Round-trip via fresh reload.
     reg.reset()
-    from vauxr.device_config import load_device_configs
+    from device_config import load_device_configs
 
     assert load_device_configs(str(tmp_path)) == {"dev1": {"name": "New", "voice": True}}
 

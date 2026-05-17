@@ -23,4 +23,5 @@ RUN mkdir -p /data && chown vauxr:vauxr /data
 USER vauxr
 EXPOSE 8765
 EXPOSE 8080
-CMD ["python", "-m", "vauxr.server"]
+# Flat layout — server modules sit at top level after hatchling's sources=["src"]
+CMD ["python", "-m", "server"]

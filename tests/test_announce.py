@@ -18,7 +18,7 @@ from vauxr import (
     pipeline,
     wyoming_tts,
 )
-from vauxr.http_server import make_http_app
+from http_server import make_http_app
 
 
 class FakeWs:

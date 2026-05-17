@@ -11,7 +11,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from vauxr import device_identity as ident
-from vauxr.device_identity import SignParams
+from device_identity import SignParams
 
 
 @pytest.fixture(autouse=True)

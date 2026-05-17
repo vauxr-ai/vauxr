@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from .config import get_config
+from config import get_config
 
 log = logging.getLogger("vauxr.wyoming_stt")
 

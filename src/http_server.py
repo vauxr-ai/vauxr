@@ -15,16 +15,16 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from . import channel_registry, device_registry as registry
-from .auth import validate_channel_http_token, validate_token
-from .config import get_config
-from .device_config import VALID_FOLLOW_UP_MODES, FollowUpMode
-from .protocol import encode_text_message
-from .utils import make_binary_frame
-from .wyoming_tts import synthesize
+import channel_registry, device_registry as registry
+from auth import validate_channel_http_token, validate_token
+from config import get_config
+from device_config import VALID_FOLLOW_UP_MODES, FollowUpMode
+from protocol import encode_text_message
+from utils import make_binary_frame
+from wyoming_tts import synthesize
 
 if TYPE_CHECKING:
-    from .channel_server import ChannelServer
+    from channel_server import ChannelServer
 
 log = logging.getLogger("vauxr.http")
 

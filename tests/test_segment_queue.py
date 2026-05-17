@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from vauxr.segment_queue import SegmentQueue
+from segment_queue import SegmentQueue
 
 
 @pytest.mark.asyncio

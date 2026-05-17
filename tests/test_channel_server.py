@@ -12,7 +12,7 @@ from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
 from vauxr import channel_registry as cr, config as cfg_mod
-from vauxr.channel_server import ChannelServer
+from channel_server import ChannelServer
 
 
 @pytest.fixture(autouse=True)

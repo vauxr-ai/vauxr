@@ -19,7 +19,7 @@ from vauxr import (
     wyoming_stt,
     wyoming_tts,
 )
-from vauxr.server import APP_STATE, make_app
+from server import APP_STATE, make_app
 
 
 @pytest.fixture(autouse=True)

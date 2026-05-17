@@ -19,7 +19,7 @@ from typing import Literal
 
 import bcrypt
 
-from .config import get_config
+from config import get_config
 
 BCRYPT_COST = 10
 TOKEN_PREFIX = "vx_ch_"

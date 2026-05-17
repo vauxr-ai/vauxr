@@ -17,8 +17,8 @@ from typing import Any
 
 import aiohttp
 
-from .config import get_config
-from .device_identity import (
+from config import get_config
+from device_identity import (
     SignParams,
     get_device_token,
     load_or_create_identity,

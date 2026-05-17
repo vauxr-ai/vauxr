@@ -1,7 +1,7 @@
-"""Phase 1 smoke test: the package imports."""
+"""Phase 1 smoke test: server module imports."""
 
-import vauxr
+import server
 
 
-def test_package_version() -> None:
-    assert vauxr.__version__.startswith("2.")
+def test_server_imports() -> None:
+    assert hasattr(server, "make_app")

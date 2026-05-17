@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from vauxr.device_config import (
+from device_config import (
     device_config_path,
     load_device_configs,
     save_device_configs,

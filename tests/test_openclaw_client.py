@@ -14,7 +14,7 @@ import pytest
 from aiohttp import WSMsgType, web
 
 from vauxr import config as cfg_mod, device_identity as ident
-from vauxr.openclaw_client import OpenClawClient
+from openclaw_client import OpenClawClient
 
 
 # --- Fake gateway plumbing ---

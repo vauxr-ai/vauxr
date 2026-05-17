@@ -10,7 +10,7 @@ from aiohttp import WSMsgType
 from aiohttp.test_utils import TestServer, TestClient
 
 from vauxr import config as cfg_mod
-from vauxr.server import make_app
+from server import make_app
 
 
 @pytest.fixture(autouse=True)

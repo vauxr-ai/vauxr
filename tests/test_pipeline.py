@@ -18,8 +18,8 @@ from vauxr import (
     wyoming_stt,
     wyoming_tts,
 )
-from vauxr.channel_server import ChannelServer
-from vauxr.pipeline import resolve_follow_up, run_voice_turn
+from channel_server import ChannelServer
+from pipeline import resolve_follow_up, run_voice_turn
 
 
 # --- Test doubles ---

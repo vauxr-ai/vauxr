@@ -14,7 +14,7 @@ from typing import Any, Callable, TypedDict
 
 from aiohttp import WSMsgType, web
 
-from . import channel_registry
+import channel_registry
 
 log = logging.getLogger("vauxr.channel_server")
 

@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from vauxr.idle_segmenter import IdleSegmenter
+from idle_segmenter import IdleSegmenter
 
 
 @pytest.mark.asyncio

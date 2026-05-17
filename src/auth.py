@@ -5,7 +5,7 @@ from __future__ import annotations
 import hmac
 from dataclasses import dataclass
 
-from .config import get_config
+from config import get_config
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ async def validate_channel_http_token(token: str) -> AuthResult:
     config, which doesn't depend on auth, but channel_registry is a Phase 12
     module that will live alongside this one).
     """
-    from . import channel_registry  # noqa: PLC0415  (lazy import)
+    import channel_registry  # noqa: PLC0415  (lazy import)
 
     channel = await channel_registry.validate_channel_token(token)
     if channel is None:

@@ -73,7 +73,7 @@ def parse_binary_frame(data: bytes) -> BinaryFrame | None:
 
 def make_binary_frame(msg_type: int, seq: int, payload: bytes) -> bytes:
     """Build a binary audio frame — re-exported from utils for cohesion."""
-    from .utils import make_binary_frame as _impl
+    from utils import make_binary_frame as _impl
 
     return _impl(msg_type, seq, payload)
 

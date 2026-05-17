@@ -9,7 +9,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from vauxr import config as cfg_mod, device_registry as registry
-from vauxr.http_server import make_http_app
+from http_server import make_http_app
 
 
 @pytest.fixture(autouse=True)

@@ -8,8 +8,8 @@ import struct
 import pytest
 
 from vauxr import config as cfg_mod
-from vauxr.wyoming_stt import WyomingEvent, encode_event, parse_wyoming_events
-from vauxr.wyoming_tts import _make_resampler, synthesize
+from wyoming_stt import WyomingEvent, encode_event, parse_wyoming_events
+from wyoming_tts import _make_resampler, synthesize
 
 
 @pytest.fixture(autouse=True)

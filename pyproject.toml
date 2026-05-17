@@ -30,13 +30,17 @@ dev = [
 ]
 
 [project.scripts]
-vauxr = "vauxr.server:main"
+vauxr = "server:main"
 
 [project.urls]
 Homepage = "https://github.com/vauxr-ai/vauxr"
 
+# Flat layout: server modules live directly under src/ (not src/vauxr/).
+# Hatchling collects every .py under src/ into the wheel's top level, so
+# `python -m server` works on any install path with src/ on PYTHONPATH.
 [tool.hatch.build.targets.wheel]
-packages = ["src/vauxr"]
+sources = ["src"]
+include = ["src/*.py"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -15,14 +15,14 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
-from . import channel_registry, device_registry as registry
-from .auth import validate_token
-from .channel_server import ChannelServer
-from .config import get_config
-from .http_server import attach_http_routes, cors_middleware, serve_static
-from .openclaw_client import OpenClawClient
-from .pipeline import run_voice_turn
-from .protocol import encode_text_message, parse_text_message
+import channel_registry, device_registry as registry
+from auth import validate_token
+from channel_server import ChannelServer
+from config import get_config
+from http_server import attach_http_routes, cors_middleware, serve_static
+from openclaw_client import OpenClawClient
+from pipeline import run_voice_turn
+from protocol import encode_text_message, parse_text_message
 
 log = logging.getLogger("vauxr.server")
 

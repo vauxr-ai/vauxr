@@ -15,21 +15,21 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from . import device_registry as registry
-from .config import get_config
-from .device_config import FollowUpMode
-from .idle_segmenter import IdleSegmenter
-from .protocol import encode_text_message
-from .segment_queue import SegmentQueue
-from .utils import make_binary_frame
-from .wyoming_stt import transcribe
-from .wyoming_tts import synthesize
+import device_registry as registry
+from config import get_config
+from device_config import FollowUpMode
+from idle_segmenter import IdleSegmenter
+from protocol import encode_text_message
+from segment_queue import SegmentQueue
+from utils import make_binary_frame
+from wyoming_stt import transcribe
+from wyoming_tts import synthesize
 
 if TYPE_CHECKING:
     from aiohttp.web import WebSocketResponse
 
-    from .channel_server import ChannelServer
-    from .openclaw_client import OpenClawClient
+    from channel_server import ChannelServer
+    from openclaw_client import OpenClawClient
 
 log = logging.getLogger("vauxr.pipeline")
 

@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from .config import get_config
-from .device_config import DeviceConfig, load_device_configs, save_device_configs
+from config import get_config
+from device_config import DeviceConfig, load_device_configs, save_device_configs
 
 ConnectionState = Literal["idle", "listening", "processing", "speaking", "offline"]
 
