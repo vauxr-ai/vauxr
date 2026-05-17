@@ -221,8 +221,10 @@ def make_app() -> web.Application:
     app[APP_STATE] = AppState()
     cfg = get_config()
     app.router.add_get(cfg.channel.ws_path, channel_ws_handler)
-    app.router.add_get("/", device_ws_handler)
+    app.router.add_get("/ws", device_ws_handler)
     attach_http_routes(app)
+    # Catch-all static fallback (serves the web-client at /). Must be last so
+    # /ws, channel WS, and /api/* are matched first.
     app.router.add_get("/{tail:.*}", serve_static)
     return app
 
