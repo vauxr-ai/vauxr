@@ -3,7 +3,7 @@ services:
   vauxr:
     build:
       context: .
-      dockerfile: Dockerfile.python
+      dockerfile: Dockerfile
     image: vauxr:latest
     container_name: vauxr
     restart: unless-stopped
