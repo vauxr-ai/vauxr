@@ -1,7 +1,9 @@
 services:
 
   vauxr:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: vauxr:latest
     container_name: vauxr
     restart: unless-stopped
@@ -18,7 +20,7 @@ services:
       DEVICE_TOKEN: ${DEVICE_TOKEN}
       PIPER_VOICE: en_US-libritts_r-medium
       DATA_DIR: /data
-      NODE_EXTRA_CA_CERTS: /certs/root.crt
+      SSL_CERT_FILE: /certs/root.crt
     volumes:
       - vauxr-data:/data
       - ./certs/root.crt:/certs/root.crt:ro

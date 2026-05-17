@@ -7,11 +7,12 @@ interface Props {
 }
 
 const WS_PORT = 8765;
+const WS_PATH = "/ws";
 
 function defaultServerUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const host = window.location.hostname || "localhost";
-  return `${protocol}//${host}:${WS_PORT}`;
+  return `${protocol}//${host}:${WS_PORT}${WS_PATH}`;
 }
 
 const inputClass =

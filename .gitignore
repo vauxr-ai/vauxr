@@ -4,3 +4,16 @@ dist/
 certs/
 .vscode/settings.json
 data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+build/
+*.whl
+.coverage
+htmlcov/
+uv.lock
