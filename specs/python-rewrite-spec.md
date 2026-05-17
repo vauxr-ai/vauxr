@@ -75,13 +75,16 @@ Same module boundaries, same names (snake_case). Future structural changes happe
 ## Tech stack
 
 - **Python 3.12+**
-- **`aiohttp`** — single async server for HTTP + WS (matches current Node single-process pattern)
+- **`aiohttp`** — single async server for HTTP + WS (single process, matches current Node pattern)
 - **`wyoming`** — official Wyoming protocol client
 - **`pydantic`** v2 — config + message validation
 - **`uvloop`** — asyncio perf boost
 - **`pytest` + `pytest-asyncio`** — tests
+- **stdlib `logging`** with a JSON formatter — Python-idiomatic, improved over current Node logger
 
 Avoid: heavy frameworks, ORMs, anything not strictly needed for parity.
+
+**Packaging:** published as a PyPI package (`vauxr`) in addition to the Docker image. Importable for users who want to embed or extend rather than run the full stack.
 
 ---
 
@@ -89,9 +92,9 @@ Avoid: heavy frameworks, ORMs, anything not strictly needed for parity.
 
 ```
 vauxr/
-  pyproject.toml
+  pyproject.toml              (PyPI package metadata)
   Dockerfile                  (Python image — replaces Node build)
-  docker-compose.yml          (updated to build new image; Whisper/Piper services unchanged)
+  docker-compose.yml          (updated to build new image; Whisper/Piper images unchanged, no version pin changes)
   src/vauxr/
     __init__.py
     server.py
@@ -120,7 +123,7 @@ vauxr/
     test_device_control.py
 ```
 
-The Node source under `src/` stays in the repo on a `legacy/node` branch (or moved to `legacy-node/` directory) during the parallel-run window — see "Cutover" below.
+Clean break — the Node `src/` is deleted at cutover. No `legacy-node/` directory, no parallel maintenance branch. The pre-cutover Node release is tagged so anyone pinning to it stays unaffected.
 
 ---
 
@@ -157,23 +160,23 @@ Each step ends with the suite green and the system runnable end-to-end. No step 
 
 ## Cutover
 
-1. **Phases 1–11 in a feature branch.** Python image built alongside, not replacing, the Node image.
-2. **Parallel run window.** Once Phase 11 is green, point Lillian's local stack at the Python image while keeping the Node image one config flip away. Run on real hardware for a few days.
-3. **Hard cutover** — once parallel run is clean: bump version, drop the Node `src/` (move to `legacy-node/` for one release cycle for reference, then delete), publish Python Docker image as the new default.
-4. **Tag** the last Node release before the cutover so anyone pinning to it stays unaffected.
+1. **Tag** the final Node release (e.g. `v1.x.y`) before any rewrite work lands on `develop`. Anyone pinning to it stays unaffected forever.
+2. **All phases on the feature branch.** Python image builds and tests run alongside the Node image until parity is proven.
+3. **Parallel run validation.** Once Phase 14 is green, point Lillian's local stack at the Python image for several days on real hardware. Failures roll back to the Node image trivially via the tagged release.
+4. **Hard cutover.** Delete the Node `src/`, the Node `Dockerfile`, and any Node-only build config. Major version bump (e.g. `v2.0.0`) to signal the internal rewrite. Python Docker image is the new default.
 
 ---
 
-## Open questions for Lillian
+## Decisions
 
-1. **Single Python service vs split** — recommend single process matching current Node pattern. Confirm?
-2. **`pyproject.toml` packaging** — keep as a published package on PyPI? Or stay container-only for now?
-3. **CI** — current repo uses GitHub Actions for Docker publish. Add `pytest` job there, or separate workflow?
-4. **Legacy Node retention** — move to `legacy-node/` for one release, or branch-only?
-5. **Whisper / Piper images** — current `docker-compose.yml` brings them up. Any version pins to preserve, or fine to take the same images as-is?
-6. **`devices.json` location** — same path as current Node version, or move to a clearer location during the rewrite (e.g. `/data/devices.json`)? Recommend: same path, no movement during port.
-7. **Logging format** — current Node logger has a specific shape (likely JSON or pino-style). Worth matching, or fine to use Python's stdlib `logging` with a similar JSON formatter?
-8. **Version bump** — major (semver-signalling internal rewrite) or minor (no public contract change)? Recommend: minor + clear release notes, since the contract is unchanged.
+1. **Single Python service** — one process serving WS + HTTP, matching the current Node pattern.
+2. **PyPI package** — published as `vauxr` alongside the Docker image. Importable for users who want to embed or extend the stack.
+3. **CI** — add a `pytest` job to the existing Docker publish workflow rather than a separate workflow.
+4. **Clean break on Node source** — no `legacy-node/` retention, no parallel maintenance branch. Pre-cutover Node release is tagged and that's it.
+5. **Whisper / Piper images** — kept exactly as-is in `docker-compose.yml`, no version pin changes.
+6. **`devices.json` location** — same path as the current Node version. No movement during the port.
+7. **Logging** — Python stdlib `logging` with a JSON formatter. Similar shape to the current Node logger but Python-idiomatic and improved (structured fields, proper levels, better tracebacks).
+8. **Version bump** — **major** (`v2.0.0`). Signals the internal rewrite even though the wire contract is unchanged.
 
 ---
 
