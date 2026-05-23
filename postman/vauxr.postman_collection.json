@@ -16,6 +16,14 @@
     {
       "key": "device_id",
       "value": "test-device"
+    },
+    {
+      "key": "channel_id",
+      "value": ""
+    },
+    {
+      "key": "channel_token",
+      "value": ""
     }
   ],
   "auth": {
@@ -400,6 +408,199 @@
               "script": {
                 "exec": [
                   "pm.test('Status is 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Channels",
+      "description": "Routing-channel CRUD. The OpenClaw plugin authenticates with a channel token (see Auth › Channel token authorizes). Run requests top-to-bottom: Create captures `channel_id` + `channel_token` into collection variables that the later requests consume.",
+      "item": [
+        {
+          "name": "List channels",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/channels",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response is array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create channel",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/channels",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman Channel\",\n  \"type\": \"openclaw\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns id and token', () => {",
+                  "  pm.expect(body.id).to.be.a('string');",
+                  "  pm.expect(body.token).to.match(/^vx_ch_[0-9a-f]{64}$/);",
+                  "});",
+                  "// Stash for the Activate / Rotate / Delete requests below.",
+                  "pm.collectionVariables.set('channel_id', body.id);",
+                  "pm.collectionVariables.set('channel_token', body.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Activate channel",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/channels/{{channel_id}}/activate",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('ok is true', () => pm.expect(pm.response.json().ok).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rotate token",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/channels/{{channel_id}}/rotate",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns new token', () => pm.expect(body.token).to.match(/^vx_ch_[0-9a-f]{64}$/));",
+                  "pm.collectionVariables.set('channel_token', body.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Channel token authorizes HTTP API",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/devices",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{channel_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Channel tokens (vx_ch_…) are valid Bearer credentials — this is how the OpenClaw plugin talks to the HTTP API. Uses the `channel_token` captured by Create channel / refreshed by Rotate token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response is array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete channel",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/api/channels/{{channel_id}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
                 ]
               }
             }
