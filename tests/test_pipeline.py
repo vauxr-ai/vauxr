@@ -10,14 +10,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from vauxr import (
-    channel_registry,
-    config as cfg_mod,
-    device_registry as dev_reg,
-    pipeline,
-    wyoming_stt,
-    wyoming_tts,
-)
+import channel_registry
+import config as cfg_mod
+import device_registry as dev_reg
+import pipeline
+import wyoming_stt
+import wyoming_tts
 from channel_server import ChannelServer
 from pipeline import resolve_follow_up, run_voice_turn
 

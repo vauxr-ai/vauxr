@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from vauxr import config as cfg_mod
-from vauxr import device_registry as reg
+import config as cfg_mod
+import device_registry as reg
 from device_config import save_device_configs
 
 

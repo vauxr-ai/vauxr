@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 from aiohttp import WSMsgType, web
 
-from vauxr import config as cfg_mod, device_identity as ident
+import config as cfg_mod
+import device_identity as ident
 from openclaw_client import OpenClawClient
 
 
