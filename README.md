@@ -58,15 +58,28 @@ Vauxr is backend-agnostic. If you're not using OpenClaw, connect your own LLM or
 
 ## HTTP API
 
-All endpoints require `Authorization: Bearer <DEVICE_TOKEN>`.
+All endpoints require `Authorization: Bearer <token>`. The token can be either the configured `DEVICE_TOKEN` (admin) or a channel token (`vx_ch_…`) issued by `POST /api/channels` — the OpenClaw plugin and other channel clients use the latter.
+
+**Devices**
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/devices` | List connected devices and state |
+| `PATCH` | `/api/devices/{id}` | Update device config (`name`, `voice`, `follow_up_mode`) |
 | `POST` | `/api/devices/{id}/announce` | Push TTS announcement to a device |
 | `POST` | `/api/devices/{id}/command` | Send control command (`set_volume`, `mute`, `unmute`, `reboot`) |
 
-A Postman collection is included at `postman/vauxr.postman_collection.json`.
+**Channels** — routing-channel CRUD. One channel is active at a time and receives the device's transcript.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/channels` | List channels (including the virtual `openclaw-direct` when `OPENCLAW_URL` is set) |
+| `POST` | `/api/channels` | Create a channel; returns a `vx_ch_…` token (shown once) |
+| `POST` | `/api/channels/{id}/activate` | Make this channel the active routing target |
+| `POST` | `/api/channels/{id}/rotate` | Issue a new token for the channel; the old one stops working immediately |
+| `DELETE` | `/api/channels/{id}` | Remove a channel (built-in channels can't be deleted) |
+
+A Postman collection is included at `postman/vauxr.postman_collection.json` — run the Channels folder top-to-bottom to exercise the full create → activate → rotate → channel-token-auth → delete flow.
 
 ## Architecture
 
