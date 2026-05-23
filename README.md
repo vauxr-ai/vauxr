@@ -6,9 +6,9 @@
 ![Latest Release](https://img.shields.io/github/v/release/vauxr-ai/vauxr?style=flat-square&include_prereleases&color=8B5CF6)
 ![Last Commit](https://img.shields.io/github/last-commit/vauxr-ai/vauxr/develop?style=flat-square&color=8B5CF6)
 
-**Vauxr is an open protocol for voice assistants** — a fast, local voice pipeline with idle-pause detection and follow-up mode. Great for talking to your OpenClaw agent.
+**Vauxr is an open source self-hostable voice assistant platform** — it comes out-of-the-box with a fast, local voice pipeline with idle-pause detection and follow-up mode. Great for talking to your OpenClaw agent.
 
-This repo is a self-hosted Docker stack that speaks the Vauxr protocol and ships with [Wyoming](https://github.com/rhasspy/wyoming)-compatible Whisper (STT) and Piper (TTS) out of the box. Use it as-is, or as a blueprint for your own implementation.
+This repo comes pre-configured as a Docker stack that ships with [Wyoming](https://github.com/rhasspy/wyoming)-compatible Whisper (STT) and Piper (TTS) out of the box. Use it as-is, or as a blueprint for your own implementation.
 
 ## How it works
 
@@ -58,15 +58,28 @@ Vauxr is backend-agnostic. If you're not using OpenClaw, connect your own LLM or
 
 ## HTTP API
 
-All endpoints require `Authorization: Bearer <DEVICE_TOKEN>`.
+All endpoints require `Authorization: Bearer <channel-token>` — a `vx_ch_…` token issued by `POST /api/channels`. This is what the OpenClaw plugin uses.
+
+**Devices**
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/devices` | List connected devices and state |
+| `PATCH` | `/api/devices/{id}` | Update device config (`name`, `voice`, `follow_up_mode`) |
 | `POST` | `/api/devices/{id}/announce` | Push TTS announcement to a device |
 | `POST` | `/api/devices/{id}/command` | Send control command (`set_volume`, `mute`, `unmute`, `reboot`) |
 
-A Postman collection is included at `postman/vauxr.postman_collection.json`.
+**Channels** — routing-channel CRUD. One channel is active at a time and receives the device's transcript.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/channels` | List channels (including the virtual `openclaw-direct` when `OPENCLAW_URL` is set) |
+| `POST` | `/api/channels` | Create a channel; returns a `vx_ch_…` token (shown once) |
+| `POST` | `/api/channels/{id}/activate` | Make this channel the active routing target |
+| `POST` | `/api/channels/{id}/rotate` | Issue a new token for the channel; the old one stops working immediately |
+| `DELETE` | `/api/channels/{id}` | Remove a channel (built-in channels can't be deleted) |
+
+A Postman collection is included at `postman/vauxr.postman_collection.json` — run the Channels folder top-to-bottom to exercise the full create → activate → rotate → channel-token-auth → delete flow.
 
 ## Architecture
 
