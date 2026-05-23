@@ -58,7 +58,7 @@ Vauxr is backend-agnostic. If you're not using OpenClaw, connect your own LLM or
 
 ## HTTP API
 
-All endpoints require `Authorization: Bearer <token>`. The token can be either the configured `DEVICE_TOKEN` (admin) or a channel token (`vx_ch_…`) issued by `POST /api/channels` — the OpenClaw plugin and other channel clients use the latter.
+All endpoints require `Authorization: Bearer <channel-token>` — a `vx_ch_…` token issued by `POST /api/channels`. This is what the OpenClaw plugin uses.
 
 **Devices**
 
