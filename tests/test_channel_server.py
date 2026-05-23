@@ -11,7 +11,8 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
-from vauxr import channel_registry as cr, config as cfg_mod
+import channel_registry as cr
+import config as cfg_mod
 from channel_server import ChannelServer
 
 

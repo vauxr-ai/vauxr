@@ -14,7 +14,12 @@ RUN pip wheel --no-cache-dir --no-deps -w /wheels .
 
 FROM python:3.12-slim
 WORKDIR /app
-RUN groupadd --system vauxr && useradd --system --gid vauxr vauxr
+# Pin numeric uid/gid to match the Alpine `vauxr` user from the previous
+# Node image. Without this, an existing /data volume (owned by uid 100)
+# becomes unwritable after the rewrite — every channel create/rotate hits
+# PermissionError → 500, and channel-token bearer auth then 401s because
+# no channels can be persisted.
+RUN groupadd --system --gid 101 vauxr && useradd --system --uid 100 --gid vauxr vauxr
 COPY pyproject.toml README.md ./
 COPY --from=build /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from vauxr import auth, config as cfg_mod
+import auth
+import config as cfg_mod
 
 
 @pytest.fixture(autouse=True)

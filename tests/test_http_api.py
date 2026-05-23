@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from vauxr import config as cfg_mod, device_registry as registry
+import config as cfg_mod
+import device_registry as registry
 from http_server import make_http_app
 
 

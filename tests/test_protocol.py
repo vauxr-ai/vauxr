@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vauxr import protocol
+import protocol
 
 
 def test_parse_binary_frame_basic() -> None:

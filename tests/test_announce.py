@@ -11,13 +11,11 @@ from typing import Any
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from vauxr import (
-    channel_registry,
-    config as cfg_mod,
-    device_registry as registry,
-    pipeline,
-    wyoming_tts,
-)
+import channel_registry
+import config as cfg_mod
+import device_registry as registry
+import pipeline
+import wyoming_tts
 from http_server import make_http_app
 
 
@@ -52,7 +50,7 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(wyoming_tts, "synthesize", fake_synth)
     # The http_server module imports synthesize at module load; rebind via the
     # http_server namespace too.
-    from vauxr import http_server as hs
+    import http_server as hs
 
     monkeypatch.setattr(hs, "synthesize", fake_synth)
 

@@ -255,8 +255,26 @@ async def rotate_token(channel_id: str) -> str | None:
 
 
 async def validate_channel_token(raw_token: str) -> Channel | None:
+    # Filter on prefix first: only `vx_ch_` tokens are channel tokens. This
+    # also short-circuits the bcrypt path for device tokens and stray Bearer
+    # values, which matters because bcrypt.checkpw raises ValueError when the
+    # input exceeds bcrypt's 72-byte password limit — without this guard, an
+    # oversize Bearer header would surface as a 500 from every @_require_auth
+    # endpoint instead of a clean 401.
+    if not raw_token.startswith(TOKEN_PREFIX):
+        return None
+    token_bytes = raw_token.encode("utf-8")
+    if len(token_bytes) > 72:
+        return None
     for c in _channels:
-        ok = await asyncio.to_thread(bcrypt.checkpw, raw_token.encode("utf-8"), c.tokenHash.encode("utf-8"))
+        try:
+            ok = await asyncio.to_thread(
+                bcrypt.checkpw, token_bytes, c.tokenHash.encode("utf-8")
+            )
+        except ValueError:
+            # Malformed tokenHash on disk (empty, truncated, hand-edited).
+            # Skip the broken entry instead of poisoning every other request.
+            continue
         if ok:
             return c
     return None

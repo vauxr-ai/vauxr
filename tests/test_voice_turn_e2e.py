@@ -11,14 +11,12 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
-from vauxr import (
-    channel_registry,
-    config as cfg_mod,
-    device_registry as registry,
-    pipeline,
-    wyoming_stt,
-    wyoming_tts,
-)
+import channel_registry
+import config as cfg_mod
+import device_registry as registry
+import pipeline
+import wyoming_stt
+import wyoming_tts
 from server import APP_STATE, make_app
 
 
@@ -65,7 +63,7 @@ async def setup(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[TestClient]:
 
 async def test_full_voice_turn_through_server(setup: TestClient) -> None:
     client = setup
-    async with client.ws_connect("/") as ws:
+    async with client.ws_connect("/ws") as ws:
         await ws.send_json({"type": "voice.start", "device_id": "dev1", "token": "tok-E"})
         ready = await ws.receive(timeout=2)
         assert ready.type == WSMsgType.TEXT

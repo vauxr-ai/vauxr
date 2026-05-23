@@ -9,7 +9,7 @@ import pytest
 from aiohttp import WSMsgType
 from aiohttp.test_utils import TestServer, TestClient
 
-from vauxr import config as cfg_mod
+import config as cfg_mod
 from server import make_app
 
 
@@ -36,14 +36,14 @@ async def _recv_json(ws) -> dict:
 
 
 async def test_voice_start_valid_token_emits_ready(client: TestClient) -> None:
-    async with client.ws_connect("/") as ws:
+    async with client.ws_connect("/ws") as ws:
         await ws.send_json({"type": "voice.start", "device_id": "dev1", "token": "ws-test-token"})
         ready = await _recv_json(ws)
         assert ready == {"type": "ready"}
 
 
 async def test_voice_start_invalid_token_emits_error_and_closes(client: TestClient) -> None:
-    async with client.ws_connect("/") as ws:
+    async with client.ws_connect("/ws") as ws:
         await ws.send_json({"type": "voice.start", "device_id": "dev1", "token": "wrong-token-xxxxx"})
         err = await _recv_json(ws)
         assert err["type"] == "error"
@@ -54,7 +54,7 @@ async def test_voice_start_invalid_token_emits_error_and_closes(client: TestClie
 
 
 async def test_voice_start_missing_token(client: TestClient) -> None:
-    async with client.ws_connect("/") as ws:
+    async with client.ws_connect("/ws") as ws:
         await ws.send_json({"type": "voice.start", "device_id": "dev1"})
         err = await _recv_json(ws)
         assert err == {
@@ -65,7 +65,7 @@ async def test_voice_start_missing_token(client: TestClient) -> None:
 
 
 async def test_unknown_message_type_returns_error(client: TestClient) -> None:
-    async with client.ws_connect("/") as ws:
+    async with client.ws_connect("/ws") as ws:
         await ws.send_json({"type": "not.a.real.type"})
         err = await _recv_json(ws)
         assert err["type"] == "error"
@@ -73,7 +73,7 @@ async def test_unknown_message_type_returns_error(client: TestClient) -> None:
 
 
 async def test_invalid_json_returns_error(client: TestClient) -> None:
-    async with client.ws_connect("/") as ws:
+    async with client.ws_connect("/ws") as ws:
         await ws.send_str("not json {{")
         err = await _recv_json(ws)
         assert err["type"] == "error"
@@ -81,7 +81,7 @@ async def test_invalid_json_returns_error(client: TestClient) -> None:
 
 
 async def test_voice_end_without_voice_start_is_error(client: TestClient) -> None:
-    async with client.ws_connect("/") as ws:
+    async with client.ws_connect("/ws") as ws:
         await ws.send_json({"type": "voice.end"})
         err = await _recv_json(ws)
         assert err == {
@@ -92,7 +92,7 @@ async def test_voice_end_without_voice_start_is_error(client: TestClient) -> Non
 
 
 async def test_voice_start_then_end_transitions_state(client: TestClient) -> None:
-    async with client.ws_connect("/") as ws:
+    async with client.ws_connect("/ws") as ws:
         await ws.send_json({"type": "voice.start", "device_id": "dev1", "token": "ws-test-token"})
         await _recv_json(ws)  # ready
         # Phase 4 — voice.end is accepted but no pipeline output yet
@@ -103,7 +103,7 @@ async def test_voice_start_then_end_transitions_state(client: TestClient) -> Non
 
 
 async def test_output_sample_rate_accepted(client: TestClient) -> None:
-    async with client.ws_connect("/") as ws:
+    async with client.ws_connect("/ws") as ws:
         await ws.send_json(
             {
                 "type": "voice.start",
