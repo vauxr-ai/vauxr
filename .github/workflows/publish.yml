@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -37,7 +37,7 @@ jobs:
     needs: [pytest]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build vauxr image
         run: docker build -t vauxr:e2e .
@@ -76,7 +76,7 @@ jobs:
           exit 1
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
@@ -101,7 +101,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-report
           path: e2e/playwright-report/
@@ -117,7 +117,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Compute version tag
         id: version
@@ -125,21 +125,28 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TODAY=$(date -u +%-Y.%-m.%-d)
-          EXISTING=$(gh api repos/${{ github.repository }}/git/refs/tags \
-            --paginate --jq '.[].ref' 2>/dev/null \
-            | grep "^refs/tags/${TODAY}-" || true)
 
-          if [ -z "$EXISTING" ]; then
-            N=0
-          else
-            MAX=$(echo "$EXISTING" \
-              | sed "s|refs/tags/${TODAY}-||" \
-              | sort -n \
-              | tail -1)
-            N=$((MAX + 1))
+          ALL_TAGS=$(gh api repos/${{ github.repository }}/git/refs/tags \
+            --paginate --jq '.[].ref' 2>/dev/null || true)
+
+          BASE_TAG="refs/tags/${TODAY}"
+          HAS_BASE=false
+          if echo "$ALL_TAGS" | grep -qxF "$BASE_TAG"; then
+            HAS_BASE=true
           fi
 
-          VERSION="${TODAY}-${N}"
+          SUFFIX_TAGS=$(echo "$ALL_TAGS" | grep "^refs/tags/${TODAY}-" || true)
+
+          if [ "$HAS_BASE" = false ] && [ -z "$SUFFIX_TAGS" ]; then
+            VERSION="${TODAY}"
+          else
+            MAX_N=0
+            if [ -n "$SUFFIX_TAGS" ]; then
+              MAX_N=$(echo "$SUFFIX_TAGS" | sed "s|refs/tags/${TODAY}-||" | sort -n | tail -1)
+            fi
+            VERSION="${TODAY}-$((MAX_N + 1))"
+          fi
+
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Computed version: ${VERSION}"
 
@@ -163,7 +170,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
