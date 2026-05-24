@@ -12,7 +12,8 @@ Features grouped by theme. No ordering assigned.
 - ~~**Streaming TTS via idle-pause detection** — flush buffered assistant text to Piper whenever the delta stream goes idle (default 400ms) so the device starts speaking while the agent is still thinking or running tools, instead of waiting for the full reply~~ ✅
 
 ### Device Management
-- **Device management REST API** — `/api/devices` endpoints for creating, listing, renaming, and revoking devices; each device gets its own unique token at registration. Replaces the single shared `DEVICE_TOKEN` `.env` bootstrap with proper per-device identity, auditability, and rotation.
+- **`OPERATOR_TOKEN` for admin auth** — rename `DEVICE_TOKEN` to `OPERATOR_TOKEN` and scope it to admin operations only (channel CRUD, device provisioning, web UI access). Removes the device-side meaning entirely. Solves the bootstrap chicken-and-egg: per-device tokens come from the device-management API, and that API is itself gated by `OPERATOR_TOKEN`. Channel tokens (`vx_ch_…`) remain the auth for HTTP API consumers like the OpenClaw plugin.
+- **Device management REST API** — `/api/devices` endpoints for creating, listing, renaming, and revoking devices; each device gets its own unique token at registration. Replaces the single shared `DEVICE_TOKEN` `.env` bootstrap with proper per-device identity, auditability, and rotation. Gated by `OPERATOR_TOKEN`.
 - **Device management web UI** — section in the existing web-client for adding, naming, and revoking devices via the browser; shows connection state, last-seen time, and per-device token management. Pairs with the REST API above and replaces the earlier "device pairing web UI" idea with a full device lifecycle surface.
 
 ### Home Assistant Integration
