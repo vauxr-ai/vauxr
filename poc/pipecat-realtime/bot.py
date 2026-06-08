@@ -235,15 +235,20 @@ async def bot(runner_args: RunnerArguments) -> None:
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            # Stricter VAD to reject background-noise false triggers.
-            # stop_secs is the only end-of-turn latency knob now: the turn
-            # closes this many seconds after you go quiet.
+            # Stricter VAD to reject background-noise false triggers. The
+            # Satellite1 mic is hotter/noisier than a browser, so keyboard taps
+            # and room noise were tripping turns and interrupting the bot.
+            # start_secs is the main knob: speech must persist this long before a
+            # turn starts (and before barge-in interrupts TTS), which rejects
+            # short transients. confidence/min_volume gate low-level noise.
+            # stop_secs is the end-of-turn latency knob: the turn closes this
+            # many seconds after you go quiet.
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(
-                    confidence=0.7,
-                    start_secs=0.2,
+                    confidence=0.85,
+                    start_secs=0.4,
                     stop_secs=0.6,
-                    min_volume=0.6,
+                    min_volume=0.8,
                 )
             ),
             # Pure VAD turn-taking. Start when VAD hears speech, stop when VAD
