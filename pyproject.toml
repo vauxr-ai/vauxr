@@ -32,6 +32,11 @@ dev = [
 # REALTIME_ENABLED=1; the core WS server runs without these.
 realtime = [
     "pipecat-ai[webrtc,silero]>=1.3",
+    # Pipecat's smallwebrtc request/connection handlers import fastapi/starlette
+    # (SmallWebRTCRequest model) and websockets (connection callback); neither is
+    # pulled by the [webrtc] extra.
+    "fastapi>=0.115",
+    "websockets>=12",
 ]
 
 [project.scripts]

@@ -20,12 +20,24 @@ WORKDIR /app
 # PermissionError → 500, and channel-token bearer auth then 401s because
 # no channels can be persisted.
 RUN groupadd --system --gid 101 vauxr && useradd --system --uid 100 --gid vauxr vauxr
+# Pipecat's smallwebrtc path imports opencv (cv2) unconditionally, even for
+# audio-only pipelines; cv2 needs these X/GL system libs or its import fails
+# with `libxcb.so.1: cannot open shared object file`, which kills the WebRTC
+# connection callback and leaves the device hung in listening mode.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 libxcb1 libxext6 libsm6 \
+    && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md ./
 COPY --from=build /wheels /wheels
 # Install the wheel with the `realtime` extra so the in-process Pipecat WebRTC
 # pipeline (aiortc + silero VAD) is available when REALTIME_ENABLED=1. The
 # extra is applied to the built wheel path; deps resolve from the index.
 RUN pip install --no-cache-dir "$(ls /wheels/*.whl)[realtime]"
+# Pre-seed NLTK punkt data into a default search path so Pipecat's sentence
+# tokenizer (used for TTS chunking) doesn't try to download at runtime and fail
+# on the read-only filesystem with a permission error.
+RUN python -m nltk.downloader -d /usr/share/nltk_data punkt punkt_tab
 COPY --from=web-build /app/web-client/dist ./web-client/dist
 RUN mkdir -p /data && chown vauxr:vauxr /data
 USER vauxr
