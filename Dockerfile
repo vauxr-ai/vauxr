@@ -22,7 +22,10 @@ WORKDIR /app
 RUN groupadd --system --gid 101 vauxr && useradd --system --uid 100 --gid vauxr vauxr
 COPY pyproject.toml README.md ./
 COPY --from=build /wheels /wheels
-RUN pip install --no-cache-dir /wheels/*.whl
+# Install the wheel with the `realtime` extra so the in-process Pipecat WebRTC
+# pipeline (aiortc + silero VAD) is available when REALTIME_ENABLED=1. The
+# extra is applied to the built wheel path; deps resolve from the index.
+RUN pip install --no-cache-dir "$(ls /wheels/*.whl)[realtime]"
 COPY --from=web-build /app/web-client/dist ./web-client/dist
 RUN mkdir -p /data && chown vauxr:vauxr /data
 USER vauxr
