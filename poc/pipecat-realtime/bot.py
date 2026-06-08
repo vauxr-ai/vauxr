@@ -26,9 +26,17 @@ from loguru import logger
 
 load_dotenv()
 
+import asyncio
+
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import Frame, LLMRunFrame, VADUserStoppedSpeakingFrame
+from pipecat.frames.frames import (
+    Frame,
+    LLMRunFrame,
+    TranscriptionFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -54,21 +62,73 @@ VOICE_SYSTEM = (
 
 
 class VADStopUserTurnStopStrategy(BaseUserTurnStopStrategy):
-    """End the user turn the instant VAD reports end of speech.
+    """End the user turn when the batch transcript lands after VAD stop.
 
-    Pure VAD end-of-turn: no ML smart-turn model and no transcript gating.
-    This is the right fit for batch/segmented STT (Wyoming/Whisper), which
-    only transcribes *after* the turn closes. The framework defaults
-    (LocalSmartTurnAnalyzerV3, SpeechTimeoutUserTurnStopStrategy) assume
-    streaming STT and deadlock here: they wait for a transcript that can't
-    arrive until the turn ends, falling through to the 5s
-    user_turn_stop_timeout — the "lock-up" / lag.
+    Wyoming/Whisper is segmented: SegmentedSTTService kicks off transcription
+    on VAD stop and emits the TranscriptionFrame ~0.5-1s later. We therefore
+    finalize the turn when that transcript arrives (not on raw VAD stop) —
+    otherwise the turn closes empty and the LLM runs one turn behind. A short
+    fallback timeout finalizes anyway if no transcript shows up (pure silence
+    / a noise blip dropped upstream), so the turn machine never wedges.
+
+    The pipecat defaults (LocalSmartTurnAnalyzerV3, SpeechTimeoutUserTurn-
+    StopStrategy) assume streaming STT and don't fit this batch flow.
     """
 
+    def __init__(self, *, fallback_timeout: float = 2.0, **kwargs):
+        super().__init__(**kwargs)
+        self._fallback_timeout = fallback_timeout
+        self._vad_stopped = False
+        self._fallback_task: asyncio.Task | None = None
+
+    async def reset(self):
+        await super().reset()
+        self._vad_stopped = False
+        await self._cancel_fallback()
+
+    async def cleanup(self):
+        await super().cleanup()
+        await self._cancel_fallback()
+
     async def process_frame(self, frame: Frame) -> ProcessFrameResult:
-        if isinstance(frame, VADUserStoppedSpeakingFrame):
-            await self.trigger_user_turn_stopped()
+        if isinstance(frame, VADUserStartedSpeakingFrame):
+            self._vad_stopped = False
+            await self._cancel_fallback()
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            self._vad_stopped = True
+            await self._start_fallback()
+        elif isinstance(frame, TranscriptionFrame):
+            if self._vad_stopped and frame.text and frame.text.strip():
+                await self._finalize()
         return ProcessFrameResult.CONTINUE
+
+    async def _start_fallback(self):
+        await self._cancel_fallback()
+        self._fallback_task = self.task_manager.create_task(
+            self._fallback_handler(), f"{self}::_fallback_handler"
+        )
+        await asyncio.sleep(0)
+
+    async def _fallback_handler(self):
+        try:
+            await asyncio.sleep(self._fallback_timeout)
+        except asyncio.CancelledError:
+            return
+        finally:
+            self._fallback_task = None
+        await self._finalize()
+
+    async def _finalize(self):
+        if not self._vad_stopped:
+            return
+        self._vad_stopped = False
+        await self._cancel_fallback()
+        await self.trigger_user_turn_stopped()
+
+    async def _cancel_fallback(self):
+        if self._fallback_task:
+            await self.task_manager.cancel_task(self._fallback_task)
+            self._fallback_task = None
 
 
 def _build_stt():
