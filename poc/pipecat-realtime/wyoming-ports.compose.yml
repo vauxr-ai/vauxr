@@ -1,0 +1,13 @@
+# PoC-only override: publish the Wyoming STT/TTS ports to the host so the
+# host-run Pipecat bot can reach whisper/piper at 127.0.0.1. The production
+# docker-compose.yml keeps them on the internal docker network only.
+#
+# Usage (from repo root):
+#   docker compose -f docker-compose.yml -f poc/pipecat-realtime/wyoming-ports.compose.yml up -d whisper piper
+services:
+  whisper:
+    ports:
+      - "10300:10300"
+  piper:
+    ports:
+      - "10200:10200"

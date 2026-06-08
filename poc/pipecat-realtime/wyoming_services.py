@@ -101,6 +101,14 @@ class WyomingSTTService(SegmentedSTTService):
         if not audio:
             return
 
+        # faster-whisper hallucinates on tiny noise blips (e.g. detects "nn"
+        # and emits garbage). Drop segments shorter than ~0.4s before they
+        # reach Whisper.
+        min_bytes = int(0.4 * self.sample_rate * 2)
+        if len(audio) < min_bytes:
+            logger.debug("Wyoming STT: dropping {}-byte segment (< 0.4s)", len(audio))
+            return
+
         reader, writer = await asyncio.open_connection(self._host, self._port)
         try:
             writer.write(

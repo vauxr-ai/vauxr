@@ -27,7 +27,8 @@ from loguru import logger
 load_dotenv()
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.frames.frames import Frame, LLMRunFrame, VADUserStoppedSpeakingFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -36,6 +37,10 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.turns.types import ProcessFrameResult
+from pipecat.turns.user_start import VADUserTurnStartStrategy
+from pipecat.turns.user_stop.base_user_turn_stop_strategy import BaseUserTurnStopStrategy
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.openai.llm import OpenAILLMService
@@ -46,6 +51,24 @@ VOICE_SYSTEM = (
     "Responses are spoken aloud — no emojis, markdown, code blocks, or URLs. "
     "Use short, natural sentences. Be concise."
 )
+
+
+class VADStopUserTurnStopStrategy(BaseUserTurnStopStrategy):
+    """End the user turn the instant VAD reports end of speech.
+
+    Pure VAD end-of-turn: no ML smart-turn model and no transcript gating.
+    This is the right fit for batch/segmented STT (Wyoming/Whisper), which
+    only transcribes *after* the turn closes. The framework defaults
+    (LocalSmartTurnAnalyzerV3, SpeechTimeoutUserTurnStopStrategy) assume
+    streaming STT and deadlock here: they wait for a transcript that can't
+    arrive until the turn ends, falling through to the 5s
+    user_turn_stop_timeout — the "lock-up" / lag.
+    """
+
+    async def process_frame(self, frame: Frame) -> ProcessFrameResult:
+        if isinstance(frame, VADUserStoppedSpeakingFrame):
+            await self.trigger_user_turn_stopped()
+        return ProcessFrameResult.CONTINUE
 
 
 def _build_stt():
@@ -115,7 +138,25 @@ async def bot(runner_args: RunnerArguments) -> None:
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(),
+            # Stricter VAD to reject background-noise false triggers.
+            # stop_secs is the only end-of-turn latency knob now: the turn
+            # closes this many seconds after you go quiet.
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(
+                    confidence=0.7,
+                    start_secs=0.2,
+                    stop_secs=0.6,
+                    min_volume=0.6,
+                )
+            ),
+            # Pure VAD turn-taking. Start when VAD hears speech, stop when VAD
+            # hears silence — no ML smart-turn model and no transcript gating,
+            # both of which deadlock with batch Whisper STT (see
+            # VADStopUserTurnStopStrategy).
+            user_turn_strategies=UserTurnStrategies(
+                start=[VADUserTurnStartStrategy()],
+                stop=[VADStopUserTurnStopStrategy()],
+            ),
         ),
     )
 
