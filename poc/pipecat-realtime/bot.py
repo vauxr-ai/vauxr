@@ -28,6 +28,43 @@ load_dotenv()
 
 import asyncio
 
+
+def _broaden_aiortc_dtls_ciphers() -> None:
+    """Let aiortc accept ECDHE-RSA DTLS suites, not just ECDHE-ECDSA.
+
+    aiortc >=1.x hardcodes an ECDSA-only DTLS cipher list. Espressif's esp_peer
+    (the firmware WebRTC stack) presents an RSA DTLS certificate, so with stock
+    aiortc there is no common ciphersuite and the DTLS handshake dies with
+    HANDSHAKE_FAILURE before any media flows. Adding the ECDHE-RSA suites back
+    makes the ESP32 connect; browsers already support them, so this is harmless
+    for the web client.
+    """
+    from aiortc.rtcdtlstransport import RTCCertificate
+
+    if getattr(RTCCertificate, "_vauxr_cipher_patched", False):
+        return
+
+    _orig = RTCCertificate._create_ssl_context
+    _ciphers = (
+        b"ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
+        b"ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:"
+        b"ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA:"
+        b"ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:"
+        b"AES128-GCM-SHA256:AES128-SHA:AES256-SHA"
+    )
+
+    def _patched(self, srtp_profiles):
+        ctx = _orig(self, srtp_profiles)
+        ctx.set_cipher_list(_ciphers)
+        return ctx
+
+    RTCCertificate._create_ssl_context = _patched
+    RTCCertificate._vauxr_cipher_patched = True
+    logger.info("Patched aiortc DTLS cipher list to include ECDHE-RSA (esp_peer compat)")
+
+
+_broaden_aiortc_dtls_ciphers()
+
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
