@@ -86,9 +86,10 @@ class ChannelLLMService(LLMService):
     async def _run_turn(self, context: Any) -> None:
         text = _latest_user_text(context)
         if not text:
-            logger.warning("ChannelLLM: empty user text — skipping turn")
-            if self._on_turn_complete:
-                await self._maybe_await(self._on_turn_complete(False, ""))
+            # Empty transcript (VAD blip, dropped STT, noise). Skip the turn but
+            # stay in the realtime session — ending here on follow_up=false would
+            # kick the user out of multi-turn listening on a spurious trigger.
+            logger.warning("ChannelLLM: empty user text — skipping turn, staying in session")
             return
 
         await self.push_frame(LLMFullResponseStartFrame())

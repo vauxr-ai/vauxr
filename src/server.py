@@ -112,12 +112,20 @@ async def _hello(ws: web.WebSocketResponse, msg: dict[str, Any]) -> None:
     caps = msg.get("caps")
     caps_list = [c for c in caps if isinstance(c, str)] if isinstance(caps, list) else []
     rt = get_config().realtime
-    webrtc_ok = rt.enabled and "webrtc" in caps_list
+    # WebRTC needs an absolute, device-reachable offer URL and reliable ICE host
+    # munging (esp32 mode). Without REALTIME_HOST the offer_url is relative and
+    # ICE is unreliable, so fall back to ws rather than advertise a broken policy.
+    webrtc_ok = rt.enabled and "webrtc" in caps_list and bool(rt.host)
+    if rt.enabled and "webrtc" in caps_list and not rt.host:
+        log.warning(
+            "realtime: %s is webrtc-capable but REALTIME_HOST is unset — falling back to ws",
+            msg.get("device_id"),
+        )
 
     realtime_policy: dict[str, Any] = {"enabled": False, "transport": "ws"}
     if webrtc_ok:
         http_port = get_config().http.port
-        offer_url = f"http://{rt.host}:{http_port}{rt.offer_path}" if rt.host else rt.offer_path
+        offer_url = f"http://{rt.host}:{http_port}{rt.offer_path}"
         realtime_policy = {
             "enabled": True,
             "transport": "webrtc",
@@ -262,10 +270,19 @@ async def _realtime_start(
 
 
 def _realtime_media_ready(ctx: ConnectionCtx) -> None:
-    """Device switched its mic to the WebRTC track; stop forwarding WS pre-roll."""
+    """Device switched its mic to the WebRTC track; stop forwarding WS pre-roll.
+
+    media_ready is the device's "done sending pre-roll" signal, so this is the
+    point at which it's safe to consume the buffered pre-roll — flushing earlier
+    (on WebRTC connect) races the device and can drop the tail of the first
+    utterance.
+    """
     ctx.realtime_media = True
     if ctx.device_id:
         log.info("realtime.media_ready from %s", ctx.device_id)
+        from realtime_session import get_manager
+
+        get_manager().media_ready(ctx.device_id)
 
 
 async def _realtime_stop(ctx: ConnectionCtx) -> None:

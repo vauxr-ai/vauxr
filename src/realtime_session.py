@@ -59,6 +59,12 @@ class RealtimeSession:
         self._connection: Any = None
         self._runner_task: asyncio.Task | None = None
         self._closed = False
+        # Set once the pipeline is built and the WebRTC client is connected, so
+        # pre-roll flush (driven by realtime.media_ready) can wait for it.
+        self._pipeline_ready = asyncio.Event()
+        # follow_up resolved at LLM-turn end, but audio.end is deferred until the
+        # bot actually stops speaking (TTS drained) — None means "nothing pending".
+        self._pending_follow_up: bool | None = None
 
     # --- lifecycle ---
 
@@ -70,6 +76,7 @@ class RealtimeSession:
         from pipecat.audio.vad.vad_analyzer import VADParams
         from pipecat.frames.frames import (
             BotStartedSpeakingFrame,
+            BotStoppedSpeakingFrame,
             Frame,
             TranscriptionFrame,
         )
@@ -141,6 +148,10 @@ class RealtimeSession:
                     await _send_json(
                         _device_ws(session.device_id), {"type": "audio.start"}
                     )
+                elif isinstance(frame, BotStoppedSpeakingFrame):
+                    # The bot finished talking — now (and only now) is the turn's
+                    # audio actually done, so relay the deferred audio.end.
+                    await session._on_bot_stopped_speaking()
                 await self.push_frame(frame, direction)
 
         pipeline = Pipeline(
@@ -164,7 +175,10 @@ class RealtimeSession:
         @transport.event_handler("on_client_connected")
         async def _on_connected(_t, _c) -> None:
             log.info("realtime[%s]: WebRTC client connected", self.device_id)
-            await self._flush_preroll()
+            # Don't flush pre-roll here — the device is still sending wake-word
+            # audio over WS until it signals realtime.media_ready. Just mark the
+            # pipeline ready; the flush is triggered by media_ready.
+            self._pipeline_ready.set()
 
         @transport.event_handler("on_client_disconnected")
         async def _on_disconnected(_t, _c) -> None:
@@ -173,6 +187,15 @@ class RealtimeSession:
 
         self._runner = PipelineRunner(handle_sigint=False)
         self._runner_task = asyncio.create_task(self._runner.run(self._task))
+
+    async def on_media_ready(self) -> None:
+        """Device finished sending WS pre-roll; flush it once the pipeline is up."""
+        try:
+            await asyncio.wait_for(self._pipeline_ready.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            log.warning("realtime[%s]: pipeline not ready for pre-roll flush", self.device_id)
+            return
+        await self._flush_preroll()
 
     async def _flush_preroll(self) -> None:
         """Transcribe buffered WS pre-roll and seed it as the first turn."""
@@ -199,16 +222,36 @@ class RealtimeSession:
         if self._task is not None:
             await self._task.queue_frames([LLMRunFrame()])
 
-    async def _on_turn_complete(self, follow_up: bool, _reply: str) -> None:
-        """Each turn ends here: relay audio.end{follow_up}; exit if not following up."""
+    async def _on_turn_complete(self, follow_up: bool, reply: str) -> None:
+        """Called when the LLM stream ends.
+
+        If the reply has spoken text, audio.end is deferred until the bot stops
+        speaking (TTS drained) so the firmware doesn't advance turn state — or,
+        for follow_up=false, tear down WebRTC — while the user is still hearing
+        the reply. With no spoken text there's no TTS, so end the turn now.
+        """
+        if reply and reply.strip():
+            self._pending_follow_up = follow_up
+        else:
+            await self._send_audio_end(follow_up)
+
+    async def _on_bot_stopped_speaking(self) -> None:
+        """Bot finished the deferred turn's audio — relay audio.end once."""
+        if self._pending_follow_up is None:
+            return
+        follow_up = self._pending_follow_up
+        self._pending_follow_up = None
+        await self._send_audio_end(follow_up)
+
+    async def _send_audio_end(self, follow_up: bool) -> None:
         await _send_json(
             _device_ws(self.device_id), {"type": "audio.end", "follow_up": follow_up}
         )
         registry.set_state(self.device_id, "listening" if follow_up else "idle")
         if not follow_up:
             log.info("realtime[%s]: follow_up=false — ending realtime session", self.device_id)
-            # Give the final TTS a moment to drain over WebRTC before teardown;
-            # the firmware also tears down its side on audio.end{follow_up:false}.
+            # Small grace for the final WebRTC audio packets to land before
+            # teardown; the firmware also tears down on audio.end{follow_up:false}.
             asyncio.create_task(self._deferred_close())
 
     async def _deferred_close(self) -> None:
@@ -274,6 +317,12 @@ class RealtimeManager:
         if session is not None:
             await session.close()
 
+    def media_ready(self, device_id: str) -> None:
+        """Device signalled realtime.media_ready — flush its pre-roll."""
+        session = self._sessions.get(device_id)
+        if session is not None:
+            asyncio.create_task(session.on_media_ready())
+
     def _request_handler(self) -> Any:
         if self._handler is None:
             from pipecat.transports.smallwebrtc.connection import IceServer
@@ -302,6 +351,12 @@ class RealtimeManager:
         )
 
         async def _on_connection(connection: Any) -> None:
+            # A re-offer for a device that already has a live session would
+            # otherwise orphan the previous Pipecat runner + WebRTC connection.
+            existing = self._sessions.get(device_id)
+            if existing is not None:
+                log.info("realtime[%s]: closing previous session before new offer", device_id)
+                await existing.close()
             session = RealtimeSession(device_id, self._channel_server)
             self._sessions[device_id] = session
             await session.start(connection)
