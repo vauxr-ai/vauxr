@@ -64,10 +64,14 @@ class RealtimeSession:
         # Set once the pipeline is built and the WebRTC client is connected, so
         # pre-roll flush (driven by realtime.media_ready) can wait for it.
         self._pipeline_ready = asyncio.Event()
-        # follow_up resolved at each LLM-turn end, but audio.end is deferred until
-        # the bot actually stops speaking (TTS drained). A FIFO (not a single
-        # slot) so overlapping turns / barge-in don't clobber a pending value.
-        self._pending_follow_up: deque[bool] = deque()
+        # Deferred audio.end queue, in turn order. Each entry is (follow_up,
+        # has_audio): a turn that produced bot speech can't end until its
+        # BotStoppedSpeaking arrives (counted as a credit), while a silent turn
+        # (empty/errored reply) ends as soon as it reaches the head — but never
+        # ahead of an earlier still-speaking turn, which would tear the session
+        # down while the first reply is still playing.
+        self._pending_ends: deque[tuple[bool, bool]] = deque()
+        self._bot_stop_credits = 0
         # True once the device has been told the session ended (audio.end with
         # follow_up=false). Guards against double-sending and ensures an abnormal
         # teardown (peer drop, error) still relays a terminal audio.end so the
@@ -190,11 +194,16 @@ class RealtimeSession:
 
         @transport.event_handler("on_client_disconnected")
         async def _on_disconnected(_t, _c) -> None:
-            log.info("realtime[%s]: WebRTC client disconnected", self.device_id)
-            # Peer dropped (ICE/network failure or a clean WebRTC close). The
-            # control WS is still up, so relay a terminal audio.end — otherwise
-            # the device can sit in listening/speaking after we've torn the
-            # pipeline down, breaking multi-turn exit and follow-up.
+            if self._closed:
+                # We initiated this teardown (close() sets _closed before it
+                # disconnects the peer) — e.g. a graceful end or an /api/offer
+                # supersede/renegotiation. The peer didn't drop, so don't relay
+                # a spurious audio.end that would kick the device out mid-turn.
+                return
+            log.info("realtime[%s]: WebRTC peer dropped", self.device_id)
+            # Peer dropped (ICE/network failure). The control WS is still up, so
+            # relay a terminal audio.end — otherwise the device can sit in
+            # listening/speaking after we've torn the pipeline down.
             await self._notify_ended()
             await self.close()
 
@@ -257,24 +266,42 @@ class RealtimeSession:
             await self._task.queue_frames([LLMRunFrame()])
 
     async def _on_turn_complete(self, follow_up: bool, reply: str) -> None:
-        """Called when the LLM stream ends.
+        """Called when an LLM turn ends. Queue its audio.end in turn order.
 
-        If the reply has spoken text, audio.end is deferred until the bot stops
-        speaking (TTS drained) so the firmware doesn't advance turn state — or,
-        for follow_up=false, tear down WebRTC — while the user is still hearing
-        the reply. With no spoken text there's no TTS, so end the turn now.
+        A turn with spoken text waits for its BotStoppedSpeaking (TTS drained)
+        before its audio.end fires, so the firmware doesn't advance turn state —
+        or, for follow_up=false, tear down WebRTC — while the reply is playing.
+        A silent turn has no TTS so it can end immediately, but only once it
+        reaches the head of the queue (see _drain_ends).
         """
-        if reply and reply.strip():
-            self._pending_follow_up.append(follow_up)
-        else:
-            await self._send_audio_end(follow_up)
+        has_audio = bool(reply and reply.strip())
+        self._pending_ends.append((follow_up, has_audio))
+        await self._drain_ends()
 
     async def _on_bot_stopped_speaking(self) -> None:
-        """Bot finished a deferred turn's audio — relay that turn's audio.end."""
-        if not self._pending_follow_up:
-            return
-        follow_up = self._pending_follow_up.popleft()
-        await self._send_audio_end(follow_up)
+        """Bot finished a turn's audio — credit it and drain ready ends."""
+        self._bot_stop_credits += 1
+        await self._drain_ends()
+
+    async def _drain_ends(self) -> None:
+        """Emit deferred audio.end events in turn order.
+
+        Head-of-queue entries that produced bot audio wait for a bot-stop credit;
+        silent entries drain immediately. Processing strictly in order keeps a
+        later turn from ending the session before an earlier reply has played.
+        """
+        while self._pending_ends and not self._ended_notified:
+            follow_up, has_audio = self._pending_ends[0]
+            if has_audio:
+                if self._bot_stop_credits <= 0:
+                    break
+                self._bot_stop_credits -= 1
+            self._pending_ends.popleft()
+            await self._send_audio_end(follow_up)
+            if not follow_up:
+                # Session is ending; anything still queued is moot.
+                self._pending_ends.clear()
+                break
 
     async def _send_audio_end(self, follow_up: bool) -> None:
         if not follow_up:
@@ -301,7 +328,8 @@ class RealtimeSession:
         if self._ended_notified:
             return
         self._ended_notified = True
-        self._pending_follow_up.clear()
+        self._pending_ends.clear()
+        self._bot_stop_credits = 0
         await _send_json(
             _device_ws(self.device_id), {"type": "audio.end", "follow_up": False}
         )
@@ -342,6 +370,10 @@ class RealtimeManager:
         # manager (not the session) so it survives the media_ready WS message
         # arriving before the /api/offer connection registers the session.
         self._media_ready: dict[str, asyncio.Event] = {}
+        # Per-device lock serializing /api/offer handling: two overlapping offers
+        # for the same device would otherwise both start a Pipecat runner, with
+        # only the last _sessions registration winning and the other orphaned.
+        self._offer_locks: dict[str, asyncio.Lock] = {}
         self._handler: Any = None
         self._max_preroll_bytes = 16000 * 2 * 10  # 10s @ 16kHz mono
 
@@ -466,7 +498,11 @@ class RealtimeManager:
                 raise
             self._sessions[device_id] = session
 
-        return await handler.handle_web_request(req, _on_connection)
+        # Serialize per device so two overlapping offers can't both build a
+        # session (and leak a runner) for the same device_id.
+        lock = self._offer_locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            return await handler.handle_web_request(req, _on_connection)
 
 
 _manager: RealtimeManager | None = None
