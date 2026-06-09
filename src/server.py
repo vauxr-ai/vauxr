@@ -78,9 +78,19 @@ async def handle_text(
     if msg_type == "hello":
         await _hello(ws, msg)
     elif msg_type == "voice.start":
-        await _voice_start(state, ws, ctx, msg)
+        # Turn-based capture doesn't apply mid-realtime: running it on the same WS
+        # would clobber the channel response listener and force registry state to
+        # idle while WebRTC is still up. (A device using realtime won't send this;
+        # this is a guard against a stale/confused client.)
+        if ctx.realtime:
+            log.warning("ignoring voice.start during realtime session: %s", ctx.device_id)
+        else:
+            await _voice_start(state, ws, ctx, msg)
     elif msg_type == "voice.end":
-        await _voice_end(state, ws, ctx)
+        if ctx.realtime:
+            log.warning("ignoring voice.end during realtime session: %s", ctx.device_id)
+        else:
+            await _voice_end(state, ws, ctx)
     elif msg_type == "abort":
         # In a realtime/WebRTC session the turn-based abort_event is irrelevant;
         # tear the Pipecat session down (same as realtime.stop) so abort actually
