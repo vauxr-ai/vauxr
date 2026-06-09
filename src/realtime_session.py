@@ -340,6 +340,12 @@ class RealtimeManager:
         session = self._sessions.get(device_id)
         if session is not None:
             await session.close()
+        # Clear any pre-roll/media_ready armed for this device. stop() runs on
+        # realtime.stop and on disconnect — including the case where the device
+        # armed pre-roll but never completed WebRTC (no session to close), which
+        # would otherwise leak the buffer/event until the next wake.
+        self._preroll.pop(device_id, None)
+        self._media_ready.pop(device_id, None)
 
     def media_ready_event(self, device_id: str) -> asyncio.Event:
         """Get-or-create the per-device pre-roll-done signal."""

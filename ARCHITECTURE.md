@@ -161,6 +161,8 @@ For low-latency, barge-in conversation, capable devices (currently Satellite1, w
 
 The device stays dumb: it advertises capabilities in `hello` and the server returns the policy. Whether realtime is used, which transport, and the WebRTC endpoints are all decided server-side.
 
+> **Note:** realtime currently routes LLM turns through the **channel plugin** only. `openclaw-direct` (operator) mode is not yet supported in realtime — those deployments should stay on the turn-based WS path.
+
 ### Lifecycle
 
 ```

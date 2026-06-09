@@ -75,6 +75,11 @@ class ChannelLLMService(LLMService):
         self._device_id = device_id
         self._channel_server = channel_server
         self._on_turn_complete = on_turn_complete
+        # Last user text actually routed to the channel. VADStopUserTurnStopStrategy
+        # can finalize a turn on its silence fallback without a new transcript, in
+        # which case _latest_user_text still returns the *previous* utterance — we
+        # must not re-send it as a fresh turn.
+        self._last_user_text = ""
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -91,6 +96,13 @@ class ChannelLLMService(LLMService):
             # kick the user out of multi-turn listening on a spurious trigger.
             logger.warning("ChannelLLM: empty user text — skipping turn, staying in session")
             return
+
+        if text == self._last_user_text:
+            # Turn finalized without a new transcript (VAD silence fallback); the
+            # context still holds the prior utterance. Skip rather than re-send.
+            logger.warning("ChannelLLM: no new user text since last turn — skipping")
+            return
+        self._last_user_text = text
 
         await self.push_frame(LLMFullResponseStartFrame())
         await self.start_processing_metrics()
@@ -109,12 +121,15 @@ class ChannelLLMService(LLMService):
         listener = {"on_delta": on_delta, "on_end": on_end, "on_error": on_error}
         self._channel_server.add_response_listener(self._device_id, listener)
 
+        # Realtime routes only through the channel plugin. send_transcript returns
+        # false for openclaw-direct (operator) mode, which realtime does not yet
+        # support — the turn-based WS pipeline handles that case instead.
         sent = self._channel_server.send_transcript(self._device_id, text)
         accumulated = ""
         error: str | None = None
         try:
             if not sent:
-                error = "Active channel not connected"
+                error = "Active channel not connected (openclaw-direct is not supported in realtime)"
             else:
                 while True:
                     try:

@@ -27,12 +27,15 @@ services:
       PIPER_VOICE: en_US-libritts_r-medium
       DATA_DIR: /data
       SSL_CERT_FILE: /certs/root.crt
-      # Realtime WebRTC. REALTIME_HOST must be the server's LAN IP/hostname: the
-      # device receives an absolute /api/offer URL built from it in the hello
-      # policy, and aiortc uses it to advertise reachable ICE candidates.
-      REALTIME_ENABLED: "1"
-      REALTIME_ESP32: "1"
-      REALTIME_HOST: ${REALTIME_HOST}
+      # Realtime WebRTC is opt-in (off by default): set REALTIME_ENABLED=1 in
+      # your .env to turn it on. When enabled, REALTIME_HOST must be the server's
+      # LAN IP/hostname — the device receives an absolute /api/offer URL built
+      # from it in the hello policy, and aiortc uses it to advertise reachable
+      # ICE candidates. (Host networking below is required only for realtime's
+      # ephemeral ICE UDP ports; it's otherwise harmless for WS-only deploys.)
+      REALTIME_ENABLED: ${REALTIME_ENABLED:-0}
+      REALTIME_ESP32: ${REALTIME_ESP32:-1}
+      REALTIME_HOST: ${REALTIME_HOST:-}
       REALTIME_STUN_URL: ${REALTIME_STUN_URL:-stun:stun.l.google.com:19302}
     volumes:
       - vauxr-data:/data
