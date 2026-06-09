@@ -68,6 +68,11 @@ class RealtimeSession:
         # the bot actually stops speaking (TTS drained). A FIFO (not a single
         # slot) so overlapping turns / barge-in don't clobber a pending value.
         self._pending_follow_up: deque[bool] = deque()
+        # True once the device has been told the session ended (audio.end with
+        # follow_up=false). Guards against double-sending and ensures an abnormal
+        # teardown (peer drop, error) still relays a terminal audio.end so the
+        # device leaves listening/speaking instead of hanging.
+        self._ended_notified = False
 
     # --- lifecycle ---
 
@@ -186,6 +191,11 @@ class RealtimeSession:
         @transport.event_handler("on_client_disconnected")
         async def _on_disconnected(_t, _c) -> None:
             log.info("realtime[%s]: WebRTC client disconnected", self.device_id)
+            # Peer dropped (ICE/network failure or a clean WebRTC close). The
+            # control WS is still up, so relay a terminal audio.end — otherwise
+            # the device can sit in listening/speaking after we've torn the
+            # pipeline down, breaking multi-turn exit and follow-up.
+            await self._notify_ended()
             await self.close()
 
         self._runner = PipelineRunner(handle_sigint=False)
@@ -202,10 +212,21 @@ class RealtimeSession:
         media_ready = get_manager().media_ready_event(self.device_id)
         try:
             await asyncio.wait_for(self._pipeline_ready.wait(), timeout=15)
+        except asyncio.TimeoutError:
+            # Pipeline never came up — we can't seed a turn. Drop the buffer so it
+            # doesn't linger until the next wake.
+            log.warning("realtime[%s]: pipeline never ready — dropping pre-roll", self.device_id)
+            get_manager().take_preroll(self.device_id)
+            return
+        try:
             await asyncio.wait_for(media_ready.wait(), timeout=15)
         except asyncio.TimeoutError:
-            log.warning("realtime[%s]: timed out waiting to flush pre-roll", self.device_id)
-            return
+            # Device never confirmed media_ready, but the pipeline is up. Flush
+            # what we buffered anyway rather than silently discarding the user's
+            # first command after wake.
+            log.warning(
+                "realtime[%s]: media_ready timed out — flushing pre-roll anyway", self.device_id
+            )
         if self._closed:
             return
         await self._flush_preroll()
@@ -256,6 +277,8 @@ class RealtimeSession:
         await self._send_audio_end(follow_up)
 
     async def _send_audio_end(self, follow_up: bool) -> None:
+        if not follow_up:
+            self._ended_notified = True
         await _send_json(
             _device_ws(self.device_id), {"type": "audio.end", "follow_up": follow_up}
         )
@@ -265,6 +288,24 @@ class RealtimeSession:
             # Small grace for the final WebRTC audio packets to land before
             # teardown; the firmware also tears down on audio.end{follow_up:false}.
             asyncio.create_task(self._deferred_close())
+
+    async def _notify_ended(self) -> None:
+        """Relay a terminal audio.end{follow_up:false} for an abnormal teardown.
+
+        Normal turns end via _send_audio_end. This covers the cases where that
+        never fires: a peer drop, or a deferred follow_up that's still queued
+        because TTS never reached BotStoppedSpeaking (playback error/interrupt/
+        disconnect). Guarded so it sends at most once, and drops any pending
+        follow_up that will now never be drained.
+        """
+        if self._ended_notified:
+            return
+        self._ended_notified = True
+        self._pending_follow_up.clear()
+        await _send_json(
+            _device_ws(self.device_id), {"type": "audio.end", "follow_up": False}
+        )
+        registry.set_state(self.device_id, "idle")
 
     async def _deferred_close(self) -> None:
         await asyncio.sleep(0.5)
@@ -346,6 +387,10 @@ class RealtimeManager:
         # would otherwise leak the buffer/event until the next wake.
         self._preroll.pop(device_id, None)
         self._media_ready.pop(device_id, None)
+        # Reset registry state: tearing the session down on realtime.stop (or a
+        # bare disconnect) otherwise leaves the device showing "listening" after
+        # realtime has ended, skewing HTTP status and registry-keyed logic.
+        registry.set_state(device_id, "idle")
 
     def can_accept_offer(self, device_id: str) -> bool:
         """Whether an /api/offer for this device_id is tied to a real wake.
@@ -410,8 +455,16 @@ class RealtimeManager:
                 log.info("realtime[%s]: closing previous session before new offer", device_id)
                 await existing.close()
             session = RealtimeSession(device_id, self._channel_server)
+            # Register only after start() succeeds: a failed start would otherwise
+            # leave a half-built session in _sessions, which later offers (and
+            # can_accept_offer) would treat as live.
+            try:
+                await session.start(connection)
+            except Exception:
+                log.exception("realtime[%s]: session start failed", device_id)
+                await session.close()
+                raise
             self._sessions[device_id] = session
-            await session.start(connection)
 
         return await handler.handle_web_request(req, _on_connection)
 
