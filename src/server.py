@@ -82,7 +82,13 @@ async def handle_text(
     elif msg_type == "voice.end":
         await _voice_end(state, ws, ctx)
     elif msg_type == "abort":
-        _voice_abort(ctx)
+        # In a realtime/WebRTC session the turn-based abort_event is irrelevant;
+        # tear the Pipecat session down (same as realtime.stop) so abort actually
+        # stops the bot and returns the device to idle.
+        if ctx.realtime:
+            await _realtime_stop(ctx)
+        else:
+            _voice_abort(ctx)
     elif msg_type == "realtime.start":
         await _realtime_start(state, ws, ctx, msg)
     elif msg_type == "realtime.media_ready":
