@@ -60,6 +60,20 @@ def _latest_user_text(context: Any) -> str:
     return ""
 
 
+def _count_user_messages(context: Any) -> int:
+    """Number of user-role messages in the context.
+
+    A genuinely new utterance appends a new user message; a VAD silence-fallback
+    re-finalize of the same turn does not. Counting (rather than comparing text)
+    lets us skip the re-finalize without dropping a legitimately repeated phrase.
+    """
+    try:
+        messages = context.get_messages()
+    except Exception:  # noqa: BLE001
+        return 0
+    return sum(1 for m in messages if m.get("role") == "user")
+
+
 class ChannelLLMService(LLMService):
     """Route LLM turns through the active vauxr channel plugin."""
 
@@ -75,11 +89,12 @@ class ChannelLLMService(LLMService):
         self._device_id = device_id
         self._channel_server = channel_server
         self._on_turn_complete = on_turn_complete
-        # Last user text actually routed to the channel. VADStopUserTurnStopStrategy
-        # can finalize a turn on its silence fallback without a new transcript, in
-        # which case _latest_user_text still returns the *previous* utterance — we
-        # must not re-send it as a fresh turn.
-        self._last_user_text = ""
+        # User-message count at the last turn we routed. VADStopUserTurnStopStrategy
+        # can finalize a turn on its silence fallback without a new transcript; in
+        # that case the count is unchanged and we skip re-sending the prior
+        # utterance — while still allowing a legitimately repeated phrase (e.g.
+        # "yes" twice), which appends a new user message and bumps the count.
+        self._last_user_msg_count = 0
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -98,13 +113,16 @@ class ChannelLLMService(LLMService):
             await self._emit_empty_response()
             return
 
-        if text == self._last_user_text:
-            # Turn finalized without a new transcript (VAD silence fallback); the
-            # context still holds the prior utterance. Skip rather than re-send.
-            logger.warning("ChannelLLM: no new user text since last turn — skipping")
+        user_count = _count_user_messages(context)
+        if user_count <= self._last_user_msg_count:
+            # No new user message since the last turn (VAD silence fallback re-
+            # finalizing the same turn); the context still holds the prior
+            # utterance. Skip rather than re-send. A real repeat of the same
+            # phrase appends a new user message, so user_count would advance.
+            logger.warning("ChannelLLM: no new user message since last turn — skipping")
             await self._emit_empty_response()
             return
-        self._last_user_text = text
+        self._last_user_msg_count = user_count
 
         await self.push_frame(LLMFullResponseStartFrame())
         await self.start_processing_metrics()
