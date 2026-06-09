@@ -48,6 +48,12 @@ def _device_ws(device_id: str) -> web.WebSocketResponse | None:
     return entry.ws if entry is not None else None
 
 
+# How long the bot must stay silent before a reply counts as fully spoken. Must
+# comfortably exceed the gap between consecutive sentence-chunk TTS spans, but
+# stay short enough that follow-up/teardown feel responsive.
+_BOT_IDLE_DEBOUNCE_S = 1.0
+
+
 class RealtimeSession:
     """One device's live WebRTC pipeline + WS control relay."""
 
@@ -65,13 +71,20 @@ class RealtimeSession:
         # pre-roll flush (driven by realtime.media_ready) can wait for it.
         self._pipeline_ready = asyncio.Event()
         # Deferred audio.end queue, in turn order. Each entry is (follow_up,
-        # has_audio): a turn that produced bot speech can't end until its
-        # BotStoppedSpeaking arrives (counted as a credit), while a silent turn
-        # (empty/errored reply) ends as soon as it reaches the head — but never
-        # ahead of an earlier still-speaking turn, which would tear the session
-        # down while the first reply is still playing.
+        # has_audio): a turn that produced bot speech can't end until its bot
+        # audio fully drains (counted as a credit), while a silent turn (empty/
+        # errored reply) ends as soon as it reaches the head — but never ahead of
+        # an earlier still-speaking turn, which would tear the session down while
+        # the first reply is still playing.
         self._pending_ends: deque[tuple[bool, bool]] = deque()
         self._bot_stop_credits = 0
+        # Bot-speaking bookkeeping. Wyoming TTS speaks one sentence per run_tts,
+        # so a single reply produces several BotStarted/BotStoppedSpeaking pairs.
+        # A credit (one finished reply) is granted only once the bot has been
+        # idle past a debounce AND a text-complete turn is waiting on it — the
+        # debounce bridges the short gaps between sentence chunks.
+        self._bot_speaking = 0
+        self._drain_timer: asyncio.Task | None = None
         # True once the device has been told the session ended (audio.end with
         # follow_up=false). Guards against double-sending and ensures an abnormal
         # teardown (peer drop, error) still relays a terminal audio.end so the
@@ -157,13 +170,15 @@ class RealtimeSession:
                         {"type": "transcript", "text": frame.text.strip()},
                     )
                 elif isinstance(frame, BotStartedSpeakingFrame):
+                    session._on_bot_started_speaking()
                     await _send_json(
                         _device_ws(session.device_id), {"type": "audio.start"}
                     )
                 elif isinstance(frame, BotStoppedSpeakingFrame):
-                    # The bot finished talking — now (and only now) is the turn's
-                    # audio actually done, so relay the deferred audio.end.
-                    await session._on_bot_stopped_speaking()
+                    # One of possibly several per-sentence stops. The reply isn't
+                    # actually done until the bot stays idle (see the debounce in
+                    # _on_bot_stopped_speaking), so don't emit audio.end here.
+                    session._on_bot_stopped_speaking()
                 await self.push_frame(frame, direction)
 
         pipeline = Pipeline(
@@ -276,10 +291,53 @@ class RealtimeSession:
         """
         has_audio = bool(reply and reply.strip())
         self._pending_ends.append((follow_up, has_audio))
+        if has_audio and self._bot_speaking == 0:
+            # The reply's audio may already have fully drained before this turn
+            # was queued (short reply / fast TTS), so there'd be no further
+            # BotStopped to trigger the credit. Arm the idle debounce to catch
+            # that; if audio is merely about to start, BotStarted cancels it.
+            self._schedule_drain_timer()
         await self._drain_ends()
 
-    async def _on_bot_stopped_speaking(self) -> None:
-        """Bot finished a turn's audio — credit it and drain ready ends."""
+    def _on_bot_started_speaking(self) -> None:
+        self._bot_speaking += 1
+        self._cancel_drain_timer()
+
+    def _on_bot_stopped_speaking(self) -> None:
+        """One per-sentence stop. Arm the idle debounce when the bot goes quiet.
+
+        Wyoming speaks a sentence per run_tts, so a reply yields several
+        BotStarted/Stopped pairs. Only after the bot stays idle past the debounce
+        (no new sentence) do we count the reply as finished.
+        """
+        if self._bot_speaking > 0:
+            self._bot_speaking -= 1
+        if self._bot_speaking == 0:
+            self._schedule_drain_timer()
+
+    def _schedule_drain_timer(self) -> None:
+        self._cancel_drain_timer()
+        self._drain_timer = asyncio.create_task(self._drain_after_idle())
+
+    def _cancel_drain_timer(self) -> None:
+        if self._drain_timer is not None:
+            self._drain_timer.cancel()
+            self._drain_timer = None
+
+    async def _drain_after_idle(self) -> None:
+        try:
+            await asyncio.sleep(_BOT_IDLE_DEBOUNCE_S)
+        except asyncio.CancelledError:
+            return
+        self._drain_timer = None
+        if self._closed or self._bot_speaking != 0:
+            return
+        # Credit one finished reply, but only if a text-complete turn is waiting
+        # on it. A pending has_audio entry exists only after the LLM stream fully
+        # ended, so no further sentences will be queued — this idle is the real
+        # end, not a mid-reply pause before the turn was even submitted.
+        if not any(has_audio for _, has_audio in self._pending_ends):
+            return
         self._bot_stop_credits += 1
         await self._drain_ends()
 
@@ -330,6 +388,7 @@ class RealtimeSession:
         self._ended_notified = True
         self._pending_ends.clear()
         self._bot_stop_credits = 0
+        self._cancel_drain_timer()
         await _send_json(
             _device_ws(self.device_id), {"type": "audio.end", "follow_up": False}
         )
@@ -344,6 +403,7 @@ class RealtimeSession:
             return
         self._closed = True
         log.info("realtime[%s]: closing session", self.device_id)
+        self._cancel_drain_timer()
         if self._preroll_task is not None:
             self._preroll_task.cancel()
         try:
