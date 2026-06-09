@@ -95,12 +95,14 @@ class ChannelLLMService(LLMService):
             # stay in the realtime session — ending here on follow_up=false would
             # kick the user out of multi-turn listening on a spurious trigger.
             logger.warning("ChannelLLM: empty user text — skipping turn, staying in session")
+            await self._emit_empty_response()
             return
 
         if text == self._last_user_text:
             # Turn finalized without a new transcript (VAD silence fallback); the
             # context still holds the prior utterance. Skip rather than re-send.
             logger.warning("ChannelLLM: no new user text since last turn — skipping")
+            await self._emit_empty_response()
             return
         self._last_user_text = text
 
@@ -170,6 +172,19 @@ class ChannelLLMService(LLMService):
         )
         if self._on_turn_complete:
             await self._maybe_await(self._on_turn_complete(result.follow_up, result.reply_text))
+
+    async def _emit_empty_response(self) -> None:
+        """Emit a balanced, empty LLM response for a skipped turn.
+
+        Downstream processors (the assistant context aggregator, turn-taking)
+        pair every handled LLMContextFrame with an LLMFullResponseStart/End span.
+        Returning without them can leave the aggregator stuck mid-response and
+        stall subsequent WebRTC turns. We deliberately do NOT call
+        on_turn_complete: a skipped turn has no bot speech, so emitting audio.end
+        would drop the user out of the realtime session on a spurious trigger.
+        """
+        await self.push_frame(LLMFullResponseStartFrame())
+        await self.push_frame(LLMFullResponseEndFrame())
 
     @staticmethod
     async def _maybe_await(value: Any) -> None:
