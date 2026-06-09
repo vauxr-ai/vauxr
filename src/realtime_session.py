@@ -330,9 +330,11 @@ class RealtimeManager:
     # --- session lifecycle ---
 
     def forget(self, device_id: str) -> None:
+        # Only drop the session. Pre-roll and the media_ready signal are armed
+        # per-wake by begin_preroll and consumed by take_preroll; closing a stale
+        # session (e.g. when a new offer supersedes it) must NOT wipe the pre-roll
+        # that the new wake just armed, or the next turn's first utterance is lost.
         self._sessions.pop(device_id, None)
-        self._preroll.pop(device_id, None)
-        self._media_ready.pop(device_id, None)
 
     async def stop(self, device_id: str) -> None:
         session = self._sessions.get(device_id)
