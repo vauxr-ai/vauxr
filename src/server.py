@@ -253,6 +253,29 @@ async def _realtime_start(
         await ws.close()
         return
 
+    # Realtime must actually be reachable server-side before we arm pre-roll: the
+    # /api/offer endpoint only exists when REALTIME_ENABLED=1 and REALTIME_HOST is
+    # set (same gate _hello uses to advertise the webrtc policy). Arming otherwise
+    # would strand the device in "listening" with no WebRTC path — the first
+    # utterance gets buffered and never processed until it disconnects.
+    rt = get_config().realtime
+    if not (rt.enabled and rt.host):
+        await send_json(
+            ws,
+            {
+                "type": "error",
+                "code": "REALTIME_UNAVAILABLE",
+                "message": "Realtime transport is not enabled",
+            },
+        )
+        log.warning(
+            "realtime.start from %s rejected — realtime unavailable (enabled=%s host=%r)",
+            device_id,
+            rt.enabled,
+            bool(rt.host),
+        )
+        return
+
     ctx.device_id = device_id
     ctx.realtime = True
     ctx.realtime_media = False
@@ -263,7 +286,12 @@ async def _realtime_start(
 
     from realtime_session import get_manager
 
-    get_manager().begin_preroll(device_id)
+    manager = get_manager()
+    # A re-wake before the previous WebRTC session tore down (e.g. rapid re-trigger
+    # or a dropped peer) would otherwise leave the old Pipecat runner + connection
+    # alive, emitting control messages on this WS while we arm a fresh pre-roll.
+    await manager.stop(device_id)
+    manager.begin_preroll(device_id)
     registry.set_state(device_id, "listening")
     await send_json(ws, {"type": "ready"})
     log.info("realtime.start from %s — pre-roll armed", device_id)

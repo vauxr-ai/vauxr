@@ -68,8 +68,17 @@ async def _offer_handler(request: web.Request) -> web.Response:
 
     from realtime_session import get_manager
 
+    manager = get_manager()
+    # The shared device token authenticates the *caller*, not which device id it
+    # may claim. Require that this id actually has an armed wake (or a live
+    # session for re-offers) so a token holder can't bind WebRTC to someone
+    # else's pre-roll/control relay.
+    if not manager.can_accept_offer(device_id):
+        log.warning("realtime offer for %s rejected — no active realtime.start", device_id)
+        return web.json_response({"error": "No active realtime session"}, status=403)
+
     try:
-        answer = await get_manager().handle_offer(device_id, body)
+        answer = await manager.handle_offer(device_id, body)
     except Exception as e:  # noqa: BLE001
         log.error("realtime offer failed for %s: %s", device_id, e)
         return web.json_response({"error": str(e)}, status=500)

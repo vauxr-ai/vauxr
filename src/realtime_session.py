@@ -347,6 +347,17 @@ class RealtimeManager:
         self._preroll.pop(device_id, None)
         self._media_ready.pop(device_id, None)
 
+    def can_accept_offer(self, device_id: str) -> bool:
+        """Whether an /api/offer for this device_id is tied to a real wake.
+
+        An armed pre-roll means the device just sent an authenticated
+        realtime.start on its WebSocket; an existing session covers re-offers
+        (ICE restart / renegotiation). Without this, any LAN client holding the
+        shared device token could POST an offer for an arbitrary id and attach
+        WebRTC to that device's pre-roll and control relay.
+        """
+        return device_id in self._preroll or device_id in self._sessions
+
     def media_ready_event(self, device_id: str) -> asyncio.Event:
         """Get-or-create the per-device pre-roll-done signal."""
         ev = self._media_ready.get(device_id)
