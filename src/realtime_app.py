@@ -81,9 +81,13 @@ async def _offer_handler(request: web.Request) -> web.Response:
         answer = await manager.handle_offer(device_id, body)
     except Exception as e:  # noqa: BLE001
         log.error("realtime offer failed for %s: %s", device_id, e)
+        # End the wake the device armed on realtime.start; otherwise it can sit
+        # in listening with no WebRTC path until disconnect or the next wake.
+        await manager.abort_wake(device_id)
         return web.json_response({"error": str(e)}, status=500)
 
     if answer is None:
+        await manager.abort_wake(device_id)
         return web.json_response({"error": "No SDP answer"}, status=500)
     return web.json_response(answer)
 

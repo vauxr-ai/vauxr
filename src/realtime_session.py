@@ -409,6 +409,24 @@ class RealtimeManager:
         # that the new wake just armed, or the next turn's first utterance is lost.
         self._sessions.pop(device_id, None)
 
+    async def abort_wake(self, device_id: str) -> None:
+        """Clean up a wake whose /api/offer never produced a usable session.
+
+        realtime.start armed pre-roll and put the device in listening; if the
+        offer raises or yields no SDP answer, relay a terminal audio.end so the
+        device leaves listening even if its own realtime.stop is lost, and clear
+        the armed server state.
+        """
+        session = self._sessions.get(device_id)
+        if session is not None:
+            await session.close()
+        self._preroll.pop(device_id, None)
+        self._media_ready.pop(device_id, None)
+        ws = _device_ws(device_id)
+        if ws is not None:
+            await _send_json(ws, {"type": "audio.end", "follow_up": False})
+        registry.set_state(device_id, "idle")
+
     async def stop(self, device_id: str) -> None:
         session = self._sessions.get(device_id)
         if session is not None:
