@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import deque
 from typing import Any
 
 from aiohttp import web
@@ -58,13 +59,15 @@ class RealtimeSession:
         self._context: Any = None
         self._connection: Any = None
         self._runner_task: asyncio.Task | None = None
+        self._preroll_task: asyncio.Task | None = None
         self._closed = False
         # Set once the pipeline is built and the WebRTC client is connected, so
         # pre-roll flush (driven by realtime.media_ready) can wait for it.
         self._pipeline_ready = asyncio.Event()
-        # follow_up resolved at LLM-turn end, but audio.end is deferred until the
-        # bot actually stops speaking (TTS drained) — None means "nothing pending".
-        self._pending_follow_up: bool | None = None
+        # follow_up resolved at each LLM-turn end, but audio.end is deferred until
+        # the bot actually stops speaking (TTS drained). A FIFO (not a single
+        # slot) so overlapping turns / barge-in don't clobber a pending value.
+        self._pending_follow_up: deque[bool] = deque()
 
     # --- lifecycle ---
 
@@ -187,13 +190,23 @@ class RealtimeSession:
 
         self._runner = PipelineRunner(handle_sigint=False)
         self._runner_task = asyncio.create_task(self._runner.run(self._task))
+        self._preroll_task = asyncio.create_task(self._flush_preroll_when_ready())
 
-    async def on_media_ready(self) -> None:
-        """Device finished sending WS pre-roll; flush it once the pipeline is up."""
+    async def _flush_preroll_when_ready(self) -> None:
+        """Flush pre-roll once the pipeline is up AND the device signals it's done.
+
+        Waiting on both avoids two races: flushing before the pipeline can accept
+        the seeded turn, and flushing before the device has sent all its WS
+        pre-roll (which would drop the tail of the first utterance).
+        """
+        media_ready = get_manager().media_ready_event(self.device_id)
         try:
-            await asyncio.wait_for(self._pipeline_ready.wait(), timeout=10)
+            await asyncio.wait_for(self._pipeline_ready.wait(), timeout=15)
+            await asyncio.wait_for(media_ready.wait(), timeout=15)
         except asyncio.TimeoutError:
-            log.warning("realtime[%s]: pipeline not ready for pre-roll flush", self.device_id)
+            log.warning("realtime[%s]: timed out waiting to flush pre-roll", self.device_id)
+            return
+        if self._closed:
             return
         await self._flush_preroll()
 
@@ -231,16 +244,15 @@ class RealtimeSession:
         the reply. With no spoken text there's no TTS, so end the turn now.
         """
         if reply and reply.strip():
-            self._pending_follow_up = follow_up
+            self._pending_follow_up.append(follow_up)
         else:
             await self._send_audio_end(follow_up)
 
     async def _on_bot_stopped_speaking(self) -> None:
-        """Bot finished the deferred turn's audio — relay audio.end once."""
-        if self._pending_follow_up is None:
+        """Bot finished a deferred turn's audio — relay that turn's audio.end."""
+        if not self._pending_follow_up:
             return
-        follow_up = self._pending_follow_up
-        self._pending_follow_up = None
+        follow_up = self._pending_follow_up.popleft()
         await self._send_audio_end(follow_up)
 
     async def _send_audio_end(self, follow_up: bool) -> None:
@@ -263,6 +275,8 @@ class RealtimeSession:
             return
         self._closed = True
         log.info("realtime[%s]: closing session", self.device_id)
+        if self._preroll_task is not None:
+            self._preroll_task.cancel()
         try:
             if self._task is not None:
                 await self._task.cancel()
@@ -283,6 +297,10 @@ class RealtimeManager:
         self._channel_server: Any = None
         self._sessions: dict[str, RealtimeSession] = {}
         self._preroll: dict[str, bytearray] = {}
+        # Per-device "device finished sending pre-roll" signal. Kept on the
+        # manager (not the session) so it survives the media_ready WS message
+        # arriving before the /api/offer connection registers the session.
+        self._media_ready: dict[str, asyncio.Event] = {}
         self._handler: Any = None
         self._max_preroll_bytes = 16000 * 2 * 10  # 10s @ 16kHz mono
 
@@ -293,6 +311,9 @@ class RealtimeManager:
 
     def begin_preroll(self, device_id: str) -> None:
         self._preroll[device_id] = bytearray()
+        # Fresh signal for this wake — a stale set() from a prior turn must not
+        # make the next session flush before the device is done sending.
+        self._media_ready[device_id] = asyncio.Event()
         log.info("realtime[%s]: pre-roll capture armed", device_id)
 
     def add_preroll(self, device_id: str, pcm: bytes) -> None:
@@ -311,17 +332,29 @@ class RealtimeManager:
     def forget(self, device_id: str) -> None:
         self._sessions.pop(device_id, None)
         self._preroll.pop(device_id, None)
+        self._media_ready.pop(device_id, None)
 
     async def stop(self, device_id: str) -> None:
         session = self._sessions.get(device_id)
         if session is not None:
             await session.close()
 
+    def media_ready_event(self, device_id: str) -> asyncio.Event:
+        """Get-or-create the per-device pre-roll-done signal."""
+        ev = self._media_ready.get(device_id)
+        if ev is None:
+            ev = asyncio.Event()
+            self._media_ready[device_id] = ev
+        return ev
+
     def media_ready(self, device_id: str) -> None:
-        """Device signalled realtime.media_ready — flush its pre-roll."""
-        session = self._sessions.get(device_id)
-        if session is not None:
-            asyncio.create_task(session.on_media_ready())
+        """Device signalled realtime.media_ready — flag it.
+
+        Set on the manager rather than poking the session directly: media_ready
+        can arrive before the session is registered, and the session's flush
+        task waits on this event, so the signal is never lost.
+        """
+        self.media_ready_event(device_id).set()
 
     def _request_handler(self) -> Any:
         if self._handler is None:

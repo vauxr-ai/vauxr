@@ -106,9 +106,8 @@ class ChannelLLMService(LLMService):
         def on_error(_run_id: str, message: str) -> None:
             queue.put_nowait(("error", message))
 
-        self._channel_server.add_response_listener(
-            self._device_id, {"on_delta": on_delta, "on_end": on_end, "on_error": on_error}
-        )
+        listener = {"on_delta": on_delta, "on_end": on_end, "on_error": on_error}
+        self._channel_server.add_response_listener(self._device_id, listener)
 
         sent = self._channel_server.send_transcript(self._device_id, text)
         accumulated = ""
@@ -136,7 +135,7 @@ class ChannelLLMService(LLMService):
                         error = payload
                         break
         finally:
-            self._channel_server.remove_response_listener(self._device_id)
+            self._channel_server.remove_response_listener(self._device_id, listener)
             await self.stop_processing_metrics()
             await self.push_frame(LLMFullResponseEndFrame())
 
