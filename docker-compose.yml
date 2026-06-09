@@ -1,5 +1,10 @@
 services:
 
+  # The WebRTC realtime transport (aiortc, in-process Pipecat) gathers ICE on
+  # ephemeral UDP ports that can't be predicted/published in Docker bridge mode,
+  # so the whole stack runs on host networking. Consequences: `ports:` mappings
+  # are dropped (services bind host ports directly) and inter-service addressing
+  # uses 127.0.0.1 instead of Docker DNS names.
   vauxr:
     build:
       context: .
@@ -7,31 +12,40 @@ services:
     image: vauxr:latest
     container_name: vauxr
     restart: unless-stopped
+    network_mode: host
     depends_on:
       whisper:
         condition: service_healthy
       piper:
         condition: service_healthy
     environment:
-      WHISPER_URL: tcp://whisper:10300
-      PIPER_URL: tcp://piper:10200
+      WHISPER_URL: tcp://127.0.0.1:10300
+      PIPER_URL: tcp://127.0.0.1:10200
       OPENCLAW_URL: ${OPENCLAW_URL}
       OPENCLAW_TOKEN: ${OPENCLAW_TOKEN:-}
       DEVICE_TOKEN: ${DEVICE_TOKEN}
       PIPER_VOICE: en_US-libritts_r-medium
       DATA_DIR: /data
       SSL_CERT_FILE: /certs/root.crt
+      # Realtime WebRTC is opt-in (off by default): set REALTIME_ENABLED=1 in
+      # your .env to turn it on. When enabled, REALTIME_HOST must be the server's
+      # LAN IP/hostname — the device receives an absolute /api/offer URL built
+      # from it in the hello policy, and aiortc uses it to advertise reachable
+      # ICE candidates. (Host networking below is required only for realtime's
+      # ephemeral ICE UDP ports; it's otherwise harmless for WS-only deploys.)
+      REALTIME_ENABLED: ${REALTIME_ENABLED:-0}
+      REALTIME_ESP32: ${REALTIME_ESP32:-1}
+      REALTIME_HOST: ${REALTIME_HOST:-}
+      REALTIME_STUN_URL: ${REALTIME_STUN_URL:-stun:stun.l.google.com:19302}
     volumes:
       - vauxr-data:/data
       - ./certs/root.crt:/certs/root.crt:ro
-    ports:
-      - "8765:8765"
-      - "8080:8080"
-  
+
   whisper:
     image: rhasspy/wyoming-whisper
     container_name: whisper
     restart: unless-stopped
+    network_mode: host
     command: --model small-int8 --language en --uri tcp://0.0.0.0:10300
     volumes:
       - whisper-data:/data
@@ -46,6 +60,7 @@ services:
     image: rhasspy/wyoming-piper
     container_name: piper
     restart: unless-stopped
+    network_mode: host
     command: --voice en_US-libritts_r-medium --uri tcp://0.0.0.0:10200
     volumes:
       - piper-data:/data

@@ -93,6 +93,10 @@ Frames are distinguished by type: if the first byte is `0x7B` (`{`), it's JSON. 
 
 **Device → Server:**
 ```jsonc
+// Boot-time handshake: advertise capabilities. The device is dumb — the server
+// decides the realtime policy (see "Realtime (WebRTC) Hybrid" below).
+{ "type": "hello", "device_id": "...", "token": "...", "platform": "satellite1", "caps": ["ws", "webrtc"] }
+
 // Wake word detected, starting voice turn
 { "type": "voice.start", "device_id": "...", "token": "..." }
 
@@ -105,14 +109,21 @@ Frames are distinguished by type: if the first byte is `0x7B` (`{`), it's JSON. 
 
 **Server → Device:**
 ```jsonc
+// Handshake reply: realtime policy. transport is "ws" (default) or "webrtc".
+// offer_url + stun are only present when transport is "webrtc".
+{ "type": "hello", "realtime": { "enabled": true, "transport": "webrtc",
+                                 "offer_url": "http://<host>:8080/api/offer",
+                                 "stun": "stun:stun.l.google.com:19302" } }
+
 // Auth OK, ready for voice
 { "type": "ready" }
 
 // STT result (useful for device display)
 { "type": "transcript", "text": "what's the weather today?" }
 
-// All TTS audio sent for this turn
-{ "type": "audio.end" }
+// All TTS audio sent for this turn. In realtime mode this carries follow_up:
+// true keeps the device listening, false ends the realtime session.
+{ "type": "audio.end", "follow_up": false }
 
 // Control command (from HTTP API or agent tool)
 { "type": "device.control", "command": "set_volume" | "mute" | "unmute" | "reboot", "params": { ... } }
@@ -141,6 +152,61 @@ The sequence number allows the device to detect dropped or reordered frames and 
 
 **Why binary frames?**
 Base64 encoding audio inside JSON adds ~33% overhead with no benefit. Since we control both sides of the connection, we can use the most efficient format available. Binary WebSocket frames are natively supported by all major implementations.
+
+---
+
+## Realtime (WebRTC) Hybrid
+
+For low-latency, barge-in conversation, capable devices (currently Satellite1, which has hardware XMOS AEC) can upgrade the media path to **WebRTC** while keeping the Vauxr WS connection for control. The server runs an in-process [Pipecat](https://github.com/pipecat-ai/pipecat) `SmallWebRTC` pipeline (`STT → channel-LLM → TTS`) gated behind `REALTIME_ENABLED=1`.
+
+The device stays dumb: it advertises capabilities in `hello` and the server returns the policy. Whether realtime is used, which transport, and the WebRTC endpoints are all decided server-side.
+
+> **Note:** realtime currently routes LLM turns through the **channel plugin** only. `openclaw-direct` (operator) mode is not yet supported in realtime — those deployments should stay on the turn-based WS path.
+
+### Lifecycle
+
+```
+boot:     device --hello{caps:[ws,webrtc]}--> server
+          device <--hello{realtime:{transport:webrtc,offer_url,stun}}-- server
+
+wake:     device --realtime.start{device_id,token}--> server   (server arms pre-roll)
+          device <--ready-- server
+          device --0x01 mic frames (pre-roll: the wake-word command)--> server
+                  (buffered server-side, seeded into the pipeline head)
+
+connect:  device --HTTP POST /api/offer {sdp,type,device_id,token}--> server
+          device <--{sdp,type:answer}-- server      (per-device auth on /api/offer)
+          ICE/DTLS-SRTP established; bidirectional Opus audio over WebRTC
+
+ready:    device --realtime.media_ready--> server    (mic now on WebRTC track;
+                                                       server stops forwarding WS pre-roll)
+
+turn(s):  device <--transcript{text}-- server
+          device <--audio.start-- server   (bot speaking; over WebRTC media)
+          device <--audio.end{follow_up}-- server
+                  follow_up:true  -> stay listening (another turn)
+                  follow_up:false -> leave realtime, back to silent wake-word wait
+
+stop:     device --realtime.stop--> server   (or WS disconnect tears down the session)
+```
+
+### Pre-roll
+
+WebRTC takes ~1–2s to negotiate (ICE + DTLS), so the wake-word command itself would be lost. On `realtime.start` the server arms a pre-roll buffer; the device keeps sending mic audio as WS `0x01` binary frames until `realtime.media_ready`. The buffered pre-roll is seeded into the pipeline head so the first utterance isn't dropped, then media switches to the WebRTC track.
+
+### follow_up exit
+
+The realtime session reuses the same `follow_up` mechanism as the turn-based WS pipeline (`follow_up_mode`: `auto` | `always` | `never`, and the `[[follow_up]]` reply tag). Each turn ends with `audio.end{follow_up}`; on `follow_up:false` both sides tear down — the device returns to silent wake-word waiting and the server stops the Pipecat session.
+
+### Config
+
+```env
+REALTIME_ENABLED=1
+REALTIME_HOST=<device-reachable-lan-ip>   # used to build offer_url + for SDP munging (esp32 mode)
+REALTIME_STUN_URL=stun:stun.l.google.com:19302
+```
+
+> WebRTC (aiortc) uses ephemeral UDP ports for ICE, so the realtime build runs the stack with `network_mode: host`. See `docker-compose.yml`.
 
 ---
 
