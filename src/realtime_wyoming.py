@@ -20,7 +20,7 @@ from typing import Any
 from loguru import logger
 from pipecat.frames.frames import ErrorFrame, Frame, TranscriptionFrame
 from pipecat.services.stt_service import SegmentedSTTService
-from pipecat.services.tts_service import TTSService
+from pipecat.services.tts_service import TextAggregationMode, TTSService
 from pipecat.transcriptions.language import Language
 from pipecat.utils.time import time_now_iso8601
 
@@ -162,8 +162,24 @@ class WyomingSTTService(SegmentedSTTService):
 class WyomingTTSService(TTSService):
     """Streaming TTS via Wyoming Piper."""
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__(push_start_frame=True, push_stop_frames=True, **kwargs)
+    def __init__(
+        self,
+        *,
+        text_aggregation_mode: TextAggregationMode = TextAggregationMode.TOKEN,
+        **kwargs,
+    ) -> None:
+        # Aggregation mode is chosen per device by the caller:
+        # - TOKEN (default): synthesize each text frame as it arrives. Used with
+        #   the upstream IdleSegmenter, which already emits one spoken segment per
+        #   frame.
+        # - SENTENCE: pipecat buffers tokens and cuts on sentence boundaries
+        #   (NLTK). Used when sentence segmentation is enabled for the device.
+        super().__init__(
+            text_aggregation_mode=text_aggregation_mode,
+            push_start_frame=True,
+            push_stop_frames=True,
+            **kwargs,
+        )
         piper = get_config().piper
         self._host, self._port = piper.host, piper.port
         self._voice = piper.voice
