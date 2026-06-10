@@ -298,6 +298,17 @@ class RealtimeSession:
             await self._notify_ended()
             await self.close()
 
+    async def _release_failed_turn(self, reason: str) -> None:
+        """Tell the device a turn ended with no reply so it leaves PROCESSING.
+
+        Every cold-seed failure path below funnels through here: without an
+        audio.end the device sits in PROCESSING until its watchdog fires. We keep
+        the session alive (warm) so the user can simply try again.
+        """
+        log.info("realtime[%s]: cold seed released (%s)", self.device_id, reason)
+        if not self._closed:
+            await self._send_audio_end(False)
+
     async def seed_buffered_turn(self, pcm: bytes) -> None:
         """Transcribe cold-wake WS audio and seed one turn into Pipecat."""
         from pipecat.frames.frames import LLMRunFrame
@@ -305,6 +316,7 @@ class RealtimeSession:
         if self._closed:
             return
         if not pcm:
+            await self._release_failed_turn("empty pre-roll")
             return
 
         try:
@@ -314,6 +326,7 @@ class RealtimeSession:
                 "realtime[%s]: pipeline never ready — dropping buffered seed",
                 self.device_id,
             )
+            await self._release_failed_turn("pipeline not ready")
             return
 
         if not self.is_peer_live():
@@ -321,6 +334,7 @@ class RealtimeSession:
                 "realtime[%s]: peer not live — refusing ghost seed turn",
                 self.device_id,
             )
+            await self._release_failed_turn("peer not live")
             return
 
         try:
@@ -329,11 +343,13 @@ class RealtimeSession:
             text = await transcribe([pcm])
         except Exception as e:  # noqa: BLE001
             log.error("realtime[%s]: buffered transcribe failed: %s", self.device_id, e)
+            await self._release_failed_turn("transcribe failed")
             return
 
         text = (text or "").strip()
         if not text:
             log.info("realtime[%s]: buffered utterance empty after STT", self.device_id)
+            await self._release_failed_turn("empty transcript")
             return
 
         if not self.is_peer_live():
@@ -341,6 +357,7 @@ class RealtimeSession:
                 "realtime[%s]: peer dropped during STT — refusing ghost seed turn",
                 self.device_id,
             )
+            await self._release_failed_turn("peer dropped during STT")
             return
 
         log.info("realtime[%s]: seeding cold->warm turn: %r", self.device_id, text)
@@ -556,9 +573,14 @@ class RealtimeManager:
                     "realtime[%s]: webrtc_connected but no session — dropping seed",
                     device_id,
                 )
+                # Release the device: it's in PROCESSING waiting on this turn.
+                await _send_json(ws, {"type": "audio.end", "follow_up": False})
+                registry.set_state(device_id, "idle")
                 return
             if not pcm:
                 log.info("realtime[%s]: empty pre-roll on seed path", device_id)
+                await _send_json(ws, {"type": "audio.end", "follow_up": False})
+                registry.set_state(device_id, "idle")
                 return
             await session.seed_buffered_turn(pcm)
             return
@@ -592,6 +614,10 @@ class RealtimeManager:
             await _send_json(
                 ws, {"type": "error", "code": "PIPELINE_ERROR", "message": str(e)}
             )
+            # run_voice_turn aborted before emitting its own audio.end; release the
+            # device so it doesn't hang in PROCESSING.
+            await _send_json(ws, {"type": "audio.end", "follow_up": False})
+            registry.set_state(device_id, "idle")
         finally:
             e = registry.get(device_id)
             if e is not None:

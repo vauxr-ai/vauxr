@@ -26,7 +26,15 @@ def broaden_aiortc_dtls_ciphers() -> None:
     any media flows. Browsers already support these suites, so it's harmless for
     the web client.
     """
-    from aiortc.rtcdtlstransport import RTCCertificate
+    try:
+        from aiortc.rtcdtlstransport import RTCCertificate
+    except ImportError:
+        # aiortc only ships with the `realtime` extra. This patch is optional
+        # hardening for the esp_peer handshake — without aiortc there's no WebRTC
+        # path to harden. Unit tests enable the realtime config flag to exercise
+        # the hello policy without installing the heavy extra, so degrade quietly.
+        log.warning("aiortc not installed — skipping DTLS cipher broadening")
+        return
 
     if getattr(RTCCertificate, "_vauxr_cipher_patched", False):
         return
