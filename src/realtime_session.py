@@ -121,6 +121,9 @@ class RealtimeSession:
 
         from realtime_llm import ChannelLLMService
         from realtime_turn import VADStopUserTurnStopStrategy
+        from pipecat.services.tts_service import TextAggregationMode
+
+        from device_settings import get_segmentation
         from realtime_wyoming import WyomingSTTService, WyomingTTSService
 
         self._connection = connection
@@ -130,7 +133,15 @@ class RealtimeSession:
         )
 
         stt = WyomingSTTService()
-        tts = WyomingTTSService()
+        # Per-device segmentation: sentence mode lets pipecat's TTS aggregator cut
+        # on sentence boundaries; otherwise TOKEN mode and the upstream
+        # IdleSegmenter (in ChannelLLMService) owns segmentation.
+        seg = get_segmentation(self.device_id)
+        tts = WyomingTTSService(
+            text_aggregation_mode=(
+                TextAggregationMode.SENTENCE if seg.sentence else TextAggregationMode.TOKEN
+            )
+        )
         llm = ChannelLLMService(
             device_id=self.device_id,
             channel_server=self._channel_server,

@@ -30,6 +30,8 @@ from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.llm_service import LLMService
 
 from channel_server import ChannelServer
+from device_settings import get_segmentation
+from idle_segmenter import IdleSegmenter
 from pipeline import (
     _follow_up_mode_for,
     resolve_follow_up,
@@ -141,6 +143,51 @@ class ChannelLLMService(LLMService):
         listener = {"on_delta": on_delta, "on_end": on_end, "on_error": on_error}
         self._channel_server.add_response_listener(self._device_id, listener)
 
+        # Two mutually exclusive segmentation strategies, chosen per device:
+        #
+        # - sentence: pass tokens straight through and let pipecat's TTS sentence
+        #   aggregator (SENTENCE mode, set in realtime_session) cut on sentence
+        #   boundaries downstream. Takes precedence over idle when both are set.
+        # - idle (default): TTS runs in TOKEN mode, so we own segmentation here.
+        #   IdleSegmenter flushes on a pause (idle on) or holds the whole reply
+        #   until end (idle off). Its sync callbacks feed a queue that a pump task
+        #   turns into LLMTextFrames in order, so an idle flush fired mid-pause is
+        #   spoken right away.
+        #
+        # They can't be combined: a downstream sentence aggregator would just
+        # re-buffer idle's partial flushes until punctuation, erasing them.
+        seg = get_segmentation(self._device_id)
+        segmenter: IdleSegmenter | None = None
+        pump: asyncio.Task[None] | None = None
+        seg_out: asyncio.Queue[str | None] = asyncio.Queue()
+
+        if not seg.sentence:
+
+            def emit_segment(raw: str) -> None:
+                spoken = strip_follow_up_tag_inline(raw)
+                if spoken:
+                    seg_out.put_nowait(spoken)
+
+            def on_segment_end(final: str | None) -> None:
+                if final is not None:
+                    emit_segment(final)
+                seg_out.put_nowait(None)  # sentinel: tells the pump to stop
+
+            segmenter = IdleSegmenter(
+                idle_pause_ms=seg.idle_pause_ms if seg.idle else 0,
+                on_segment=emit_segment,
+                on_end=on_segment_end,
+            )
+
+            async def pump_segments() -> None:
+                while True:
+                    segment = await seg_out.get()
+                    if segment is None:
+                        return
+                    await self.push_frame(LLMTextFrame(segment))
+
+            pump = asyncio.create_task(pump_segments())
+
         # Realtime routes only through the channel plugin. send_transcript returns
         # false for openclaw-direct (operator) mode, which realtime does not yet
         # support — the turn-based WS pipeline handles that case instead.
@@ -161,16 +208,28 @@ class ChannelLLMService(LLMService):
                         break
                     if kind == "delta":
                         accumulated += payload
-                        spoken = strip_follow_up_tag_inline(payload)
-                        if spoken:
-                            await self.push_frame(LLMTextFrame(spoken))
+                        if segmenter is not None:
+                            segmenter.push(payload)
+                        else:
+                            spoken = strip_follow_up_tag_inline(payload)
+                            if spoken:
+                                await self.push_frame(LLMTextFrame(spoken))
                     elif kind == "end":
+                        if segmenter is not None:
+                            segmenter.end()
                         break
                     elif kind == "error":
                         error = payload
                         break
         finally:
             self._channel_server.remove_response_listener(self._device_id, listener)
+            if segmenter is not None and pump is not None:
+                if error is not None:
+                    # Drop buffered (unspoken) text and release the pump — abort()
+                    # doesn't emit the end sentinel pump_segments waits on.
+                    segmenter.abort()
+                    seg_out.put_nowait(None)
+                await pump
             await self.stop_processing_metrics()
             await self.push_frame(LLMFullResponseEndFrame())
 
