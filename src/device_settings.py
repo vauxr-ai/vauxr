@@ -17,10 +17,10 @@ from typing import Any
 _DEFAULT_IDLE_PAUSE_MS = 400
 
 # Warm-idle taper timers handed to the device in the hello realtime policy.
-# T_idle1: peer stays fully warm in Warm-quiet before taper begins.
-# T_idle2: taper phase before the device drops the peer (Drop).
-_DEFAULT_T_IDLE1_MS = 60_000
-_DEFAULT_T_IDLE2_MS = 30_000
+# T_idle1: Active open-mic with no new turn -> Warm-quiet (pause mic, keep peer).
+# T_idle2: Warm-quiet inactivity -> Drop (tear down WebRTC, back to WS wake-wait).
+_DEFAULT_T_IDLE1_MS = 8_000
+_DEFAULT_T_IDLE2_MS = 180_000
 
 # Server-side Silero VAD defaults (Pipecat realtime path). Shared with the
 # device via hello so firmware-side tuning stays aligned where applicable.
