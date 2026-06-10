@@ -21,6 +21,7 @@ from channel_server import ChannelServer
 from config import get_config
 from http_server import attach_http_routes, cors_middleware, serve_static
 from openclaw_client import OpenClawClient
+from device_settings import realtime_policy_extras
 from pipeline import run_voice_turn
 from protocol import encode_text_message, parse_text_message
 
@@ -88,7 +89,7 @@ async def handle_text(
             await _voice_start(state, ws, ctx, msg)
     elif msg_type == "voice.end":
         if ctx.realtime:
-            log.warning("ignoring voice.end during realtime session: %s", ctx.device_id)
+            await _realtime_or_voice_end(state, ws, ctx, msg)
         else:
             await _voice_end(state, ws, ctx)
     elif msg_type == "abort":
@@ -138,6 +139,9 @@ async def _hello(ws: web.WebSocketResponse, msg: dict[str, Any]) -> None:
             msg.get("device_id"),
         )
 
+    device_id = msg.get("device_id")
+    device_key = device_id if isinstance(device_id, str) else ""
+
     realtime_policy: dict[str, Any] = {"enabled": False, "transport": "ws"}
     if webrtc_ok:
         http_port = get_config().http.port
@@ -147,6 +151,7 @@ async def _hello(ws: web.WebSocketResponse, msg: dict[str, Any]) -> None:
             "transport": "webrtc",
             "offer_url": offer_url,
             "stun": rt.stun_url,
+            **realtime_policy_extras(device_key),
         }
 
     log.info(
@@ -196,6 +201,46 @@ async def _voice_start(
 
     registry.set_state(device_id, "listening")
     await send_json(ws, {"type": "ready"})
+
+
+async def _realtime_or_voice_end(
+    state: AppState,
+    ws: web.WebSocketResponse,
+    ctx: ConnectionCtx,
+    msg: dict[str, Any],
+) -> None:
+    """Route voice.end during realtime: cold-wait turns branch; warm turns ignore."""
+    if ctx.device_id is None:
+        await send_json(
+            ws,
+            {"type": "error", "code": "INVALID_STATE", "message": "Not in listening state"},
+        )
+        return
+
+    from realtime_session import get_manager
+
+    manager = get_manager()
+    if not manager.is_cold_wait(ctx.device_id):
+        log.debug(
+            "ignoring voice.end during warm realtime session: %s",
+            ctx.device_id,
+        )
+        return
+
+    webrtc_connected = msg.get("webrtc_connected") is True
+    log.info(
+        "voice.end from %s during cold realtime wait (webrtc_connected=%s)",
+        ctx.device_id,
+        webrtc_connected,
+    )
+    await manager.handle_cold_voice_end(
+        ctx.device_id,
+        webrtc_connected=webrtc_connected,
+        ws=ws,
+        openclaw_client=state.openclaw_client,
+        channel_server=state.channel_server,
+        output_sample_rate=ctx.output_sample_rate,
+    )
 
 
 async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx) -> None:
@@ -298,35 +343,38 @@ async def _realtime_start(
     entry = registry.register(device_id, ws=ws, name=msg.get("name") or device_id)
     output_rate = msg.get("output_sample_rate") or entry.config.get("output_sample_rate")
     if isinstance(output_rate, (int, float)) and output_rate > 0:
-        entry.output_sample_rate = int(output_rate)
+        ctx.output_sample_rate = int(output_rate)
+        entry.output_sample_rate = ctx.output_sample_rate
 
     from realtime_session import get_manager
 
     manager = get_manager()
-    # A re-wake before the previous WebRTC session tore down (e.g. rapid re-trigger
-    # or a dropped peer) would otherwise leave the old Pipecat runner + connection
-    # alive, emitting control messages on this WS while we arm a fresh pre-roll.
+    if manager.has_live_session(device_id):
+        # Warm re-wake: peer + Pipecat session stay alive; Silero end-points the
+        # turn on the WebRTC track — no WS pre-roll or device-VAD marker.
+        registry.set_state(device_id, "listening")
+        await send_json(ws, {"type": "ready"})
+        log.info("realtime.start from %s — warm re-wake on live session", device_id)
+        return
+
+    # Cold wake: arm WS pre-roll and wait for the device-VAD voice.end marker.
+    # A stale session from a dropped peer must be cleared first.
     await manager.stop(device_id)
     manager.begin_preroll(device_id)
     registry.set_state(device_id, "listening")
     await send_json(ws, {"type": "ready"})
-    log.info("realtime.start from %s — pre-roll armed", device_id)
+    log.info("realtime.start from %s — cold pre-roll armed", device_id)
 
 
 def _realtime_media_ready(ctx: ConnectionCtx) -> None:
     """Device switched its mic to the WebRTC track; stop forwarding WS pre-roll.
 
-    media_ready is the device's "done sending pre-roll" signal, so this is the
-    point at which it's safe to consume the buffered pre-roll — flushing earlier
-    (on WebRTC connect) races the device and can drop the tail of the first
-    utterance.
+    Transport-state only — turn processing is driven by the device-VAD
+    ``voice.end`` marker during cold wait, not by media_ready.
     """
     ctx.realtime_media = True
     if ctx.device_id:
         log.info("realtime.media_ready from %s", ctx.device_id)
-        from realtime_session import get_manager
-
-        get_manager().media_ready(ctx.device_id)
 
 
 async def _realtime_stop(ctx: ConnectionCtx) -> None:

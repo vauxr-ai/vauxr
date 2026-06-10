@@ -10,10 +10,24 @@ never read globals/env for these flags.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 # Default idle-pause window. Mirrors the WS ``streaming_tts.idle_pause_ms`` default
 # so realtime and WS feel the same out of the box.
 _DEFAULT_IDLE_PAUSE_MS = 400
+
+# Warm-idle taper timers handed to the device in the hello realtime policy.
+# T_idle1: Active open-mic with no new turn -> Warm-quiet (pause mic, keep peer).
+# T_idle2: Warm-quiet inactivity -> Drop (tear down WebRTC, back to WS wake-wait).
+_DEFAULT_T_IDLE1_MS = 8_000
+_DEFAULT_T_IDLE2_MS = 180_000
+
+# Server-side Silero VAD defaults (Pipecat realtime path). Shared with the
+# device via hello so firmware-side tuning stays aligned where applicable.
+_DEFAULT_VAD_CONFIDENCE = 0.85
+_DEFAULT_VAD_START_SECS = 0.4
+_DEFAULT_VAD_STOP_SECS = 0.6
+_DEFAULT_VAD_MIN_VOLUME = 0.8
 
 
 @dataclass(frozen=True)
@@ -35,10 +49,55 @@ class SegmentationSettings:
     idle_pause_ms: int
 
 
+@dataclass(frozen=True)
+class TaperSettings:
+    """Device-owned warm-idle taper timers (server is source of truth)."""
+
+    t_idle1_ms: int
+    t_idle2_ms: int
+
+
+@dataclass(frozen=True)
+class RealtimeVadSettings:
+    """Server-side Silero VAD parameters for the Pipecat realtime path."""
+
+    confidence: float
+    start_secs: float
+    stop_secs: float
+    min_volume: float
+
+
+@dataclass(frozen=True)
+class RealtimeDeviceSettings:
+    """Realtime feature bundle for one device."""
+
+    segmentation: SegmentationSettings
+    taper: TaperSettings
+    vad: RealtimeVadSettings
+
+
 _DEFAULT_SEGMENTATION = SegmentationSettings(
     idle=True,
     sentence=False,
     idle_pause_ms=_DEFAULT_IDLE_PAUSE_MS,
+)
+
+_DEFAULT_TAPER = TaperSettings(
+    t_idle1_ms=_DEFAULT_T_IDLE1_MS,
+    t_idle2_ms=_DEFAULT_T_IDLE2_MS,
+)
+
+_DEFAULT_VAD = RealtimeVadSettings(
+    confidence=_DEFAULT_VAD_CONFIDENCE,
+    start_secs=_DEFAULT_VAD_START_SECS,
+    stop_secs=_DEFAULT_VAD_STOP_SECS,
+    min_volume=_DEFAULT_VAD_MIN_VOLUME,
+)
+
+_DEFAULT_REALTIME = RealtimeDeviceSettings(
+    segmentation=_DEFAULT_SEGMENTATION,
+    taper=_DEFAULT_TAPER,
+    vad=_DEFAULT_VAD,
 )
 
 
@@ -48,4 +107,41 @@ def get_segmentation(device_id: str) -> SegmentationSettings:
     TODO(devices-api): source per-device overrides (and the device's own token)
     from device_config / the devices API. For now every device gets the defaults.
     """
-    return _DEFAULT_SEGMENTATION
+    return get_realtime_settings(device_id).segmentation
+
+
+def get_taper(device_id: str) -> TaperSettings:
+    """Resolve warm-idle taper timers for a device."""
+    return get_realtime_settings(device_id).taper
+
+
+def get_realtime_vad(device_id: str) -> RealtimeVadSettings:
+    """Resolve server-side Silero VAD params for a device."""
+    return get_realtime_settings(device_id).vad
+
+
+def get_realtime_settings(device_id: str) -> RealtimeDeviceSettings:
+    """Resolve all per-device realtime settings.
+
+    TODO(devices-api): source per-device overrides from device_config / the
+    devices API. For now every device gets the defaults.
+    """
+    _ = device_id
+    return _DEFAULT_REALTIME
+
+
+def realtime_policy_extras(device_id: str) -> dict[str, Any]:
+    """Serialize taper + VAD settings for the hello ``realtime`` policy object."""
+    rt = get_realtime_settings(device_id)
+    return {
+        "taper": {
+            "t_idle1_ms": rt.taper.t_idle1_ms,
+            "t_idle2_ms": rt.taper.t_idle2_ms,
+        },
+        "vad": {
+            "confidence": rt.vad.confidence,
+            "start_secs": rt.vad.start_secs,
+            "stop_secs": rt.vad.stop_secs,
+            "min_volume": rt.vad.min_volume,
+        },
+    }
