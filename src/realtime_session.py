@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections import deque
 from typing import Any
 
@@ -41,8 +42,15 @@ VOICE_SYSTEM = (
 _BOT_IDLE_DEBOUNCE_S = 1.0
 
 # Coarse last-resort reap for leaked sessions (device lost power with no peer
-# close). Must exceed the device's taper drop timer (T_idle1 + T_idle2).
+# close). This is an *inactivity* deadline measured from the last sign of life
+# (turn, user speech, or seed) — NOT a fixed wall clock from session start —
+# so an actively-used warm session (device re-waking within its taper window) is
+# never reaped mid-conversation. Must exceed the device's taper drop timer
+# (T_idle1 + T_idle2): a healthy idle device drops its peer (closing the session
+# via on_client_disconnected) long before this fires.
 _SAFETY_BACKSTOP_S = 600.0
+# How often the backstop wakes to check the inactivity deadline.
+_SAFETY_BACKSTOP_POLL_S = 30.0
 
 
 async def _send_json(ws: Any, obj: dict[str, Any]) -> None:
@@ -89,6 +97,9 @@ class RealtimeSession:
         self._connection: Any = None
         self._runner_task: asyncio.Task | None = None
         self._backstop_task: asyncio.Task | None = None
+        # Monotonic timestamp of the last sign of life; drives the inactivity
+        # backstop. Seeded when the pipeline starts.
+        self._last_activity = time.monotonic()
         self._closed = False
         # Set once the pipeline is built and the WebRTC client is connected.
         self._pipeline_ready = asyncio.Event()
@@ -126,6 +137,7 @@ class RealtimeSession:
             BotStoppedSpeakingFrame,
             Frame,
             TranscriptionFrame,
+            UserStartedSpeakingFrame,
         )
         from pipecat.pipeline.pipeline import Pipeline
         from pipecat.pipeline.runner import PipelineRunner
@@ -197,7 +209,17 @@ class RealtimeSession:
 
             async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
                 await super().process_frame(frame, direction)
-                if isinstance(frame, TranscriptionFrame) and frame.text and frame.text.strip():
+                if isinstance(frame, UserStartedSpeakingFrame):
+                    # Server VAD detected speech onset. Tell the device a turn is
+                    # underway so it holds off its active-idle taper — otherwise it
+                    # can fall into warm-quiet mid-utterance (before STT/LLM emits
+                    # the transcript) and mishandle the late reply.
+                    session._touch_activity()
+                    await _send_json(
+                        _device_ws(session.device_id), {"type": "speech.start"}
+                    )
+                elif isinstance(frame, TranscriptionFrame) and frame.text and frame.text.strip():
+                    session._touch_activity()
                     await _send_json(
                         _device_ws(session.device_id),
                         {"type": "transcript", "text": frame.text.strip()},
@@ -244,17 +266,29 @@ class RealtimeSession:
 
         self._runner = PipelineRunner(handle_sigint=False)
         self._runner_task = asyncio.create_task(self._runner.run(self._task))
+        self._touch_activity()
         self._backstop_task = asyncio.create_task(self._safety_backstop())
 
+    def _touch_activity(self) -> None:
+        """Mark a sign of life so the inactivity backstop holds off."""
+        self._last_activity = time.monotonic()
+
     async def _safety_backstop(self) -> None:
-        """Reap a session if the peer never closes cleanly (power loss, etc.)."""
+        """Reap a session only after prolonged inactivity (leaked peer: device
+        lost power with no clean close). Resets on every turn/user-speech, so an
+        actively-used warm session is never reaped mid-conversation."""
         try:
-            await asyncio.sleep(_SAFETY_BACKSTOP_S)
+            while not self._closed:
+                idle = time.monotonic() - self._last_activity
+                remaining = _SAFETY_BACKSTOP_S - idle
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(_SAFETY_BACKSTOP_POLL_S, remaining))
         except asyncio.CancelledError:
             return
         if not self._closed:
             log.warning(
-                "realtime[%s]: safety backstop fired after %.0fs — closing session",
+                "realtime[%s]: safety backstop fired after %.0fs idle — closing session",
                 self.device_id,
                 _SAFETY_BACKSTOP_S,
             )
@@ -307,6 +341,7 @@ class RealtimeSession:
             return
 
         log.info("realtime[%s]: seeding cold->warm turn: %r", self.device_id, text)
+        self._touch_activity()
         await _send_json(_device_ws(self.device_id), {"type": "transcript", "text": text})
         self._context.add_message({"role": "user", "content": text})
         if self._task is not None:
@@ -314,6 +349,7 @@ class RealtimeSession:
 
     async def _on_turn_complete(self, follow_up: bool, reply: str) -> None:
         """Called when an LLM turn ends. Queue its audio.end in turn order."""
+        self._touch_activity()
         user_text = _latest_user_text(self._context)
         get_manager().record_turn(self.device_id, user_text, reply)
 
