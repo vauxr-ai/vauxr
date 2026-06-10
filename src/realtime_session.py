@@ -609,6 +609,12 @@ class RealtimeManager:
                 abort,
                 output_sample_rate,
             )
+            # Sustained WS fallback: while WebRTC never takes over, the device keeps
+            # sending voice.end per turn. Re-arm cold-wait + pre-roll so follow-up WS
+            # turns are handled instead of silently ignored. If the turn ended
+            # follow_up=false the device tears down and realtime.stop clears this arm.
+            if not abort.is_set():
+                self.begin_preroll(device_id)
         except Exception as e:  # noqa: BLE001
             log.error("realtime[%s]: WS branch pipeline error: %s", device_id, e)
             await _send_json(
