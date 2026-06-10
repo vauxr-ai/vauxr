@@ -26,7 +26,7 @@ from aiohttp import web
 
 import device_registry as registry
 from config import get_config
-from device_settings import get_realtime_vad, get_taper
+from device_settings import get_realtime_vad, get_realtime_vad_barge_in, get_taper
 from pipeline import strip_follow_up_tag
 
 log = logging.getLogger("vauxr.realtime")
@@ -118,6 +118,15 @@ class RealtimeSession:
         self._drain_timer: asyncio.Task | None = None
         # True once we've relayed a terminal audio.end for an abnormal teardown.
         self._ended_notified = False
+        # VAD profile swapping: a snappy idle profile so quiet speech is heard,
+        # and a stricter barge-in profile applied while the bot speaks so the
+        # device's residual echo doesn't self-interrupt the reply. Populated when
+        # the pipeline is built; _vad_active_params tracks which is live to avoid
+        # redundant set_params() churn across inter-sentence gaps.
+        self._vad_analyzer: Any = None
+        self._vad_normal_params: Any = None
+        self._vad_barge_in_params: Any = None
+        self._vad_active_params: Any = None
 
     @property
     def is_closed(self) -> bool:
@@ -186,15 +195,37 @@ class RealtimeSession:
         )
 
         vad = get_realtime_vad(self.device_id)
+        vad_bi = get_realtime_vad_barge_in(self.device_id)
         log.info(
-            "realtime[%s]: VAD params confidence=%.2f start_secs=%.2f "
-            "stop_secs=%.2f min_volume=%.2f",
+            "realtime[%s]: VAD idle confidence=%.2f start_secs=%.2f "
+            "stop_secs=%.2f min_volume=%.2f | barge-in confidence=%.2f "
+            "start_secs=%.2f stop_secs=%.2f min_volume=%.2f",
             self.device_id,
             vad.confidence,
             vad.start_secs,
             vad.stop_secs,
             vad.min_volume,
+            vad_bi.confidence,
+            vad_bi.start_secs,
+            vad_bi.stop_secs,
+            vad_bi.min_volume,
         )
+        # Keep handles to both profiles + the analyzer so _apply_vad_profile()
+        # can swap them as the bot starts/stops speaking.
+        self._vad_normal_params = VADParams(
+            confidence=vad.confidence,
+            start_secs=vad.start_secs,
+            stop_secs=vad.stop_secs,
+            min_volume=vad.min_volume,
+        )
+        self._vad_barge_in_params = VADParams(
+            confidence=vad_bi.confidence,
+            start_secs=vad_bi.start_secs,
+            stop_secs=vad_bi.stop_secs,
+            min_volume=vad_bi.min_volume,
+        )
+        self._vad_active_params = self._vad_normal_params
+        self._vad_analyzer = SileroVADAnalyzer(params=self._vad_normal_params)
         context = LLMContext()
         for msg in get_manager().context_messages(self.device_id):
             context.add_message(msg)
@@ -202,14 +233,7 @@ class RealtimeSession:
         user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
             context,
             user_params=LLMUserAggregatorParams(
-                vad_analyzer=SileroVADAnalyzer(
-                    params=VADParams(
-                        confidence=vad.confidence,
-                        start_secs=vad.start_secs,
-                        stop_secs=vad.stop_secs,
-                        min_volume=vad.min_volume,
-                    )
-                ),
+                vad_analyzer=self._vad_analyzer,
                 user_turn_strategies=UserTurnStrategies(
                     start=[VADUserTurnStartStrategy()],
                     stop=[VADStopUserTurnStopStrategy()],
@@ -438,12 +462,32 @@ class RealtimeSession:
     def _on_bot_started_speaking(self) -> None:
         self._bot_speaking += 1
         self._cancel_drain_timer()
+        self._apply_vad_profile()
 
     def _on_bot_stopped_speaking(self) -> None:
         if self._bot_speaking > 0:
             self._bot_speaking -= 1
         if self._bot_speaking == 0:
             self._schedule_drain_timer()
+        self._apply_vad_profile()
+
+    def _apply_vad_profile(self) -> None:
+        """Swap the live VAD profile based on whether the bot is speaking.
+
+        A reply is considered "in progress" while any bot-speaking frame is
+        active *or* the post-reply drain timer is pending — the latter keeps the
+        stricter barge-in profile latched across the brief inter-sentence gaps
+        that Wyoming TTS produces (one BotStarted/Stopped pair per sentence), so
+        we don't thrash set_params() back to the snappy profile mid-reply and let
+        echo slip through. Restored to the idle profile once the reply drains.
+        """
+        if self._vad_analyzer is None:
+            return
+        bot_active = self._bot_speaking > 0 or self._drain_timer is not None
+        desired = self._vad_barge_in_params if bot_active else self._vad_normal_params
+        if desired is not self._vad_active_params:
+            self._vad_active_params = desired
+            self._vad_analyzer.set_params(desired)
 
     def _schedule_drain_timer(self) -> None:
         self._cancel_drain_timer()
@@ -460,6 +504,9 @@ class RealtimeSession:
         except asyncio.CancelledError:
             return
         self._drain_timer = None
+        # Reply has drained (no bot frames + debounce elapsed) — drop back to the
+        # snappy idle VAD so the next quiet utterance is heard.
+        self._apply_vad_profile()
         if self._closed or self._bot_speaking != 0:
             return
         if not any(has_audio for _, has_audio in self._pending_ends):

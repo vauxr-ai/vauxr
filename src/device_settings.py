@@ -32,6 +32,19 @@ _DEFAULT_VAD_STOP_SECS = 0.6
 # keep min_volume low enough to pass real speech while still rejecting room noise.
 _DEFAULT_VAD_MIN_VOLUME = 0.2
 
+# Barge-in profile: applied only while the bot is speaking. The device's XMOS
+# AEC leaves a variable residual echo (peak ~0.2-0.65) that the snappy idle
+# profile above would mistake for the user and self-interrupt the reply. To keep
+# barge-in working without that false trigger we demand stronger, *sustained*
+# evidence during playback: a higher neural confidence, a louder volume floor
+# (above the typical echo residual), and a longer onset so intermittent echo
+# blips that track the bot's phonemes don't latch. A user genuinely talking over
+# the bot clears all three. Restored to the idle profile once the reply drains.
+_BARGE_IN_VAD_CONFIDENCE = 0.8
+_BARGE_IN_VAD_START_SECS = 0.5
+_BARGE_IN_VAD_STOP_SECS = 0.6
+_BARGE_IN_VAD_MIN_VOLUME = 0.4
+
 
 @dataclass(frozen=True)
 class SegmentationSettings:
@@ -77,6 +90,8 @@ class RealtimeDeviceSettings:
     segmentation: SegmentationSettings
     taper: TaperSettings
     vad: RealtimeVadSettings
+    # Stricter VAD swapped in while the bot is speaking; see _BARGE_IN_VAD_*.
+    vad_barge_in: RealtimeVadSettings
 
 
 _DEFAULT_SEGMENTATION = SegmentationSettings(
@@ -97,10 +112,18 @@ _DEFAULT_VAD = RealtimeVadSettings(
     min_volume=_DEFAULT_VAD_MIN_VOLUME,
 )
 
+_DEFAULT_VAD_BARGE_IN = RealtimeVadSettings(
+    confidence=_BARGE_IN_VAD_CONFIDENCE,
+    start_secs=_BARGE_IN_VAD_START_SECS,
+    stop_secs=_BARGE_IN_VAD_STOP_SECS,
+    min_volume=_BARGE_IN_VAD_MIN_VOLUME,
+)
+
 _DEFAULT_REALTIME = RealtimeDeviceSettings(
     segmentation=_DEFAULT_SEGMENTATION,
     taper=_DEFAULT_TAPER,
     vad=_DEFAULT_VAD,
+    vad_barge_in=_DEFAULT_VAD_BARGE_IN,
 )
 
 
@@ -119,8 +142,13 @@ def get_taper(device_id: str) -> TaperSettings:
 
 
 def get_realtime_vad(device_id: str) -> RealtimeVadSettings:
-    """Resolve server-side Silero VAD params for a device."""
+    """Resolve server-side Silero VAD params for a device (idle profile)."""
     return get_realtime_settings(device_id).vad
+
+
+def get_realtime_vad_barge_in(device_id: str) -> RealtimeVadSettings:
+    """Resolve the stricter VAD profile used while the bot is speaking."""
+    return get_realtime_settings(device_id).vad_barge_in
 
 
 def get_realtime_settings(device_id: str) -> RealtimeDeviceSettings:
