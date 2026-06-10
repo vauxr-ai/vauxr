@@ -99,6 +99,12 @@ async def _send_audio_end(ws: Any, follow_up: bool) -> None:
     await _send_json(ws, {"type": "audio.end", "follow_up": follow_up})
 
 
+def _record_completed_turn(device_id: str, user_text: str, assistant_text: str) -> None:
+    from realtime_session import get_manager
+
+    get_manager().record_turn(device_id, user_text, assistant_text)
+
+
 async def _synthesize_and_send(
     ws: Any,
     device_id: str,
@@ -188,6 +194,7 @@ async def _route_via_openclaw_direct(
     )
     await _synthesize_and_send(ws, device_id, result.reply_text, abort, target_rate)
     if not abort.is_set():
+        _record_completed_turn(device_id, transcript_text, result.reply_text)
         await _send_audio_end(ws, result.follow_up)
 
 
@@ -334,6 +341,7 @@ async def _route_via_channel(
         result.follow_up,
         result.reply_text[:200],
     )
+    _record_completed_turn(device_id, transcript_text, result.reply_text)
     await _send_audio_end(ws, result.follow_up)
 
 

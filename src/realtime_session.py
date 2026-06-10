@@ -5,11 +5,11 @@ A `RealtimeSession` owns one device's WebRTC media pipeline (STT -> channel LLM
 back over the device's existing WS connection so the firmware's LED state machine
 and follow_up handling work unchanged.
 
-Pre-roll: the command spoken right after the wake word is streamed over the
-always-on WS while WebRTC connects. We buffer that PCM, batch-transcribe it with
-the same Whisper the WS pipeline uses, and seed it into the pipeline as a text
-turn (context message + LLMRunFrame). Live follow-up turns use WebRTC
-audio -> VAD -> STT as normal.
+Cold wake: the command spoken right after the wake word is streamed over the
+always-on WS while WebRTC connects. On the device-VAD ``voice.end`` marker the
+server transcribes that buffered PCM (batch Whisper) and either seeds it into
+Pipecat (when WebRTC is connected) or runs the WS turn pipeline (fallback).
+Live follow-up turns use WebRTC audio -> VAD -> STT as normal.
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ from aiohttp import web
 
 import device_registry as registry
 from config import get_config
+from device_settings import get_realtime_vad, get_taper
+from pipeline import strip_follow_up_tag
 
 log = logging.getLogger("vauxr.realtime")
 
@@ -32,6 +34,15 @@ VOICE_SYSTEM = (
     "Responses are spoken aloud — no emojis, markdown, code blocks, or URLs. "
     "Use short, natural sentences. Be concise."
 )
+
+# How long the bot must stay silent before a reply counts as fully spoken. Must
+# comfortably exceed the gap between consecutive sentence-chunk TTS spans, but
+# stay short enough that follow-up/teardown feel responsive.
+_BOT_IDLE_DEBOUNCE_S = 1.0
+
+# Coarse last-resort reap for leaked sessions (device lost power with no peer
+# close). Must exceed the device's taper drop timer (T_idle1 + T_idle2).
+_SAFETY_BACKSTOP_S = 600.0
 
 
 async def _send_json(ws: Any, obj: dict[str, Any]) -> None:
@@ -48,10 +59,22 @@ def _device_ws(device_id: str) -> web.WebSocketResponse | None:
     return entry.ws if entry is not None else None
 
 
-# How long the bot must stay silent before a reply counts as fully spoken. Must
-# comfortably exceed the gap between consecutive sentence-chunk TTS spans, but
-# stay short enough that follow-up/teardown feel responsive.
-_BOT_IDLE_DEBOUNCE_S = 1.0
+def _latest_user_text(context: Any) -> str:
+    """Pull the most recent user-role text out of an LLMContext."""
+    try:
+        messages = context.get_messages()
+    except Exception:  # noqa: BLE001
+        return ""
+    for msg in reversed(messages):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = [p.get("text", "") for p in content if isinstance(p, dict)]
+            return " ".join(t for t in parts if t).strip()
+    return ""
 
 
 class RealtimeSession:
@@ -65,38 +88,37 @@ class RealtimeSession:
         self._context: Any = None
         self._connection: Any = None
         self._runner_task: asyncio.Task | None = None
-        self._preroll_task: asyncio.Task | None = None
+        self._backstop_task: asyncio.Task | None = None
         self._closed = False
-        # Set once the pipeline is built and the WebRTC client is connected, so
-        # pre-roll flush (driven by realtime.media_ready) can wait for it.
+        # Set once the pipeline is built and the WebRTC client is connected.
         self._pipeline_ready = asyncio.Event()
         # Deferred audio.end queue, in turn order. Each entry is (follow_up,
         # has_audio): a turn that produced bot speech can't end until its bot
         # audio fully drains (counted as a credit), while a silent turn (empty/
         # errored reply) ends as soon as it reaches the head — but never ahead of
-        # an earlier still-speaking turn, which would tear the session down while
-        # the first reply is still playing.
+        # an earlier still-speaking turn, which would advance turn state while the
+        # first reply is still playing.
         self._pending_ends: deque[tuple[bool, bool]] = deque()
         self._bot_stop_credits = 0
         # Bot-speaking bookkeeping. Wyoming TTS speaks one sentence per run_tts,
         # so a single reply produces several BotStarted/BotStoppedSpeaking pairs.
-        # A credit (one finished reply) is granted only once the bot has been
-        # idle past a debounce AND a text-complete turn is waiting on it — the
-        # debounce bridges the short gaps between sentence chunks.
         self._bot_speaking = 0
         self._drain_timer: asyncio.Task | None = None
-        # True once the device has been told the session ended (audio.end with
-        # follow_up=false). Guards against double-sending and ensures an abnormal
-        # teardown (peer drop, error) still relays a terminal audio.end so the
-        # device leaves listening/speaking instead of hanging.
+        # True once we've relayed a terminal audio.end for an abnormal teardown.
         self._ended_notified = False
+
+    @property
+    def is_closed(self) -> bool:
+        return self._closed
+
+    def is_peer_live(self) -> bool:
+        """Whether the WebRTC pipeline is up and the peer has connected."""
+        return self._pipeline_ready.is_set() and not self._closed
 
     # --- lifecycle ---
 
     async def start(self, connection: Any) -> None:
         """Build and run the pipeline around an established WebRTC connection."""
-        # Imports are local so the realtime (pipecat) dependency only loads when
-        # a realtime session actually starts.
         from pipecat.audio.vad.silero import SileroVADAnalyzer
         from pipecat.audio.vad.vad_analyzer import VADParams
         from pipecat.frames.frames import (
@@ -133,9 +155,6 @@ class RealtimeSession:
         )
 
         stt = WyomingSTTService()
-        # Per-device segmentation: sentence mode lets pipecat's TTS aggregator cut
-        # on sentence boundaries; otherwise TOKEN mode and the upstream
-        # IdleSegmenter (in ChannelLLMService) owns segmentation.
         seg = get_segmentation(self.device_id)
         tts = WyomingTTSService(
             text_aggregation_mode=(
@@ -148,17 +167,20 @@ class RealtimeSession:
             on_turn_complete=self._on_turn_complete,
         )
 
+        vad = get_realtime_vad(self.device_id)
         context = LLMContext()
+        for msg in get_manager().context_messages(self.device_id):
+            context.add_message(msg)
         self._context = context
         user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
             context,
             user_params=LLMUserAggregatorParams(
                 vad_analyzer=SileroVADAnalyzer(
                     params=VADParams(
-                        confidence=0.85,
-                        start_secs=0.4,
-                        stop_secs=0.6,
-                        min_volume=0.8,
+                        confidence=vad.confidence,
+                        start_secs=vad.start_secs,
+                        stop_secs=vad.stop_secs,
+                        min_volume=vad.min_volume,
                     )
                 ),
                 user_turn_strategies=UserTurnStrategies(
@@ -186,9 +208,6 @@ class RealtimeSession:
                         _device_ws(session.device_id), {"type": "audio.start"}
                     )
                 elif isinstance(frame, BotStoppedSpeakingFrame):
-                    # One of possibly several per-sentence stops. The reply isn't
-                    # actually done until the bot stays idle (see the debounce in
-                    # _on_bot_stopped_speaking), so don't emit audio.end here.
                     session._on_bot_stopped_speaking()
                 await self.push_frame(frame, direction)
 
@@ -213,100 +232,94 @@ class RealtimeSession:
         @transport.event_handler("on_client_connected")
         async def _on_connected(_t, _c) -> None:
             log.info("realtime[%s]: WebRTC client connected", self.device_id)
-            # Don't flush pre-roll here — the device is still sending wake-word
-            # audio over WS until it signals realtime.media_ready. Just mark the
-            # pipeline ready; the flush is triggered by media_ready.
             self._pipeline_ready.set()
 
         @transport.event_handler("on_client_disconnected")
         async def _on_disconnected(_t, _c) -> None:
             if self._closed:
-                # We initiated this teardown (close() sets _closed before it
-                # disconnects the peer) — e.g. a graceful end or an /api/offer
-                # supersede/renegotiation. The peer didn't drop, so don't relay
-                # a spurious audio.end that would kick the device out mid-turn.
                 return
             log.info("realtime[%s]: WebRTC peer dropped", self.device_id)
-            # Peer dropped (ICE/network failure). The control WS is still up, so
-            # relay a terminal audio.end — otherwise the device can sit in
-            # listening/speaking after we've torn the pipeline down.
             await self._notify_ended()
             await self.close()
 
         self._runner = PipelineRunner(handle_sigint=False)
         self._runner_task = asyncio.create_task(self._runner.run(self._task))
-        self._preroll_task = asyncio.create_task(self._flush_preroll_when_ready())
+        self._backstop_task = asyncio.create_task(self._safety_backstop())
 
-    async def _flush_preroll_when_ready(self) -> None:
-        """Flush pre-roll once the pipeline is up AND the device signals it's done.
-
-        Waiting on both avoids two races: flushing before the pipeline can accept
-        the seeded turn, and flushing before the device has sent all its WS
-        pre-roll (which would drop the tail of the first utterance).
-        """
-        media_ready = get_manager().media_ready_event(self.device_id)
+    async def _safety_backstop(self) -> None:
+        """Reap a session if the peer never closes cleanly (power loss, etc.)."""
         try:
-            await asyncio.wait_for(self._pipeline_ready.wait(), timeout=15)
-        except asyncio.TimeoutError:
-            # Pipeline never came up — we can't seed a turn. Drop the buffer so it
-            # doesn't linger until the next wake.
-            log.warning("realtime[%s]: pipeline never ready — dropping pre-roll", self.device_id)
-            get_manager().take_preroll(self.device_id)
+            await asyncio.sleep(_SAFETY_BACKSTOP_S)
+        except asyncio.CancelledError:
             return
-        try:
-            await asyncio.wait_for(media_ready.wait(), timeout=15)
-        except asyncio.TimeoutError:
-            # Device never confirmed media_ready, but the pipeline is up. Flush
-            # what we buffered anyway rather than silently discarding the user's
-            # first command after wake.
+        if not self._closed:
             log.warning(
-                "realtime[%s]: media_ready timed out — flushing pre-roll anyway", self.device_id
+                "realtime[%s]: safety backstop fired after %.0fs — closing session",
+                self.device_id,
+                _SAFETY_BACKSTOP_S,
             )
-        if self._closed:
-            return
-        await self._flush_preroll()
+            await self._notify_ended()
+            await self.close()
 
-    async def _flush_preroll(self) -> None:
-        """Transcribe buffered WS pre-roll and seed it as the first turn."""
+    async def seed_buffered_turn(self, pcm: bytes) -> None:
+        """Transcribe cold-wake WS audio and seed one turn into Pipecat."""
         from pipecat.frames.frames import LLMRunFrame
 
-        mgr = get_manager()
-        pcm = mgr.take_preroll(self.device_id)
+        if self._closed:
+            return
         if not pcm:
             return
+
+        try:
+            await asyncio.wait_for(self._pipeline_ready.wait(), timeout=15.0)
+        except asyncio.TimeoutError:
+            log.warning(
+                "realtime[%s]: pipeline never ready — dropping buffered seed",
+                self.device_id,
+            )
+            return
+
+        if not self.is_peer_live():
+            log.warning(
+                "realtime[%s]: peer not live — refusing ghost seed turn",
+                self.device_id,
+            )
+            return
+
         try:
             from wyoming_stt import transcribe
 
             text = await transcribe([pcm])
         except Exception as e:  # noqa: BLE001
-            log.error("realtime[%s]: pre-roll transcribe failed: %s", self.device_id, e)
+            log.error("realtime[%s]: buffered transcribe failed: %s", self.device_id, e)
             return
+
         text = (text or "").strip()
         if not text:
-            log.info("realtime[%s]: pre-roll empty after STT", self.device_id)
+            log.info("realtime[%s]: buffered utterance empty after STT", self.device_id)
             return
-        log.info("realtime[%s]: seeding pre-roll turn: %r", self.device_id, text)
+
+        if not self.is_peer_live():
+            log.warning(
+                "realtime[%s]: peer dropped during STT — refusing ghost seed turn",
+                self.device_id,
+            )
+            return
+
+        log.info("realtime[%s]: seeding cold->warm turn: %r", self.device_id, text)
         await _send_json(_device_ws(self.device_id), {"type": "transcript", "text": text})
         self._context.add_message({"role": "user", "content": text})
         if self._task is not None:
             await self._task.queue_frames([LLMRunFrame()])
 
     async def _on_turn_complete(self, follow_up: bool, reply: str) -> None:
-        """Called when an LLM turn ends. Queue its audio.end in turn order.
+        """Called when an LLM turn ends. Queue its audio.end in turn order."""
+        user_text = _latest_user_text(self._context)
+        get_manager().record_turn(self.device_id, user_text, reply)
 
-        A turn with spoken text waits for its BotStoppedSpeaking (TTS drained)
-        before its audio.end fires, so the firmware doesn't advance turn state —
-        or, for follow_up=false, tear down WebRTC — while the reply is playing.
-        A silent turn has no TTS so it can end immediately, but only once it
-        reaches the head of the queue (see _drain_ends).
-        """
         has_audio = bool(reply and reply.strip())
         self._pending_ends.append((follow_up, has_audio))
         if has_audio and self._bot_speaking == 0:
-            # The reply's audio may already have fully drained before this turn
-            # was queued (short reply / fast TTS), so there'd be no further
-            # BotStopped to trigger the credit. Arm the idle debounce to catch
-            # that; if audio is merely about to start, BotStarted cancels it.
             self._schedule_drain_timer()
         await self._drain_ends()
 
@@ -315,12 +328,6 @@ class RealtimeSession:
         self._cancel_drain_timer()
 
     def _on_bot_stopped_speaking(self) -> None:
-        """One per-sentence stop. Arm the idle debounce when the bot goes quiet.
-
-        Wyoming speaks a sentence per run_tts, so a reply yields several
-        BotStarted/Stopped pairs. Only after the bot stays idle past the debounce
-        (no new sentence) do we count the reply as finished.
-        """
         if self._bot_speaking > 0:
             self._bot_speaking -= 1
         if self._bot_speaking == 0:
@@ -343,22 +350,13 @@ class RealtimeSession:
         self._drain_timer = None
         if self._closed or self._bot_speaking != 0:
             return
-        # Credit one finished reply, but only if a text-complete turn is waiting
-        # on it. A pending has_audio entry exists only after the LLM stream fully
-        # ended, so no further sentences will be queued — this idle is the real
-        # end, not a mid-reply pause before the turn was even submitted.
         if not any(has_audio for _, has_audio in self._pending_ends):
             return
         self._bot_stop_credits += 1
         await self._drain_ends()
 
     async def _drain_ends(self) -> None:
-        """Emit deferred audio.end events in turn order.
-
-        Head-of-queue entries that produced bot audio wait for a bot-stop credit;
-        silent entries drain immediately. Processing strictly in order keeps a
-        later turn from ending the session before an earlier reply has played.
-        """
+        """Emit deferred audio.end events in turn order."""
         while self._pending_ends and not self._ended_notified:
             follow_up, has_audio = self._pending_ends[0]
             if has_audio:
@@ -367,33 +365,21 @@ class RealtimeSession:
                 self._bot_stop_credits -= 1
             self._pending_ends.popleft()
             await self._send_audio_end(follow_up)
-            if not follow_up:
-                # Session is ending; anything still queued is moot.
-                self._pending_ends.clear()
-                break
 
     async def _send_audio_end(self, follow_up: bool) -> None:
-        if not follow_up:
-            self._ended_notified = True
         await _send_json(
             _device_ws(self.device_id), {"type": "audio.end", "follow_up": follow_up}
         )
+        # follow_up:false → Warm-quiet on the device; keep the Pipecat session alive.
         registry.set_state(self.device_id, "listening" if follow_up else "idle")
         if not follow_up:
-            log.info("realtime[%s]: follow_up=false — ending realtime session", self.device_id)
-            # Small grace for the final WebRTC audio packets to land before
-            # teardown; the firmware also tears down on audio.end{follow_up:false}.
-            asyncio.create_task(self._deferred_close())
+            log.info(
+                "realtime[%s]: follow_up=false — Warm-quiet (session stays alive)",
+                self.device_id,
+            )
 
     async def _notify_ended(self) -> None:
-        """Relay a terminal audio.end{follow_up:false} for an abnormal teardown.
-
-        Normal turns end via _send_audio_end. This covers the cases where that
-        never fires: a peer drop, or a deferred follow_up that's still queued
-        because TTS never reached BotStoppedSpeaking (playback error/interrupt/
-        disconnect). Guarded so it sends at most once, and drops any pending
-        follow_up that will now never be drained.
-        """
+        """Relay a terminal audio.end{follow_up:false} for abnormal teardown."""
         if self._ended_notified:
             return
         self._ended_notified = True
@@ -405,18 +391,14 @@ class RealtimeSession:
         )
         registry.set_state(self.device_id, "idle")
 
-    async def _deferred_close(self) -> None:
-        await asyncio.sleep(0.5)
-        await self.close()
-
     async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
         log.info("realtime[%s]: closing session", self.device_id)
         self._cancel_drain_timer()
-        if self._preroll_task is not None:
-            self._preroll_task.cancel()
+        if self._backstop_task is not None:
+            self._backstop_task.cancel()
         try:
             if self._task is not None:
                 await self._task.cancel()
@@ -431,34 +413,65 @@ class RealtimeSession:
 
 
 class RealtimeManager:
-    """Tracks per-device pre-roll buffers and live sessions."""
+    """Tracks per-device pre-roll buffers, conversation log, and live sessions."""
 
     def __init__(self) -> None:
         self._channel_server: Any = None
         self._sessions: dict[str, RealtimeSession] = {}
         self._preroll: dict[str, bytearray] = {}
-        # Per-device "device finished sending pre-roll" signal. Kept on the
-        # manager (not the session) so it survives the media_ready WS message
-        # arriving before the /api/offer connection registers the session.
-        self._media_ready: dict[str, asyncio.Event] = {}
-        # Per-device lock serializing /api/offer handling: two overlapping offers
-        # for the same device would otherwise both start a Pipecat runner, with
-        # only the last _sessions registration winning and the other orphaned.
+        self._cold_wait: set[str] = set()
+        self._conversation_log: dict[str, list[dict[str, str]]] = {}
         self._offer_locks: dict[str, asyncio.Lock] = {}
         self._handler: Any = None
         self._max_preroll_bytes = 16000 * 2 * 10  # 10s @ 16kHz mono
+        # Sanity: server backstop must outlive the device taper drop timer.
+        taper = get_taper("")
+        drop_ms = taper.t_idle1_ms + taper.t_idle2_ms
+        if _SAFETY_BACKSTOP_S * 1000 <= drop_ms:
+            log.warning(
+                "realtime safety backstop (%.0fs) is shorter than device taper drop (%dms)",
+                _SAFETY_BACKSTOP_S,
+                drop_ms,
+            )
 
     def configure(self, channel_server: Any) -> None:
         self._channel_server = channel_server
 
-    # --- pre-roll buffering (driven by WS realtime.start + 0x01 frames) ---
+    # --- transport-agnostic conversation log ---
+
+    def context_messages(self, device_id: str) -> list[dict[str, str]]:
+        """Snapshot of the per-device log for LLMContext reconstruction."""
+        return [dict(m) for m in self._conversation_log.get(device_id, [])]
+
+    def record_turn(self, device_id: str, user_text: str, assistant_text: str) -> None:
+        """Single choke point for completed turns (WS or realtime)."""
+        user_text = (user_text or "").strip()
+        assistant_text = strip_follow_up_tag(assistant_text or "").strip()
+        if not user_text and not assistant_text:
+            return
+
+        messages = self._conversation_log.setdefault(device_id, [])
+
+        if user_text:
+            if messages and messages[-1]["role"] == "user":
+                messages[-1]["content"] = user_text
+            else:
+                messages.append({"role": "user", "content": user_text})
+
+        if assistant_text:
+            if messages and messages[-1]["role"] == "assistant":
+                messages[-1]["content"] = assistant_text
+            elif messages and messages[-1]["role"] == "user":
+                messages.append({"role": "assistant", "content": assistant_text})
+            else:
+                messages.append({"role": "assistant", "content": assistant_text})
+
+    # --- pre-roll buffering (cold wake: WS audio until voice.end) ---
 
     def begin_preroll(self, device_id: str) -> None:
         self._preroll[device_id] = bytearray()
-        # Fresh signal for this wake — a stale set() from a prior turn must not
-        # make the next session flush before the device is done sending.
-        self._media_ready[device_id] = asyncio.Event()
-        log.info("realtime[%s]: pre-roll capture armed", device_id)
+        self._cold_wait.add(device_id)
+        log.info("realtime[%s]: cold pre-roll capture armed", device_id)
 
     def add_preroll(self, device_id: str, pcm: bytes) -> None:
         buf = self._preroll.get(device_id)
@@ -471,28 +484,92 @@ class RealtimeManager:
         buf = self._preroll.pop(device_id, None)
         return bytes(buf) if buf else b""
 
+    def is_cold_wait(self, device_id: str) -> bool:
+        """Whether the device is in cold realtime wait (awaiting voice.end)."""
+        return device_id in self._cold_wait
+
+    def has_live_session(self, device_id: str) -> bool:
+        """Whether a warm Pipecat session with a live peer exists."""
+        session = self._sessions.get(device_id)
+        return session is not None and session.is_peer_live()
+
+    async def handle_cold_voice_end(
+        self,
+        device_id: str,
+        *,
+        webrtc_connected: bool,
+        ws: Any,
+        openclaw_client: Any,
+        channel_server: Any,
+        output_sample_rate: int | None,
+    ) -> None:
+        """Route the cold-wake utterance: WS pipeline or Pipecat text seed."""
+        if device_id not in self._cold_wait:
+            return
+
+        self._cold_wait.discard(device_id)
+        pcm = self.take_preroll(device_id)
+
+        if webrtc_connected:
+            session = self._sessions.get(device_id)
+            if session is None or session.is_closed:
+                log.warning(
+                    "realtime[%s]: webrtc_connected but no session — dropping seed",
+                    device_id,
+                )
+                return
+            if not pcm:
+                log.info("realtime[%s]: empty pre-roll on seed path", device_id)
+                return
+            await session.seed_buffered_turn(pcm)
+            return
+
+        # WS-only fallback when WebRTC is not connected at end-of-speech.
+        if not pcm:
+            log.info("realtime[%s]: empty pre-roll on WS branch", device_id)
+            await _send_json(ws, {"type": "audio.end", "follow_up": False})
+            registry.set_state(device_id, "idle")
+            return
+
+        from pipeline import run_voice_turn
+
+        abort = asyncio.Event()
+        entry = registry.get(device_id)
+        if entry is not None:
+            entry.abort_event = abort
+
+        try:
+            await run_voice_turn(
+                device_id,
+                [pcm],
+                ws,
+                openclaw_client,
+                channel_server,
+                abort,
+                output_sample_rate,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.error("realtime[%s]: WS branch pipeline error: %s", device_id, e)
+            await _send_json(
+                ws, {"type": "error", "code": "PIPELINE_ERROR", "message": str(e)}
+            )
+        finally:
+            e = registry.get(device_id)
+            if e is not None:
+                e.abort_event = None
+
     # --- session lifecycle ---
 
     def forget(self, device_id: str) -> None:
-        # Only drop the session. Pre-roll and the media_ready signal are armed
-        # per-wake by begin_preroll and consumed by take_preroll; closing a stale
-        # session (e.g. when a new offer supersedes it) must NOT wipe the pre-roll
-        # that the new wake just armed, or the next turn's first utterance is lost.
         self._sessions.pop(device_id, None)
 
     async def abort_wake(self, device_id: str) -> None:
-        """Clean up a wake whose /api/offer never produced a usable session.
-
-        realtime.start armed pre-roll and put the device in listening; if the
-        offer raises or yields no SDP answer, relay a terminal audio.end so the
-        device leaves listening even if its own realtime.stop is lost, and clear
-        the armed server state.
-        """
+        """Clean up a wake whose /api/offer never produced a usable session."""
         session = self._sessions.get(device_id)
         if session is not None:
             await session.close()
         self._preroll.pop(device_id, None)
-        self._media_ready.pop(device_id, None)
+        self._cold_wait.discard(device_id)
         ws = _device_ws(device_id)
         if ws is not None:
             await _send_json(ws, {"type": "audio.end", "follow_up": False})
@@ -502,44 +579,13 @@ class RealtimeManager:
         session = self._sessions.get(device_id)
         if session is not None:
             await session.close()
-        # Clear any pre-roll/media_ready armed for this device. stop() runs on
-        # realtime.stop and on disconnect — including the case where the device
-        # armed pre-roll but never completed WebRTC (no session to close), which
-        # would otherwise leak the buffer/event until the next wake.
         self._preroll.pop(device_id, None)
-        self._media_ready.pop(device_id, None)
-        # Reset registry state: tearing the session down on realtime.stop (or a
-        # bare disconnect) otherwise leaves the device showing "listening" after
-        # realtime has ended, skewing HTTP status and registry-keyed logic.
+        self._cold_wait.discard(device_id)
         registry.set_state(device_id, "idle")
 
     def can_accept_offer(self, device_id: str) -> bool:
-        """Whether an /api/offer for this device_id is tied to a real wake.
-
-        An armed pre-roll means the device just sent an authenticated
-        realtime.start on its WebSocket; an existing session covers re-offers
-        (ICE restart / renegotiation). Without this, any LAN client holding the
-        shared device token could POST an offer for an arbitrary id and attach
-        WebRTC to that device's pre-roll and control relay.
-        """
+        """Whether an /api/offer for this device_id is tied to a real wake."""
         return device_id in self._preroll or device_id in self._sessions
-
-    def media_ready_event(self, device_id: str) -> asyncio.Event:
-        """Get-or-create the per-device pre-roll-done signal."""
-        ev = self._media_ready.get(device_id)
-        if ev is None:
-            ev = asyncio.Event()
-            self._media_ready[device_id] = ev
-        return ev
-
-    def media_ready(self, device_id: str) -> None:
-        """Device signalled realtime.media_ready — flag it.
-
-        Set on the manager rather than poking the session directly: media_ready
-        can arrive before the session is registered, and the session's flush
-        task waits on this event, so the signal is never lost.
-        """
-        self.media_ready_event(device_id).set()
 
     def _request_handler(self) -> Any:
         if self._handler is None:
@@ -569,16 +615,11 @@ class RealtimeManager:
         )
 
         async def _on_connection(connection: Any) -> None:
-            # A re-offer for a device that already has a live session would
-            # otherwise orphan the previous Pipecat runner + WebRTC connection.
             existing = self._sessions.get(device_id)
             if existing is not None:
                 log.info("realtime[%s]: closing previous session before new offer", device_id)
                 await existing.close()
             session = RealtimeSession(device_id, self._channel_server)
-            # Register only after start() succeeds: a failed start would otherwise
-            # leave a half-built session in _sessions, which later offers (and
-            # can_accept_offer) would treat as live.
             try:
                 await session.start(connection)
             except Exception:
@@ -587,8 +628,6 @@ class RealtimeManager:
                 raise
             self._sessions[device_id] = session
 
-        # Serialize per device so two overlapping offers can't both build a
-        # session (and leak a runner) for the same device_id.
         lock = self._offer_locks.setdefault(device_id, asyncio.Lock())
         async with lock:
             return await handler.handle_web_request(req, _on_connection)
