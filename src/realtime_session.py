@@ -14,6 +14,7 @@ Live follow-up turns use WebRTC audio -> VAD -> STT as normal.
 
 from __future__ import annotations
 
+import array
 import asyncio
 import json
 import logging
@@ -136,8 +137,10 @@ class RealtimeSession:
             BotStartedSpeakingFrame,
             BotStoppedSpeakingFrame,
             Frame,
+            InputAudioRawFrame,
             TranscriptionFrame,
             UserStartedSpeakingFrame,
+            UserStoppedSpeakingFrame,
         )
         from pipecat.pipeline.pipeline import Pipeline
         from pipecat.pipeline.runner import PipelineRunner
@@ -183,6 +186,15 @@ class RealtimeSession:
         )
 
         vad = get_realtime_vad(self.device_id)
+        log.info(
+            "realtime[%s]: VAD params confidence=%.2f start_secs=%.2f "
+            "stop_secs=%.2f min_volume=%.2f",
+            self.device_id,
+            vad.confidence,
+            vad.start_secs,
+            vad.stop_secs,
+            vad.min_volume,
+        )
         context = LLMContext()
         for msg in get_manager().context_messages(self.device_id):
             context.add_message(msg)
@@ -207,6 +219,43 @@ class RealtimeSession:
 
         session = self
 
+        class _AudioMeter(FrameProcessor):
+            """Log inbound WebRTC audio level ~1×/s so VAD min_volume can be tuned.
+
+            Shows whether the device's mic audio is reaching the server at all and
+            how loud it is (peak normalized 0..1, directly comparable to the Silero
+            ``min_volume`` gate). Purely diagnostic — passes frames through.
+            """
+
+            def __init__(self) -> None:
+                super().__init__()
+                self._peak = 0
+                self._frames = 0
+                self._t0 = time.monotonic()
+
+            async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+                await super().process_frame(frame, direction)
+                if isinstance(frame, InputAudioRawFrame) and frame.audio:
+                    samples = array.array("h")
+                    samples.frombytes(frame.audio)
+                    if samples:
+                        peak = max(abs(max(samples)), abs(min(samples)))
+                        self._peak = max(self._peak, peak)
+                    self._frames += 1
+                    now = time.monotonic()
+                    if now - self._t0 >= 1.0:
+                        log.info(
+                            "realtime[%s]: audio in — %d frames, peak=%d (~%.2f)",
+                            session.device_id,
+                            self._frames,
+                            self._peak,
+                            self._peak / 32768.0,
+                        )
+                        self._peak = 0
+                        self._frames = 0
+                        self._t0 = now
+                await self.push_frame(frame, direction)
+
         class _ControlTap(FrameProcessor):
             """Relay transcript + bot-speaking events to the device WS."""
 
@@ -217,11 +266,17 @@ class RealtimeSession:
                     # underway so it holds off its active-idle taper — otherwise it
                     # can fall into warm-quiet mid-utterance (before STT/LLM emits
                     # the transcript) and mishandle the late reply.
+                    log.info("realtime[%s]: VAD speech START", session.device_id)
                     session._touch_activity()
                     await _send_json(
                         _device_ws(session.device_id), {"type": "speech.start"}
                     )
+                elif isinstance(frame, UserStoppedSpeakingFrame):
+                    log.info("realtime[%s]: VAD speech STOP", session.device_id)
                 elif isinstance(frame, TranscriptionFrame) and frame.text and frame.text.strip():
+                    log.info(
+                        "realtime[%s]: transcript %r", session.device_id, frame.text.strip()
+                    )
                     session._touch_activity()
                     await _send_json(
                         _device_ws(session.device_id),
@@ -239,6 +294,7 @@ class RealtimeSession:
         pipeline = Pipeline(
             [
                 transport.input(),
+                _AudioMeter(),
                 stt,
                 _ControlTap(),
                 user_aggregator,
