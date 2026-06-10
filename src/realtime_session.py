@@ -167,6 +167,9 @@ class RealtimeSession:
         )
 
         stt = WyomingSTTService()
+        # Per-device segmentation: sentence mode lets pipecat's TTS aggregator cut
+        # on sentence boundaries; otherwise TOKEN mode and the upstream
+        # IdleSegmenter (in ChannelLLMService) owns segmentation.
         seg = get_segmentation(self.device_id)
         tts = WyomingTTSService(
             text_aggregation_mode=(

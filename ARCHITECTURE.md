@@ -233,6 +233,15 @@ To start playback before the whole reply is generated, the streamed LLM text is 
 
 These are **per-device feature flags**, not env/globals. They're hardcoded defaults today, but every lookup is keyed by `device_id` so the planned devices API (per-device tokens + config) only needs to swap the data source in `device_settings.py`. The same module also houses the warm-idle **taper timers** (`t_idle1_ms`/`t_idle2_ms`, handed to the device in the hello policy) and the server-side **Silero VAD params** for the realtime pipeline.
 
+### TTS segmentation
+
+To start playback before the whole reply is generated, the streamed LLM text is cut into TTS segments per device, using one of two **mutually exclusive** strategies (resolved via `device_settings.get_segmentation(device_id)`):
+
+- **idle** (default): the shared `IdleSegmenter` flushes a segment whenever the token stream pauses for `idle_pause_ms` — punctuation-independent and low latency. TTS runs in pipecat `TOKEN` mode so each flushed segment is synthesized immediately. This is the same segmenter the WS pipeline uses.
+- **sentence**: pipecat's built-in TTS sentence aggregator (`SENTENCE` mode, NLTK Punkt) cuts on sentence boundaries; tokens are passed straight through. Takes precedence if both are enabled — they can't be combined, since a downstream sentence aggregator would just re-buffer idle's partial flushes until punctuation.
+
+These are **per-device feature flags**, not env/globals. They're hardcoded defaults today, but every lookup is keyed by `device_id` so the planned devices API (per-device tokens + config) only needs to swap the data source in `device_settings.py`.
+
 ### Config
 
 ```env
