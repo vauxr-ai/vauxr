@@ -24,10 +24,13 @@ _DEFAULT_T_IDLE2_MS = 180_000
 
 # Server-side Silero VAD defaults (Pipecat realtime path). Shared with the
 # device via hello so firmware-side tuning stays aligned where applicable.
-_DEFAULT_VAD_CONFIDENCE = 0.85
+_DEFAULT_VAD_CONFIDENCE = 0.7
 _DEFAULT_VAD_START_SECS = 0.4
 _DEFAULT_VAD_STOP_SECS = 0.6
-_DEFAULT_VAD_MIN_VOLUME = 0.8
+# Post-AEC/Opus speech arrives at peak ~0.13-0.25, so the prior 0.8 gate
+# silently dropped normal-volume speech. Lean on Silero confidence instead and
+# keep min_volume low enough to pass real speech while still rejecting room noise.
+_DEFAULT_VAD_MIN_VOLUME = 0.2
 
 
 @dataclass(frozen=True)
