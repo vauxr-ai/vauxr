@@ -24,13 +24,15 @@ _DEFAULT_T_IDLE2_MS = 180_000
 
 # Server-side Silero VAD defaults (Pipecat realtime path). Shared with the
 # device via hello so firmware-side tuning stays aligned where applicable.
-_DEFAULT_VAD_CONFIDENCE = 0.7
+_DEFAULT_VAD_CONFIDENCE = 0.6
 _DEFAULT_VAD_START_SECS = 0.4
 _DEFAULT_VAD_STOP_SECS = 0.6
-# Post-AEC/Opus speech arrives at peak ~0.13-0.25, so the prior 0.8 gate
-# silently dropped normal-volume speech. Lean on Silero confidence instead and
-# keep min_volume low enough to pass real speech while still rejecting room noise.
-_DEFAULT_VAD_MIN_VOLUME = 0.2
+# This device's post-AEC speech arrives quietly (peak ~0.15, room noise ~0.05),
+# so even a 0.2 floor clipped normal-volume utterances. Keep min_volume just
+# above the noise floor and let Silero's neural confidence do the real
+# speech-vs-noise gating. (The stricter barge-in profile below still guards
+# against echo while the bot is speaking.)
+_DEFAULT_VAD_MIN_VOLUME = 0.1
 
 # Barge-in profile: applied only while the bot is speaking. The device's XMOS
 # AEC leaves a variable residual echo (peak ~0.2-0.65) that the snappy idle
