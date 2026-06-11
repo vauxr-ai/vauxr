@@ -18,7 +18,9 @@ import array
 import asyncio
 import json
 import logging
+import os
 import time
+import wave
 from collections import deque
 from typing import Any
 
@@ -249,6 +251,10 @@ class RealtimeSession:
             Shows whether the device's mic audio is reaching the server at all and
             how loud it is (peak normalized 0..1, directly comparable to the Silero
             ``min_volume`` gate). Purely diagnostic — passes frames through.
+
+            If ``VAUXR_RECORD_DIR`` is set, also writes the decoded inbound PCM to
+            a per-session WAV in that directory so the exact audio Silero/Whisper
+            see can be played back and inspected for static/clipping/level.
             """
 
             def __init__(self) -> None:
@@ -256,10 +262,68 @@ class RealtimeSession:
                 self._peak = 0
                 self._frames = 0
                 self._t0 = time.monotonic()
+                self._rec_dir = os.getenv("VAUXR_RECORD_DIR") or None
+                self._wav: wave.Wave_write | None = None
+                self._wav_path: str | None = None
+
+            def _ensure_wav(self, frame: InputAudioRawFrame) -> None:
+                if self._wav is not None or not self._rec_dir:
+                    return
+                try:
+                    os.makedirs(self._rec_dir, exist_ok=True)
+                    ts = time.strftime("%Y%m%d-%H%M%S")
+                    safe_id = "".join(
+                        c if (c.isalnum() or c in "-_") else "_"
+                        for c in session.device_id
+                    )
+                    self._wav_path = os.path.join(
+                        self._rec_dir, f"{safe_id}-{ts}.wav"
+                    )
+                    w = wave.open(self._wav_path, "wb")
+                    w.setnchannels(frame.num_channels or 1)
+                    w.setsampwidth(2)  # InputAudioRawFrame is 16-bit PCM
+                    w.setframerate(frame.sample_rate or 16000)
+                    self._wav = w
+                    log.info(
+                        "realtime[%s]: recording inbound audio -> %s",
+                        session.device_id,
+                        self._wav_path,
+                    )
+                except Exception as exc:  # never let recording break the pipeline
+                    log.warning(
+                        "realtime[%s]: audio recording disabled (%s)",
+                        session.device_id,
+                        exc,
+                    )
+                    self._rec_dir = None
+                    self._wav = None
+
+            def _close_wav(self) -> None:
+                if self._wav is None:
+                    return
+                try:
+                    self._wav.close()
+                    log.info(
+                        "realtime[%s]: saved inbound audio recording %s",
+                        session.device_id,
+                        self._wav_path,
+                    )
+                except Exception:
+                    pass
+                finally:
+                    self._wav = None
 
             async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
                 await super().process_frame(frame, direction)
                 if isinstance(frame, InputAudioRawFrame) and frame.audio:
+                    if self._rec_dir:
+                        self._ensure_wav(frame)
+                        if self._wav is not None:
+                            try:
+                                self._wav.writeframes(frame.audio)
+                            except Exception:
+                                self._close_wav()
+                                self._rec_dir = None
                     samples = array.array("h")
                     samples.frombytes(frame.audio)
                     if samples:
@@ -279,6 +343,10 @@ class RealtimeSession:
                         self._frames = 0
                         self._t0 = now
                 await self.push_frame(frame, direction)
+
+            async def cleanup(self) -> None:
+                await super().cleanup()
+                self._close_wav()
 
         class _ControlTap(FrameProcessor):
             """Relay transcript + bot-speaking events to the device WS."""

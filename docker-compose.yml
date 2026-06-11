@@ -37,9 +37,15 @@ services:
       REALTIME_ESP32: ${REALTIME_ESP32:-1}
       REALTIME_HOST: ${REALTIME_HOST:-}
       REALTIME_STUN_URL: ${REALTIME_STUN_URL:-stun:stun.l.google.com:19302}
+      # Diagnostic: when set, the realtime pipeline writes the decoded inbound
+      # WebRTC audio (exactly what Silero/Whisper see) to per-session WAVs here.
+      # Leave empty to disable. Point at /data/recordings to land files in the
+      # host bind-mount below.
+      VAUXR_RECORD_DIR: ${VAUXR_RECORD_DIR:-}
     volumes:
       - vauxr-data:/data
       - ./certs/root.crt:/certs/root.crt:ro
+      - ./recordings:/data/recordings
 
   whisper:
     image: rhasspy/wyoming-whisper
