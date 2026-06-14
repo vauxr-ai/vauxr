@@ -129,6 +129,14 @@ class RealtimeSession:
         # in PROCESSING, then its watchdog tapers to warm-quiet). Barge-in resumes
         # the instant the bot speaks, when this clears.
         self._awaiting_reply = False
+        # Set when the user barges in over the bot (an InterruptionFrame). The
+        # interrupted turn may have already completed with follow_up=false and had
+        # its audio.end *deferred* until the bot finished speaking; the barge-in is
+        # what finishes it, so that deferred end would warm-quiet the device (which
+        # pauses its media) exactly as the new turn's reply is about to play —
+        # dropping it. While set, _drain_ends keeps the device listening instead of
+        # warm-quiet; cleared once the barge-in turn's reply starts speaking.
+        self._user_barged_in = False
         # VAD profile swapping: a snappy idle profile so quiet speech is heard,
         # and a stricter barge-in profile applied while the bot speaks so the
         # device's residual echo doesn't self-interrupt the reply. Populated when
@@ -158,6 +166,7 @@ class RealtimeSession:
             BotStoppedSpeakingFrame,
             Frame,
             InputAudioRawFrame,
+            InterruptionFrame,
             TranscriptionFrame,
             UserStartedSpeakingFrame,
             UserStoppedSpeakingFrame,
@@ -372,7 +381,13 @@ class RealtimeSession:
 
             async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
                 await super().process_frame(frame, direction)
-                if isinstance(frame, UserStartedSpeakingFrame):
+                if isinstance(frame, InterruptionFrame):
+                    # User barged in over the bot. Whatever turn was speaking is
+                    # being cut short by a *new* user turn, so its (possibly
+                    # deferred, follow_up=false) audio.end must not warm-quiet the
+                    # device — keep it listening so the barge-in reply can play.
+                    session._user_barged_in = True
+                elif isinstance(frame, UserStartedSpeakingFrame):
                     # Server VAD detected speech onset. Tell the device a turn is
                     # underway so it holds off its active-idle taper — otherwise it
                     # can fall into warm-quiet mid-utterance (before STT/LLM emits
@@ -575,6 +590,9 @@ class RealtimeSession:
         # over the bot works again (the strict barge-in VAD profile, applied just
         # below, rejects the residual echo while letting real speech through).
         self._awaiting_reply = False
+        # A new reply is being spoken, so any pending barge-in override is resolved
+        # — later ends should honour their real follow_up again.
+        self._user_barged_in = False
         self._cancel_drain_timer()
         self._apply_vad_profile()
 
@@ -641,6 +659,16 @@ class RealtimeSession:
                     break
                 self._bot_stop_credits -= 1
             self._pending_ends.popleft()
+            # A barge-in just cut this turn short: the bot-stop that released this
+            # end was the interruption, not a natural reply end, and a new user
+            # turn is already underway. Emitting follow_up=false now would warm-
+            # quiet the device (pausing its media) right as the barge-in reply is
+            # about to arrive, dropping it. Keep it listening; the new turn's own
+            # end carries the real follow_up. One-shot: consume the flag so a later
+            # genuine end still warm-quiets normally.
+            if self._user_barged_in and not follow_up:
+                follow_up = True
+                self._user_barged_in = False
             await self._send_audio_end(follow_up)
 
     async def _send_audio_end(self, follow_up: bool) -> None:
