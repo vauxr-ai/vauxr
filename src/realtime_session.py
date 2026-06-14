@@ -137,6 +137,15 @@ class RealtimeSession:
         # dropping it. While set, _drain_ends keeps the device listening instead of
         # warm-quiet; cleared once the barge-in turn's reply starts speaking.
         self._user_barged_in = False
+        # True between a real turn-level user-turn start and its transcript. Wyoming
+        # is a SegmentedSTTService: it transcribes every raw-VAD segment, even ones
+        # the turn controller never promotes to a turn (suppressed echo blips, or
+        # speech during bot playback that the strict barge-in profile rejects).
+        # Relaying those orphaned transcripts drove the device into PROCESSING
+        # waiting on a reply that never came (the turn was never routed to
+        # OpenClaw) — stuck PROCESSING + "ignored". Only relay a transcript to the
+        # device when a turn-level UserStartedSpeaking actually opened a turn.
+        self._turn_active = False
         # VAD profile swapping: a snappy idle profile so quiet speech is heard,
         # and a stricter barge-in profile applied while the bot speaks so the
         # device's residual echo doesn't self-interrupt the reply. Populated when
@@ -393,6 +402,9 @@ class RealtimeSession:
                     # can fall into warm-quiet mid-utterance (before STT/LLM emits
                     # the transcript) and mishandle the late reply.
                     log.info("realtime[%s]: VAD speech START", session.device_id)
+                    # A real turn-level start opened a turn — its transcript may now
+                    # be relayed to the device.
+                    session._turn_active = True
                     session._touch_activity()
                     await _send_json(
                         _device_ws(session.device_id), {"type": "speech.start"}
@@ -400,19 +412,31 @@ class RealtimeSession:
                 elif isinstance(frame, UserStoppedSpeakingFrame):
                     log.info("realtime[%s]: VAD speech STOP", session.device_id)
                 elif isinstance(frame, TranscriptionFrame) and frame.text and frame.text.strip():
-                    log.info(
-                        "realtime[%s]: transcript %r", session.device_id, frame.text.strip()
-                    )
-                    session._touch_activity()
-                    # A real user turn is now headed for the LLM. Open the
-                    # PROCESSING window: until the bot starts speaking, suppress
-                    # new user-turn starts so a residual-echo blip can't trip an
-                    # interruption that cancels this pending reply.
-                    session._awaiting_reply = True
-                    await _send_json(
-                        _device_ws(session.device_id),
-                        {"type": "transcript", "text": frame.text.strip()},
-                    )
+                    text = frame.text.strip()
+                    log.info("realtime[%s]: transcript %r", session.device_id, text)
+                    # Orphaned transcript: Wyoming transcribed a raw-VAD segment the
+                    # turn controller never promoted to a turn (no turn-level start).
+                    # Relaying it would strand the device in PROCESSING for a reply
+                    # that is never routed. Log it (diagnostic) but don't relay.
+                    if not session._turn_active:
+                        log.info(
+                            "realtime[%s]: dropping orphaned transcript "
+                            "(no active turn): %r",
+                            session.device_id,
+                            text,
+                        )
+                    else:
+                        session._turn_active = False  # one transcript per turn
+                        session._touch_activity()
+                        # A real user turn is headed for the LLM. Open the PROCESSING
+                        # window: until the bot starts speaking, suppress new
+                        # user-turn starts so a residual-echo blip can't trip an
+                        # interruption that cancels this pending reply.
+                        session._awaiting_reply = True
+                        await _send_json(
+                            _device_ws(session.device_id),
+                            {"type": "transcript", "text": text},
+                        )
                 elif isinstance(frame, BotStartedSpeakingFrame):
                     session._on_bot_started_speaking()
                     await _send_json(
@@ -579,6 +603,7 @@ class RealtimeSession:
         # already cleared this; clearing here covers empty/cancelled turns that
         # never produced bot audio so the device isn't left unable to be heard.)
         self._awaiting_reply = False
+        self._turn_active = False
         self._pending_ends.append((follow_up, has_audio))
         if has_audio and self._bot_speaking == 0:
             self._schedule_drain_timer()
