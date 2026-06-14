@@ -120,6 +120,15 @@ class RealtimeSession:
         self._drain_timer: asyncio.Task | None = None
         # True once we've relayed a terminal audio.end for an abnormal teardown.
         self._ended_notified = False
+        # True from the moment a real user transcript is in flight until the reply
+        # starts speaking (or the turn ends with no reply). Marks the PROCESSING
+        # window — after the user stops, before the bot speaks — during which
+        # SuppressibleVADUserTurnStartStrategy ignores new user-turn starts so a
+        # residual-echo/noise blip can't broadcast an interruption that cancels
+        # the in-flight LLM turn (which would drop a real reply: the device hangs
+        # in PROCESSING, then its watchdog tapers to warm-quiet). Barge-in resumes
+        # the instant the bot speaks, when this clears.
+        self._awaiting_reply = False
         # VAD profile swapping: a snappy idle profile so quiet speech is heard,
         # and a stricter barge-in profile applied while the bot speaks so the
         # device's residual echo doesn't self-interrupt the reply. Populated when
@@ -164,11 +173,13 @@ class RealtimeSession:
         from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
         from pipecat.transports.base_transport import TransportParams
         from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
-        from pipecat.turns.user_start import VADUserTurnStartStrategy
         from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
         from realtime_llm import ChannelLLMService
-        from realtime_turn import VADStopUserTurnStopStrategy
+        from realtime_turn import (
+            SuppressibleVADUserTurnStartStrategy,
+            VADStopUserTurnStopStrategy,
+        )
         from pipecat.services.tts_service import TextAggregationMode
 
         from device_settings import get_segmentation
@@ -237,7 +248,15 @@ class RealtimeSession:
             user_params=LLMUserAggregatorParams(
                 vad_analyzer=self._vad_analyzer,
                 user_turn_strategies=UserTurnStrategies(
-                    start=[VADUserTurnStartStrategy()],
+                    # Suppress new user-turn starts (and the interruption they
+                    # broadcast) while a reply is pending but the bot hasn't begun
+                    # speaking — stops residual echo from cancelling a real reply.
+                    # Barge-in resumes the moment the bot speaks.
+                    start=[
+                        SuppressibleVADUserTurnStartStrategy(
+                            is_suppressed=lambda: self._awaiting_reply
+                        )
+                    ],
                     stop=[VADStopUserTurnStopStrategy()],
                 ),
             ),
@@ -370,6 +389,11 @@ class RealtimeSession:
                         "realtime[%s]: transcript %r", session.device_id, frame.text.strip()
                     )
                     session._touch_activity()
+                    # A real user turn is now headed for the LLM. Open the
+                    # PROCESSING window: until the bot starts speaking, suppress
+                    # new user-turn starts so a residual-echo blip can't trip an
+                    # interruption that cancels this pending reply.
+                    session._awaiting_reply = True
                     await _send_json(
                         _device_ws(session.device_id),
                         {"type": "transcript", "text": frame.text.strip()},
@@ -510,6 +534,10 @@ class RealtimeSession:
 
         log.info("realtime[%s]: seeding cold->warm turn: %r", self.device_id, text)
         self._touch_activity()
+        # Same PROCESSING-window protection as warm turns (see _ControlTap):
+        # suppress new user-turn starts until this seeded reply begins speaking so
+        # echo can't cancel it.
+        self._awaiting_reply = True
         await _send_json(_device_ws(self.device_id), {"type": "transcript", "text": text})
         self._context.add_message({"role": "user", "content": text})
         if self._task is not None:
@@ -531,6 +559,11 @@ class RealtimeSession:
         # lull. (Genuine spoken replies keep their resolved follow_up.)
         if not has_audio:
             follow_up = True
+        # Turn is resolved — close the PROCESSING window so the user can start a
+        # new turn again. (For replies that do speak, _on_bot_started_speaking has
+        # already cleared this; clearing here covers empty/cancelled turns that
+        # never produced bot audio so the device isn't left unable to be heard.)
+        self._awaiting_reply = False
         self._pending_ends.append((follow_up, has_audio))
         if has_audio and self._bot_speaking == 0:
             self._schedule_drain_timer()
@@ -538,6 +571,10 @@ class RealtimeSession:
 
     def _on_bot_started_speaking(self) -> None:
         self._bot_speaking += 1
+        # Reply is now playing — close the PROCESSING window so genuine barge-in
+        # over the bot works again (the strict barge-in VAD profile, applied just
+        # below, rejects the residual echo while letting real speech through).
+        self._awaiting_reply = False
         self._cancel_drain_timer()
         self._apply_vad_profile()
 
@@ -557,6 +594,10 @@ class RealtimeSession:
         that Wyoming TTS produces (one BotStarted/Stopped pair per sentence), so
         we don't thrash set_params() back to the snappy profile mid-reply and let
         echo slip through. Restored to the idle profile once the reply drains.
+
+        The pre-speech PROCESSING window is handled separately: new user turns
+        are suppressed there entirely (see SuppressibleVADUserTurnStartStrategy),
+        so the VAD profile doesn't need to change until the bot speaks.
         """
         if self._vad_analyzer is None:
             return
