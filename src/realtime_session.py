@@ -135,7 +135,8 @@ class RealtimeSession:
         # what finishes it, so that deferred end would warm-quiet the device (which
         # pauses its media) exactly as the new turn's reply is about to play —
         # dropping it. While set, _drain_ends keeps the device listening instead of
-        # warm-quiet; cleared once the barge-in turn's reply starts speaking.
+        # warm-quiet; consumed (one-shot) when that interrupted turn's deferred end
+        # drains — NOT when the new reply starts speaking, which races ahead of it.
         self._user_barged_in = False
         # True between a real turn-level user-turn start and its transcript. Wyoming
         # is a SegmentedSTTService: it transcribes every raw-VAD segment, even ones
@@ -615,9 +616,13 @@ class RealtimeSession:
         # over the bot works again (the strict barge-in VAD profile, applied just
         # below, rejects the residual echo while letting real speech through).
         self._awaiting_reply = False
-        # A new reply is being spoken, so any pending barge-in override is resolved
-        # — later ends should honour their real follow_up again.
-        self._user_barged_in = False
+        # NB: do NOT clear _user_barged_in here. The barge-in override protects the
+        # *interrupted* turn's deferred end, which drains later (it waits for a
+        # bot-stop credit + debounce) — usually after this new reply has already
+        # started speaking. Clearing it now would strand that deferred follow_up=
+        # false end and warm-quiet the device mid-reply. The flag is one-shot and is
+        # consumed by _drain_ends on the first end to drain after the barge-in (that
+        # end is the interrupted turn's, since _pending_ends is FIFO in turn order).
         self._cancel_drain_timer()
         self._apply_vad_profile()
 
@@ -684,16 +689,18 @@ class RealtimeSession:
                     break
                 self._bot_stop_credits -= 1
             self._pending_ends.popleft()
-            # A barge-in just cut this turn short: the bot-stop that released this
-            # end was the interruption, not a natural reply end, and a new user
-            # turn is already underway. Emitting follow_up=false now would warm-
-            # quiet the device (pausing its media) right as the barge-in reply is
-            # about to arrive, dropping it. Keep it listening; the new turn's own
-            # end carries the real follow_up. One-shot: consume the flag so a later
-            # genuine end still warm-quiets normally.
-            if self._user_barged_in and not follow_up:
-                follow_up = True
+            # A barge-in cut a turn short: this end (the FIFO front) is the
+            # interrupted turn's, so its bot-stop was the interruption, not a
+            # natural reply end, and a new user turn is already underway. Emitting
+            # follow_up=false now would warm-quiet the device (pausing its media)
+            # right as the barge-in reply is about to arrive, dropping it. Keep it
+            # listening; the new turn's own end carries the real follow_up. One-shot:
+            # consume the flag on this first post-barge-in end (regardless of its
+            # follow_up) so later genuine ends warm-quiet normally.
+            if self._user_barged_in:
                 self._user_barged_in = False
+                if not follow_up:
+                    follow_up = True
             await self._send_audio_end(follow_up)
 
     async def _send_audio_end(self, follow_up: bool) -> None:
