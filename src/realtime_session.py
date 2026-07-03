@@ -224,6 +224,7 @@ class RealtimeSession:
             device_id=self.device_id,
             channel_server=self._channel_server,
             on_turn_complete=self._on_turn_complete,
+            on_turn_skipped=self._on_turn_skipped,
         )
 
         vad = get_realtime_vad(self.device_id)
@@ -609,6 +610,20 @@ class RealtimeSession:
         if has_audio and self._bot_speaking == 0:
             self._schedule_drain_timer()
         await self._drain_ends()
+
+    def _on_turn_skipped(self) -> None:
+        """A promoted turn was skipped (empty/duplicate transcript, VAD re-finalize).
+
+        It produced no bot speech and never calls _on_turn_complete, so it never
+        clears _turn_active on its own. If a real turn-level start opened it (set
+        _turn_active), leaving the flag stuck true lets a later *orphaned* Wyoming
+        segment — one the turn controller never promoted — match the stale flag and
+        relay a ghost transcript, stranding the device in a phantom PROCESSING turn.
+        Drop the relay gate here. (A genuine next turn re-sets it on its own
+        UserStartedSpeakingFrame, so this can't swallow a real transcript.)
+        """
+        self._turn_active = False
+        self._touch_activity()
 
     def _on_bot_started_speaking(self) -> None:
         self._bot_speaking += 1

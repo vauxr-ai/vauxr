@@ -46,6 +46,11 @@ _RESPONSE_TIMEOUT_S = 300.0
 
 # Callback: (follow_up, reply_text) -> awaitable | None, fired after each turn.
 TurnCompleteCb = Callable[[bool, str], Any]
+# Callback: () -> awaitable | None, fired when a promoted turn is skipped (empty
+# transcript, VAD re-finalize, duplicate). No bot speech results, so it is NOT a
+# turn_complete — but the session still needs to know so it can drop its
+# transcript-relay gate (otherwise the gate stays stale-open, see _emit_empty_response).
+TurnSkippedCb = Callable[[], Any]
 
 
 def _latest_user_text(context: Any) -> str:
@@ -89,12 +94,14 @@ class ChannelLLMService(LLMService):
         device_id: str,
         channel_server: ChannelServer,
         on_turn_complete: TurnCompleteCb | None = None,
+        on_turn_skipped: TurnSkippedCb | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._device_id = device_id
         self._channel_server = channel_server
         self._on_turn_complete = on_turn_complete
+        self._on_turn_skipped = on_turn_skipped
         # User-message count at the last turn we routed. VADStopUserTurnStopStrategy
         # can finalize a turn on its silence fallback without a new transcript; in
         # that case the count is unchanged and we skip re-sending the prior
@@ -262,10 +269,14 @@ class ChannelLLMService(LLMService):
         Returning without them can leave the aggregator stuck mid-response and
         stall subsequent WebRTC turns. We deliberately do NOT call
         on_turn_complete: a skipped turn has no bot speech, so emitting audio.end
-        would drop the user out of the realtime session on a spurious trigger.
+        would drop the user out of the realtime session on a spurious trigger. We
+        do fire on_turn_skipped so the session can clear its transcript-relay gate,
+        which a skipped turn would otherwise leave stuck open.
         """
         await self.push_frame(LLMFullResponseStartFrame())
         await self.push_frame(LLMFullResponseEndFrame())
+        if self._on_turn_skipped:
+            await self._maybe_await(self._on_turn_skipped())
 
     @staticmethod
     async def _maybe_await(value: Any) -> None:
