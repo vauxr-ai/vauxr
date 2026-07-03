@@ -38,7 +38,11 @@ from pipeline import (
     strip_follow_up_tag_inline,
 )
 
-_RESPONSE_TIMEOUT_S = 120.0
+# Anti-hang backstop for awaiting the channel reply. This is NOT a latency
+# budget — a slow local model (tens of seconds, even minutes) is fine and must
+# not be cut off. Matches the device's 5-min response backstop; it only fires if
+# the channel/OpenClaw goes fully silent so the turn can't hang forever.
+_RESPONSE_TIMEOUT_S = 300.0
 
 # Callback: (follow_up, reply_text) -> awaitable | None, fired after each turn.
 TurnCompleteCb = Callable[[bool, str], Any]
