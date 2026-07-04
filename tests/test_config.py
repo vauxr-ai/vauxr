@@ -42,7 +42,7 @@ def test_load_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert c.piper.voice == "en_US-libritts_r-medium"
     assert c.ws.port == 8765
     assert c.http.port == 8080
-    assert c.streaming_tts.idle_pause_ms == 400
+    assert c.streaming_tts.idle_pause_ms == 1000
     assert c.log_level == "info"
 
 
