@@ -15,7 +15,7 @@ def test_segmentation_defaults_preserved() -> None:
     seg = get_segmentation("dev-A")
     assert seg.idle is True
     assert seg.sentence is False
-    assert seg.idle_pause_ms == 400
+    assert seg.idle_pause_ms == 1000
 
 
 def test_taper_defaults() -> None:

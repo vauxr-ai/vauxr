@@ -35,7 +35,11 @@ log = logging.getLogger("vauxr.pipeline")
 
 _FOLLOW_UP_TAG = "[[follow_up]]"
 _FOLLOW_UP_RE = re.compile(r"\s*\[\[follow_up\]\]\s*")
-_CHANNEL_RESPONSE_TIMEOUT_S = 120.0
+# Anti-hang backstop for awaiting the channel reply (WS turn-based path). NOT a
+# latency budget — a slow local model (tens of seconds, even minutes) is fine
+# and must not be cut off. Matches the device's 5-min response backstop and the
+# realtime path; only fires if the channel/OpenClaw goes fully silent.
+_CHANNEL_RESPONSE_TIMEOUT_S = 300.0
 _ERROR_FALLBACK_TEXT = "Sorry, I couldn't reach the backend. Please try again later."
 
 

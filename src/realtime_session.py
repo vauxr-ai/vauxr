@@ -14,10 +14,13 @@ Live follow-up turns use WebRTC audio -> VAD -> STT as normal.
 
 from __future__ import annotations
 
+import array
 import asyncio
 import json
 import logging
+import os
 import time
+import wave
 from collections import deque
 from typing import Any
 
@@ -25,7 +28,7 @@ from aiohttp import web
 
 import device_registry as registry
 from config import get_config
-from device_settings import get_realtime_vad, get_taper
+from device_settings import get_realtime_vad, get_realtime_vad_barge_in, get_taper
 from pipeline import strip_follow_up_tag
 
 log = logging.getLogger("vauxr.realtime")
@@ -117,6 +120,42 @@ class RealtimeSession:
         self._drain_timer: asyncio.Task | None = None
         # True once we've relayed a terminal audio.end for an abnormal teardown.
         self._ended_notified = False
+        # True from the moment a real user transcript is in flight until the reply
+        # starts speaking (or the turn ends with no reply). Marks the PROCESSING
+        # window — after the user stops, before the bot speaks — during which
+        # SuppressibleVADUserTurnStartStrategy ignores new user-turn starts so a
+        # residual-echo/noise blip can't broadcast an interruption that cancels
+        # the in-flight LLM turn (which would drop a real reply: the device hangs
+        # in PROCESSING, then its watchdog tapers to warm-quiet). Barge-in resumes
+        # the instant the bot speaks, when this clears.
+        self._awaiting_reply = False
+        # Set when the user barges in over the bot (an InterruptionFrame). The
+        # interrupted turn may have already completed with follow_up=false and had
+        # its audio.end *deferred* until the bot finished speaking; the barge-in is
+        # what finishes it, so that deferred end would warm-quiet the device (which
+        # pauses its media) exactly as the new turn's reply is about to play —
+        # dropping it. While set, _drain_ends keeps the device listening instead of
+        # warm-quiet; consumed (one-shot) when that interrupted turn's deferred end
+        # drains — NOT when the new reply starts speaking, which races ahead of it.
+        self._user_barged_in = False
+        # True between a real turn-level user-turn start and its transcript. Wyoming
+        # is a SegmentedSTTService: it transcribes every raw-VAD segment, even ones
+        # the turn controller never promotes to a turn (suppressed echo blips, or
+        # speech during bot playback that the strict barge-in profile rejects).
+        # Relaying those orphaned transcripts drove the device into PROCESSING
+        # waiting on a reply that never came (the turn was never routed to
+        # OpenClaw) — stuck PROCESSING + "ignored". Only relay a transcript to the
+        # device when a turn-level UserStartedSpeaking actually opened a turn.
+        self._turn_active = False
+        # VAD profile swapping: a snappy idle profile so quiet speech is heard,
+        # and a stricter barge-in profile applied while the bot speaks so the
+        # device's residual echo doesn't self-interrupt the reply. Populated when
+        # the pipeline is built; _vad_active_params tracks which is live to avoid
+        # redundant set_params() churn across inter-sentence gaps.
+        self._vad_analyzer: Any = None
+        self._vad_normal_params: Any = None
+        self._vad_barge_in_params: Any = None
+        self._vad_active_params: Any = None
 
     @property
     def is_closed(self) -> bool:
@@ -136,8 +175,11 @@ class RealtimeSession:
             BotStartedSpeakingFrame,
             BotStoppedSpeakingFrame,
             Frame,
+            InputAudioRawFrame,
+            InterruptionFrame,
             TranscriptionFrame,
             UserStartedSpeakingFrame,
+            UserStoppedSpeakingFrame,
         )
         from pipecat.pipeline.pipeline import Pipeline
         from pipecat.pipeline.runner import PipelineRunner
@@ -150,11 +192,13 @@ class RealtimeSession:
         from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
         from pipecat.transports.base_transport import TransportParams
         from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
-        from pipecat.turns.user_start import VADUserTurnStartStrategy
         from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
         from realtime_llm import ChannelLLMService
-        from realtime_turn import VADStopUserTurnStopStrategy
+        from realtime_turn import (
+            SuppressibleVADUserTurnStartStrategy,
+            VADStopUserTurnStopStrategy,
+        )
         from pipecat.services.tts_service import TextAggregationMode
 
         from device_settings import get_segmentation
@@ -180,9 +224,41 @@ class RealtimeSession:
             device_id=self.device_id,
             channel_server=self._channel_server,
             on_turn_complete=self._on_turn_complete,
+            on_turn_skipped=self._on_turn_skipped,
         )
 
         vad = get_realtime_vad(self.device_id)
+        vad_bi = get_realtime_vad_barge_in(self.device_id)
+        log.info(
+            "realtime[%s]: VAD idle confidence=%.2f start_secs=%.2f "
+            "stop_secs=%.2f min_volume=%.2f | barge-in confidence=%.2f "
+            "start_secs=%.2f stop_secs=%.2f min_volume=%.2f",
+            self.device_id,
+            vad.confidence,
+            vad.start_secs,
+            vad.stop_secs,
+            vad.min_volume,
+            vad_bi.confidence,
+            vad_bi.start_secs,
+            vad_bi.stop_secs,
+            vad_bi.min_volume,
+        )
+        # Keep handles to both profiles + the analyzer so _apply_vad_profile()
+        # can swap them as the bot starts/stops speaking.
+        self._vad_normal_params = VADParams(
+            confidence=vad.confidence,
+            start_secs=vad.start_secs,
+            stop_secs=vad.stop_secs,
+            min_volume=vad.min_volume,
+        )
+        self._vad_barge_in_params = VADParams(
+            confidence=vad_bi.confidence,
+            start_secs=vad_bi.start_secs,
+            stop_secs=vad_bi.stop_secs,
+            min_volume=vad_bi.min_volume,
+        )
+        self._vad_active_params = self._vad_normal_params
+        self._vad_analyzer = SileroVADAnalyzer(params=self._vad_normal_params)
         context = LLMContext()
         for msg in get_manager().context_messages(self.device_id):
             context.add_message(msg)
@@ -190,16 +266,17 @@ class RealtimeSession:
         user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
             context,
             user_params=LLMUserAggregatorParams(
-                vad_analyzer=SileroVADAnalyzer(
-                    params=VADParams(
-                        confidence=vad.confidence,
-                        start_secs=vad.start_secs,
-                        stop_secs=vad.stop_secs,
-                        min_volume=vad.min_volume,
-                    )
-                ),
+                vad_analyzer=self._vad_analyzer,
                 user_turn_strategies=UserTurnStrategies(
-                    start=[VADUserTurnStartStrategy()],
+                    # Suppress new user-turn starts (and the interruption they
+                    # broadcast) while a reply is pending but the bot hasn't begun
+                    # speaking — stops residual echo from cancelling a real reply.
+                    # Barge-in resumes the moment the bot speaks.
+                    start=[
+                        SuppressibleVADUserTurnStartStrategy(
+                            is_suppressed=lambda: self._awaiting_reply
+                        )
+                    ],
                     stop=[VADStopUserTurnStopStrategy()],
                 ),
             ),
@@ -207,26 +284,161 @@ class RealtimeSession:
 
         session = self
 
+        class _AudioMeter(FrameProcessor):
+            """Log inbound WebRTC audio level ~1×/s so VAD min_volume can be tuned.
+
+            Shows whether the device's mic audio is reaching the server at all and
+            how loud it is (peak normalized 0..1, directly comparable to the Silero
+            ``min_volume`` gate). Purely diagnostic — passes frames through.
+
+            If ``VAUXR_RECORD_DIR`` is set, also writes the decoded inbound PCM to
+            a per-session WAV in that directory so the exact audio Silero/Whisper
+            see can be played back and inspected for static/clipping/level.
+            """
+
+            def __init__(self) -> None:
+                super().__init__()
+                self._peak = 0
+                self._frames = 0
+                self._t0 = time.monotonic()
+                self._rec_dir = os.getenv("VAUXR_RECORD_DIR") or None
+                self._wav: wave.Wave_write | None = None
+                self._wav_path: str | None = None
+
+            def _ensure_wav(self, frame: InputAudioRawFrame) -> None:
+                if self._wav is not None or not self._rec_dir:
+                    return
+                try:
+                    os.makedirs(self._rec_dir, exist_ok=True)
+                    ts = time.strftime("%Y%m%d-%H%M%S")
+                    safe_id = "".join(
+                        c if (c.isalnum() or c in "-_") else "_"
+                        for c in session.device_id
+                    )
+                    self._wav_path = os.path.join(
+                        self._rec_dir, f"{safe_id}-{ts}.wav"
+                    )
+                    w = wave.open(self._wav_path, "wb")
+                    w.setnchannels(frame.num_channels or 1)
+                    w.setsampwidth(2)  # InputAudioRawFrame is 16-bit PCM
+                    w.setframerate(frame.sample_rate or 16000)
+                    self._wav = w
+                    log.info(
+                        "realtime[%s]: recording inbound audio -> %s",
+                        session.device_id,
+                        self._wav_path,
+                    )
+                except Exception as exc:  # never let recording break the pipeline
+                    log.warning(
+                        "realtime[%s]: audio recording disabled (%s)",
+                        session.device_id,
+                        exc,
+                    )
+                    self._rec_dir = None
+                    self._wav = None
+
+            def _close_wav(self) -> None:
+                if self._wav is None:
+                    return
+                try:
+                    self._wav.close()
+                    log.info(
+                        "realtime[%s]: saved inbound audio recording %s",
+                        session.device_id,
+                        self._wav_path,
+                    )
+                except Exception:
+                    pass
+                finally:
+                    self._wav = None
+
+            async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+                await super().process_frame(frame, direction)
+                if isinstance(frame, InputAudioRawFrame) and frame.audio:
+                    if self._rec_dir:
+                        self._ensure_wav(frame)
+                        if self._wav is not None:
+                            try:
+                                self._wav.writeframes(frame.audio)
+                            except Exception:
+                                self._close_wav()
+                                self._rec_dir = None
+                    samples = array.array("h")
+                    samples.frombytes(frame.audio)
+                    if samples:
+                        peak = max(abs(max(samples)), abs(min(samples)))
+                        self._peak = max(self._peak, peak)
+                    self._frames += 1
+                    now = time.monotonic()
+                    if now - self._t0 >= 1.0:
+                        log.info(
+                            "realtime[%s]: audio in — %d frames, peak=%d (~%.2f)",
+                            session.device_id,
+                            self._frames,
+                            self._peak,
+                            self._peak / 32768.0,
+                        )
+                        self._peak = 0
+                        self._frames = 0
+                        self._t0 = now
+                await self.push_frame(frame, direction)
+
+            async def cleanup(self) -> None:
+                await super().cleanup()
+                self._close_wav()
+
         class _ControlTap(FrameProcessor):
             """Relay transcript + bot-speaking events to the device WS."""
 
             async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
                 await super().process_frame(frame, direction)
-                if isinstance(frame, UserStartedSpeakingFrame):
+                if isinstance(frame, InterruptionFrame):
+                    # User barged in over the bot. Whatever turn was speaking is
+                    # being cut short by a *new* user turn, so its (possibly
+                    # deferred, follow_up=false) audio.end must not warm-quiet the
+                    # device — keep it listening so the barge-in reply can play.
+                    session._user_barged_in = True
+                elif isinstance(frame, UserStartedSpeakingFrame):
                     # Server VAD detected speech onset. Tell the device a turn is
                     # underway so it holds off its active-idle taper — otherwise it
                     # can fall into warm-quiet mid-utterance (before STT/LLM emits
                     # the transcript) and mishandle the late reply.
+                    log.info("realtime[%s]: VAD speech START", session.device_id)
+                    # A real turn-level start opened a turn — its transcript may now
+                    # be relayed to the device.
+                    session._turn_active = True
                     session._touch_activity()
                     await _send_json(
                         _device_ws(session.device_id), {"type": "speech.start"}
                     )
+                elif isinstance(frame, UserStoppedSpeakingFrame):
+                    log.info("realtime[%s]: VAD speech STOP", session.device_id)
                 elif isinstance(frame, TranscriptionFrame) and frame.text and frame.text.strip():
-                    session._touch_activity()
-                    await _send_json(
-                        _device_ws(session.device_id),
-                        {"type": "transcript", "text": frame.text.strip()},
-                    )
+                    text = frame.text.strip()
+                    log.info("realtime[%s]: transcript %r", session.device_id, text)
+                    # Orphaned transcript: Wyoming transcribed a raw-VAD segment the
+                    # turn controller never promoted to a turn (no turn-level start).
+                    # Relaying it would strand the device in PROCESSING for a reply
+                    # that is never routed. Log it (diagnostic) but don't relay.
+                    if not session._turn_active:
+                        log.info(
+                            "realtime[%s]: dropping orphaned transcript "
+                            "(no active turn): %r",
+                            session.device_id,
+                            text,
+                        )
+                    else:
+                        session._turn_active = False  # one transcript per turn
+                        session._touch_activity()
+                        # A real user turn is headed for the LLM. Open the PROCESSING
+                        # window: until the bot starts speaking, suppress new
+                        # user-turn starts so a residual-echo blip can't trip an
+                        # interruption that cancels this pending reply.
+                        session._awaiting_reply = True
+                        await _send_json(
+                            _device_ws(session.device_id),
+                            {"type": "transcript", "text": text},
+                        )
                 elif isinstance(frame, BotStartedSpeakingFrame):
                     session._on_bot_started_speaking()
                     await _send_json(
@@ -239,6 +451,7 @@ class RealtimeSession:
         pipeline = Pipeline(
             [
                 transport.input(),
+                _AudioMeter(),
                 stt,
                 _ControlTap(),
                 user_aggregator,
@@ -362,6 +575,10 @@ class RealtimeSession:
 
         log.info("realtime[%s]: seeding cold->warm turn: %r", self.device_id, text)
         self._touch_activity()
+        # Same PROCESSING-window protection as warm turns (see _ControlTap):
+        # suppress new user-turn starts until this seeded reply begins speaking so
+        # echo can't cancel it.
+        self._awaiting_reply = True
         await _send_json(_device_ws(self.device_id), {"type": "transcript", "text": text})
         self._context.add_message({"role": "user", "content": text})
         if self._task is not None:
@@ -374,20 +591,84 @@ class RealtimeSession:
         get_manager().record_turn(self.device_id, user_text, reply)
 
         has_audio = bool(reply and reply.strip())
+        # An empty reply at this point means the turn was interrupted/cancelled
+        # (the user talked over it and is mid-utterance) or the channel dropped
+        # the response — NOT a deliberate conversation end. Tearing the device
+        # down to warm-quiet (follow_up=False) on that strands a real reply and
+        # forces a re-wake. Release it back to listening instead so the user can
+        # simply keep talking. The device's own idle taper still handles a true
+        # lull. (Genuine spoken replies keep their resolved follow_up.)
+        if not has_audio:
+            follow_up = True
+        # Turn is resolved — close the PROCESSING window so the user can start a
+        # new turn again. (For replies that do speak, _on_bot_started_speaking has
+        # already cleared this; clearing here covers empty/cancelled turns that
+        # never produced bot audio so the device isn't left unable to be heard.)
+        self._awaiting_reply = False
+        self._turn_active = False
         self._pending_ends.append((follow_up, has_audio))
         if has_audio and self._bot_speaking == 0:
             self._schedule_drain_timer()
         await self._drain_ends()
 
+    def _on_turn_skipped(self) -> None:
+        """A promoted turn was skipped (empty/duplicate transcript, VAD re-finalize).
+
+        It produced no bot speech and never calls _on_turn_complete, so it never
+        clears _turn_active on its own. If a real turn-level start opened it (set
+        _turn_active), leaving the flag stuck true lets a later *orphaned* Wyoming
+        segment — one the turn controller never promoted — match the stale flag and
+        relay a ghost transcript, stranding the device in a phantom PROCESSING turn.
+        Drop the relay gate here. (A genuine next turn re-sets it on its own
+        UserStartedSpeakingFrame, so this can't swallow a real transcript.)
+        """
+        self._turn_active = False
+        self._touch_activity()
+
     def _on_bot_started_speaking(self) -> None:
         self._bot_speaking += 1
+        # Reply is now playing — close the PROCESSING window so genuine barge-in
+        # over the bot works again (the strict barge-in VAD profile, applied just
+        # below, rejects the residual echo while letting real speech through).
+        self._awaiting_reply = False
+        # NB: do NOT clear _user_barged_in here. The barge-in override protects the
+        # *interrupted* turn's deferred end, which drains later (it waits for a
+        # bot-stop credit + debounce) — usually after this new reply has already
+        # started speaking. Clearing it now would strand that deferred follow_up=
+        # false end and warm-quiet the device mid-reply. The flag is one-shot and is
+        # consumed by _drain_ends on the first end to drain after the barge-in (that
+        # end is the interrupted turn's, since _pending_ends is FIFO in turn order).
         self._cancel_drain_timer()
+        self._apply_vad_profile()
 
     def _on_bot_stopped_speaking(self) -> None:
         if self._bot_speaking > 0:
             self._bot_speaking -= 1
         if self._bot_speaking == 0:
             self._schedule_drain_timer()
+        self._apply_vad_profile()
+
+    def _apply_vad_profile(self) -> None:
+        """Swap the live VAD profile based on whether the bot is speaking.
+
+        A reply is considered "in progress" while any bot-speaking frame is
+        active *or* the post-reply drain timer is pending — the latter keeps the
+        stricter barge-in profile latched across the brief inter-sentence gaps
+        that Wyoming TTS produces (one BotStarted/Stopped pair per sentence), so
+        we don't thrash set_params() back to the snappy profile mid-reply and let
+        echo slip through. Restored to the idle profile once the reply drains.
+
+        The pre-speech PROCESSING window is handled separately: new user turns
+        are suppressed there entirely (see SuppressibleVADUserTurnStartStrategy),
+        so the VAD profile doesn't need to change until the bot speaks.
+        """
+        if self._vad_analyzer is None:
+            return
+        bot_active = self._bot_speaking > 0 or self._drain_timer is not None
+        desired = self._vad_barge_in_params if bot_active else self._vad_normal_params
+        if desired is not self._vad_active_params:
+            self._vad_active_params = desired
+            self._vad_analyzer.set_params(desired)
 
     def _schedule_drain_timer(self) -> None:
         self._cancel_drain_timer()
@@ -404,6 +685,9 @@ class RealtimeSession:
         except asyncio.CancelledError:
             return
         self._drain_timer = None
+        # Reply has drained (no bot frames + debounce elapsed) — drop back to the
+        # snappy idle VAD so the next quiet utterance is heard.
+        self._apply_vad_profile()
         if self._closed or self._bot_speaking != 0:
             return
         if not any(has_audio for _, has_audio in self._pending_ends):
@@ -420,6 +704,18 @@ class RealtimeSession:
                     break
                 self._bot_stop_credits -= 1
             self._pending_ends.popleft()
+            # A barge-in cut a turn short: this end (the FIFO front) is the
+            # interrupted turn's, so its bot-stop was the interruption, not a
+            # natural reply end, and a new user turn is already underway. Emitting
+            # follow_up=false now would warm-quiet the device (pausing its media)
+            # right as the barge-in reply is about to arrive, dropping it. Keep it
+            # listening; the new turn's own end carries the real follow_up. One-shot:
+            # consume the flag on this first post-barge-in end (regardless of its
+            # follow_up) so later genuine ends warm-quiet normally.
+            if self._user_barged_in:
+                self._user_barged_in = False
+                if not follow_up:
+                    follow_up = True
             await self._send_audio_end(follow_up)
 
     async def _send_audio_end(self, follow_up: bool) -> None:

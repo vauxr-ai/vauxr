@@ -14,7 +14,7 @@ from typing import Any
 
 # Default idle-pause window. Mirrors the WS ``streaming_tts.idle_pause_ms`` default
 # so realtime and WS feel the same out of the box.
-_DEFAULT_IDLE_PAUSE_MS = 400
+_DEFAULT_IDLE_PAUSE_MS = 1000
 
 # Warm-idle taper timers handed to the device in the hello realtime policy.
 # T_idle1: Active open-mic with no new turn -> Warm-quiet (pause mic, keep peer).
@@ -24,10 +24,35 @@ _DEFAULT_T_IDLE2_MS = 180_000
 
 # Server-side Silero VAD defaults (Pipecat realtime path). Shared with the
 # device via hello so firmware-side tuning stays aligned where applicable.
-_DEFAULT_VAD_CONFIDENCE = 0.85
+_DEFAULT_VAD_CONFIDENCE = 0.6
 _DEFAULT_VAD_START_SECS = 0.4
-_DEFAULT_VAD_STOP_SECS = 0.6
-_DEFAULT_VAD_MIN_VOLUME = 0.8
+# stop_secs is the silence-after-speech that ends a turn. At 0.6 a normal
+# mid-sentence breath/pause ended the turn early, splitting one utterance into
+# several transcripts that fired overlapping channel turns (which then cancelled
+# each other and dropped Nova's real reply). 1.0 coalesces a single utterance
+# into one turn. Onset (start_secs) is unchanged, so barge-in stays responsive.
+_DEFAULT_VAD_STOP_SECS = 1.0
+# This device's post-AEC speech arrives quietly (peak ~0.15, room noise ~0.05),
+# so even a 0.2 floor clipped normal-volume utterances. Keep min_volume just
+# above the noise floor and let Silero's neural confidence do the real
+# speech-vs-noise gating. (The stricter barge-in profile below still guards
+# against echo while the bot is speaking.)
+_DEFAULT_VAD_MIN_VOLUME = 0.1
+
+# Barge-in profile: applied only while the bot is speaking. The device's XMOS
+# AEC leaves a variable residual echo (peak ~0.2-0.65) that the snappy idle
+# profile above would mistake for the user and self-interrupt the reply. To keep
+# barge-in working without that false trigger we demand stronger, *sustained*
+# evidence during playback: a higher neural confidence, a louder volume floor
+# (above the typical echo residual), and a longer onset so intermittent echo
+# blips that track the bot's phonemes don't latch. A user genuinely talking over
+# the bot clears all three. Restored to the idle profile once the reply drains.
+_BARGE_IN_VAD_CONFIDENCE = 0.8
+_BARGE_IN_VAD_START_SECS = 0.5
+# Same anti-fragmentation reasoning as the idle profile: hold the turn open
+# through brief pauses so a barge-in utterance stays a single turn.
+_BARGE_IN_VAD_STOP_SECS = 1.0
+_BARGE_IN_VAD_MIN_VOLUME = 0.4
 
 
 @dataclass(frozen=True)
@@ -74,6 +99,8 @@ class RealtimeDeviceSettings:
     segmentation: SegmentationSettings
     taper: TaperSettings
     vad: RealtimeVadSettings
+    # Stricter VAD swapped in while the bot is speaking; see _BARGE_IN_VAD_*.
+    vad_barge_in: RealtimeVadSettings
 
 
 _DEFAULT_SEGMENTATION = SegmentationSettings(
@@ -94,10 +121,18 @@ _DEFAULT_VAD = RealtimeVadSettings(
     min_volume=_DEFAULT_VAD_MIN_VOLUME,
 )
 
+_DEFAULT_VAD_BARGE_IN = RealtimeVadSettings(
+    confidence=_BARGE_IN_VAD_CONFIDENCE,
+    start_secs=_BARGE_IN_VAD_START_SECS,
+    stop_secs=_BARGE_IN_VAD_STOP_SECS,
+    min_volume=_BARGE_IN_VAD_MIN_VOLUME,
+)
+
 _DEFAULT_REALTIME = RealtimeDeviceSettings(
     segmentation=_DEFAULT_SEGMENTATION,
     taper=_DEFAULT_TAPER,
     vad=_DEFAULT_VAD,
+    vad_barge_in=_DEFAULT_VAD_BARGE_IN,
 )
 
 
@@ -116,8 +151,13 @@ def get_taper(device_id: str) -> TaperSettings:
 
 
 def get_realtime_vad(device_id: str) -> RealtimeVadSettings:
-    """Resolve server-side Silero VAD params for a device."""
+    """Resolve server-side Silero VAD params for a device (idle profile)."""
     return get_realtime_settings(device_id).vad
+
+
+def get_realtime_vad_barge_in(device_id: str) -> RealtimeVadSettings:
+    """Resolve the stricter VAD profile used while the bot is speaking."""
+    return get_realtime_settings(device_id).vad_barge_in
 
 
 def get_realtime_settings(device_id: str) -> RealtimeDeviceSettings:
