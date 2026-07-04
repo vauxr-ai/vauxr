@@ -113,7 +113,7 @@ def load_config() -> Config:
         ws=PortConfig(port=int(_optional("WS_PORT", "8765"))),
         http=PortConfig(port=int(_optional("HTTP_PORT", "8080"))),
         streaming_tts=StreamingTtsConfig(
-            idle_pause_ms=int(_optional("STREAMING_TTS_IDLE_PAUSE_MS", "400")),
+            idle_pause_ms=int(_optional("STREAMING_TTS_IDLE_PAUSE_MS", "1000")),
         ),
         realtime=RealtimeConfig(
             enabled=_optional("REALTIME_ENABLED", "0").lower() in ("1", "true", "yes"),

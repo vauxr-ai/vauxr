@@ -14,7 +14,7 @@ from typing import Any
 
 # Default idle-pause window. Mirrors the WS ``streaming_tts.idle_pause_ms`` default
 # so realtime and WS feel the same out of the box.
-_DEFAULT_IDLE_PAUSE_MS = 400
+_DEFAULT_IDLE_PAUSE_MS = 1000
 
 # Warm-idle taper timers handed to the device in the hello realtime policy.
 # T_idle1: Active open-mic with no new turn -> Warm-quiet (pause mic, keep peer).
