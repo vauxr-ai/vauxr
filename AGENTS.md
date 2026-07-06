@@ -2,10 +2,8 @@
 
 ## Cursor Cloud specific instructions
 
-### Stack reality check
-- This repo is a **Python 3.12** project (aiohttp), despite `CLAUDE.md` describing a
-  Node/TypeScript server — that doc is stale (it predates the `2.0.0a0` Python rewrite).
-  Trust `pyproject.toml`, `Dockerfile`, and `src/*.py`.
+### Environment notes
+- This repo is a **Python 3.12** project (aiohttp); see `CLAUDE.md` for the module map.
 - The base VM has `python3` (no `python` alias) and no `python3-venv`, so dependencies are
   installed into system Python with `pip --break-system-packages` (handled by the update
   script). Use `python3`, not `python`.
