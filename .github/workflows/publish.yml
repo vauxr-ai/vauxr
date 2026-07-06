@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Long-lived branches only. Feature/fix branches get CI via pull_request, so
+  # scoping push to main/develop avoids the duplicate push+pull_request run on
+  # every PR commit (a branch that's both in this filter and an open PR fires both).
   push:
-    branches: [main, develop, "feat/**", "fix/**"]
+    branches: [main, develop]
   pull_request:
   release:
     types: [published]
