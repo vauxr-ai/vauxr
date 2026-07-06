@@ -21,6 +21,7 @@ from channel_server import ChannelServer
 from config import get_config
 from http_server import attach_http_routes, cors_middleware, serve_static
 from openclaw_client import OpenClawClient
+from device_settings import realtime_policy_extras
 from pipeline import run_voice_turn
 from protocol import encode_text_message, parse_text_message
 
@@ -39,6 +40,10 @@ class ConnectionCtx:
     device_id: str | None = None
     audio_chunks: list[bytes] = field(default_factory=list)
     output_sample_rate: int | None = None
+    # Realtime (WebRTC) hybrid: armed on realtime.start, cleared on
+    # realtime.media_ready (device has switched mic to the WebRTC track).
+    realtime: bool = False
+    realtime_media: bool = False
 
 
 @dataclass
@@ -71,17 +76,92 @@ async def handle_text(
         return
 
     msg_type = msg["type"]
-    if msg_type == "voice.start":
-        await _voice_start(state, ws, ctx, msg)
+    if msg_type == "hello":
+        await _hello(ws, msg)
+    elif msg_type == "voice.start":
+        # Turn-based capture doesn't apply mid-realtime: running it on the same WS
+        # would clobber the channel response listener and force registry state to
+        # idle while WebRTC is still up. (A device using realtime won't send this;
+        # this is a guard against a stale/confused client.)
+        if ctx.realtime:
+            log.warning("ignoring voice.start during realtime session: %s", ctx.device_id)
+        else:
+            await _voice_start(state, ws, ctx, msg)
     elif msg_type == "voice.end":
-        await _voice_end(state, ws, ctx)
+        if ctx.realtime:
+            await _realtime_or_voice_end(state, ws, ctx, msg)
+        else:
+            await _voice_end(state, ws, ctx)
     elif msg_type == "abort":
-        _voice_abort(ctx)
+        # In a realtime/WebRTC session the turn-based abort_event is irrelevant;
+        # tear the Pipecat session down (same as realtime.stop) so abort actually
+        # stops the bot and returns the device to idle.
+        if ctx.realtime:
+            await _realtime_stop(ctx)
+        else:
+            _voice_abort(ctx)
+    elif msg_type == "realtime.start":
+        await _realtime_start(state, ws, ctx, msg)
+    elif msg_type == "realtime.media_ready":
+        _realtime_media_ready(ctx)
+    elif msg_type == "realtime.stop":
+        await _realtime_stop(ctx)
     else:
         await send_json(
             ws,
             {"type": "error", "code": "UNKNOWN_MESSAGE", "message": f"Unknown type: {msg_type}"},
         )
+
+
+async def _hello(ws: web.WebSocketResponse, msg: dict[str, Any]) -> None:
+    """Boot-time handshake: device advertises capabilities, server returns policy.
+
+    The device is intentionally dumb — whether realtime is enabled, which
+    transport to use, and the WebRTC endpoints are all decided here (server-side)
+    from config gated by the device's advertised caps.
+    """
+    token = msg.get("token")
+    if not isinstance(token, str) or not validate_token(token).ok:
+        await send_json(ws, {"type": "error", "code": "UNAUTHORIZED", "message": "Invalid token"})
+        await ws.close()
+        return
+
+    caps = msg.get("caps")
+    caps_list = [c for c in caps if isinstance(c, str)] if isinstance(caps, list) else []
+    rt = get_config().realtime
+    # WebRTC needs an absolute, device-reachable offer URL and reliable ICE host
+    # munging (esp32 mode). Without REALTIME_HOST the offer_url is relative and
+    # ICE is unreliable, so fall back to ws rather than advertise a broken policy.
+    webrtc_ok = rt.enabled and "webrtc" in caps_list and bool(rt.host)
+    if rt.enabled and "webrtc" in caps_list and not rt.host:
+        log.warning(
+            "realtime: %s is webrtc-capable but REALTIME_HOST is unset — falling back to ws",
+            msg.get("device_id"),
+        )
+
+    device_id = msg.get("device_id")
+    device_key = device_id if isinstance(device_id, str) else ""
+
+    realtime_policy: dict[str, Any] = {"enabled": False, "transport": "ws"}
+    if webrtc_ok:
+        http_port = get_config().http.port
+        offer_url = f"http://{rt.host}:{http_port}{rt.offer_path}"
+        realtime_policy = {
+            "enabled": True,
+            "transport": "webrtc",
+            "offer_url": offer_url,
+            "stun": rt.stun_url,
+            **realtime_policy_extras(device_key),
+        }
+
+    log.info(
+        "hello from %s (platform=%s caps=%s) -> realtime=%s",
+        msg.get("device_id"),
+        msg.get("platform"),
+        caps_list,
+        realtime_policy.get("transport"),
+    )
+    await send_json(ws, {"type": "hello", "realtime": realtime_policy})
 
 
 async def _voice_start(
@@ -121,6 +201,46 @@ async def _voice_start(
 
     registry.set_state(device_id, "listening")
     await send_json(ws, {"type": "ready"})
+
+
+async def _realtime_or_voice_end(
+    state: AppState,
+    ws: web.WebSocketResponse,
+    ctx: ConnectionCtx,
+    msg: dict[str, Any],
+) -> None:
+    """Route voice.end during realtime: cold-wait turns branch; warm turns ignore."""
+    if ctx.device_id is None:
+        await send_json(
+            ws,
+            {"type": "error", "code": "INVALID_STATE", "message": "Not in listening state"},
+        )
+        return
+
+    from realtime_session import get_manager
+
+    manager = get_manager()
+    if not manager.is_cold_wait(ctx.device_id):
+        log.debug(
+            "ignoring voice.end during warm realtime session: %s",
+            ctx.device_id,
+        )
+        return
+
+    webrtc_connected = msg.get("webrtc_connected") is True
+    log.info(
+        "voice.end from %s during cold realtime wait (webrtc_connected=%s)",
+        ctx.device_id,
+        webrtc_connected,
+    )
+    await manager.handle_cold_voice_end(
+        ctx.device_id,
+        webrtc_connected=webrtc_connected,
+        ws=ws,
+        openclaw_client=state.openclaw_client,
+        channel_server=state.channel_server,
+        output_sample_rate=ctx.output_sample_rate,
+    )
 
 
 async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx) -> None:
@@ -178,12 +298,110 @@ def _voice_abort(ctx: ConnectionCtx) -> None:
         ctx.audio_chunks = []
 
 
+async def _realtime_start(
+    state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]
+) -> None:
+    """Wake fired: register the device and arm pre-roll capture while WebRTC connects."""
+    device_id = msg.get("device_id")
+    token = msg.get("token")
+    if not isinstance(device_id, str) or not isinstance(token, str):
+        await send_json(
+            ws, {"type": "error", "code": "INVALID_MESSAGE", "message": "Missing device_id or token"}
+        )
+        return
+    if not validate_token(token).ok:
+        await send_json(ws, {"type": "error", "code": "UNAUTHORIZED", "message": "Invalid token"})
+        await ws.close()
+        return
+
+    # Realtime must actually be reachable server-side before we arm pre-roll: the
+    # /api/offer endpoint only exists when REALTIME_ENABLED=1 and REALTIME_HOST is
+    # set (same gate _hello uses to advertise the webrtc policy). Arming otherwise
+    # would strand the device in "listening" with no WebRTC path — the first
+    # utterance gets buffered and never processed until it disconnects.
+    rt = get_config().realtime
+    if not (rt.enabled and rt.host):
+        await send_json(
+            ws,
+            {
+                "type": "error",
+                "code": "REALTIME_UNAVAILABLE",
+                "message": "Realtime transport is not enabled",
+            },
+        )
+        log.warning(
+            "realtime.start from %s rejected — realtime unavailable (enabled=%s host=%r)",
+            device_id,
+            rt.enabled,
+            bool(rt.host),
+        )
+        return
+
+    ctx.device_id = device_id
+    ctx.realtime = True
+    ctx.realtime_media = False
+    entry = registry.register(device_id, ws=ws, name=msg.get("name") or device_id)
+    output_rate = msg.get("output_sample_rate") or entry.config.get("output_sample_rate")
+    if isinstance(output_rate, (int, float)) and output_rate > 0:
+        ctx.output_sample_rate = int(output_rate)
+        entry.output_sample_rate = ctx.output_sample_rate
+
+    from realtime_session import get_manager
+
+    manager = get_manager()
+    if manager.has_live_session(device_id):
+        # Warm re-wake: peer + Pipecat session stay alive; Silero end-points the
+        # turn on the WebRTC track — no WS pre-roll or device-VAD marker.
+        registry.set_state(device_id, "listening")
+        await send_json(ws, {"type": "ready"})
+        log.info("realtime.start from %s — warm re-wake on live session", device_id)
+        return
+
+    # Cold wake: arm WS pre-roll and wait for the device-VAD voice.end marker.
+    # A stale session from a dropped peer must be cleared first.
+    await manager.stop(device_id)
+    manager.begin_preroll(device_id)
+    registry.set_state(device_id, "listening")
+    await send_json(ws, {"type": "ready"})
+    log.info("realtime.start from %s — cold pre-roll armed", device_id)
+
+
+def _realtime_media_ready(ctx: ConnectionCtx) -> None:
+    """Device switched its mic to the WebRTC track; stop forwarding WS pre-roll.
+
+    Transport-state only — turn processing is driven by the device-VAD
+    ``voice.end`` marker during cold wait, not by media_ready.
+    """
+    ctx.realtime_media = True
+    if ctx.device_id:
+        log.info("realtime.media_ready from %s", ctx.device_id)
+
+
+async def _realtime_stop(ctx: ConnectionCtx) -> None:
+    if not ctx.device_id:
+        return
+    from realtime_session import get_manager
+
+    await get_manager().stop(ctx.device_id)
+    ctx.realtime = False
+    ctx.realtime_media = False
+
+
 def handle_binary(ctx: ConnectionCtx, data: bytes) -> None:
     if len(data) < 3:
         return
     msg_type = data[0]
-    if msg_type == 0x01 and ctx.state == ConnectionState.LISTENING:
-        ctx.audio_chunks.append(bytes(data[3:]))
+    if msg_type != 0x01:
+        return
+    payload = bytes(data[3:])
+    if ctx.realtime and not ctx.realtime_media and ctx.device_id:
+        # Pre-roll: the wake-word command, captured before the WebRTC media path
+        # is up. Buffered server-side and seeded into the realtime pipeline.
+        from realtime_session import get_manager
+
+        get_manager().add_preroll(ctx.device_id, payload)
+    elif ctx.state == ConnectionState.LISTENING:
+        ctx.audio_chunks.append(payload)
 
 
 async def device_ws_handler(request: web.Request) -> web.WebSocketResponse:
@@ -204,6 +422,10 @@ async def device_ws_handler(request: web.Request) -> web.WebSocketResponse:
         log.info("device disconnected: %s", ctx.device_id or "unknown")
         if ctx.device_id:
             registry.abort_active_turn(ctx.device_id)
+            if ctx.realtime:
+                from realtime_session import get_manager
+
+                await get_manager().stop(ctx.device_id)
             registry.unregister(ctx.device_id)
     return ws
 
@@ -223,6 +445,13 @@ def make_app() -> web.Application:
     app.router.add_get(cfg.channel.ws_path, channel_ws_handler)
     app.router.add_get("/ws", device_ws_handler)
     attach_http_routes(app)
+    if cfg.realtime.enabled:
+        # Realtime WebRTC (Pipecat) runs in-process so it can reuse channel
+        # routing, the device registry, and the WS control channel. Imported
+        # lazily so the pipecat/aiortc dependency is only required when enabled.
+        from realtime_app import attach_realtime_routes
+
+        attach_realtime_routes(app, app[APP_STATE].channel_server)
     # Catch-all static fallback (serves the web-client at /). Must be last so
     # /ws, channel WS, and /api/* are matched first.
     app.router.add_get("/{tail:.*}", serve_static)

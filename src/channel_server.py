@@ -95,7 +95,14 @@ class ChannelServer:
     def add_response_listener(self, device_id: str, listener: DeviceResponseListener) -> None:
         self._response_listeners[device_id] = listener
 
-    def remove_response_listener(self, device_id: str) -> None:
+    def remove_response_listener(
+        self, device_id: str, listener: DeviceResponseListener | None = None
+    ) -> None:
+        # When a listener is given, only remove it if it's still the active one.
+        # This stops a finishing turn from tearing down a newer turn's listener
+        # that overwrote it (overlapping turns / barge-in).
+        if listener is not None and self._response_listeners.get(device_id) is not listener:
+            return
         self._response_listeners.pop(device_id, None)
 
     def get_response_listener(self, device_id: str) -> DeviceResponseListener | None:

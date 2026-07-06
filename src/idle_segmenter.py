@@ -1,8 +1,16 @@
 """Idle-pause text segmenter.
 
-Port of `src/idle-segmenter.ts`. Buffers incoming delta text and flushes it
-as a segment whenever the stream goes idle for `idle_pause_ms`. Pure timer
-logic — no I/O.
+Port of `src/idle-segmenter.ts`. Buffers incoming delta text and flushes it as a
+segment whenever the stream goes idle for ``idle_pause_ms`` — punctuation-
+independent and low latency. Shared by the WS pipeline and the realtime (WebRTC)
+path. Pure timer logic — no I/O.
+
+Sentence-level segmentation is intentionally *not* handled here (idle is this
+module's one job); the realtime path gets it from pipecat's built-in TTS
+sentence aggregation instead.
+
+Set ``idle_pause_ms<=0`` to disable the timer entirely: the buffer is then held
+until ``end()`` and flushed once (i.e. "speak the whole reply").
 """
 
 from __future__ import annotations
@@ -15,7 +23,7 @@ log = logging.getLogger("vauxr.segmenter")
 
 
 class IdleSegmenter:
-    """Flush a text buffer when no deltas have arrived for `idle_pause_ms`.
+    """Flush a text buffer when no deltas have arrived for ``idle_pause_ms``.
 
     Designed to be driven from an asyncio context — the timer runs on the
     currently active event loop.
@@ -30,6 +38,7 @@ class IdleSegmenter:
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self._idle_pause = idle_pause_ms / 1000.0
+        self._idle_enabled = idle_pause_ms > 0
         self._on_segment = on_segment
         self._on_end = on_end
         self._buffer = ""
@@ -46,7 +55,9 @@ class IdleSegmenter:
         if self._ended or not text:
             return
         self._buffer += text
-        self._arm_timer()
+        # With idle disabled the buffer just accumulates until end().
+        if self._idle_enabled:
+            self._arm_timer()
 
     def end(self) -> None:
         if self._ended:

@@ -129,3 +129,19 @@ async def test_delta_after_flush_re_arms_timer() -> None:
     await asyncio.sleep(0.10)
     assert segments == ["first", "second"]
     seg.abort()
+
+
+@pytest.mark.asyncio
+async def test_idle_disabled_buffers_until_end() -> None:
+    segments: list[str] = []
+    ends: list[str | None] = []
+    # Both strategies off — nothing flushes until end().
+    seg = IdleSegmenter(idle_pause_ms=0, on_segment=segments.append, on_end=ends.append)
+
+    seg.push("no punctuation here ")
+    seg.push("and still none")
+    await asyncio.sleep(0.1)
+    assert segments == []
+    seg.end()
+    assert segments == []
+    assert ends == ["no punctuation here and still none"]
