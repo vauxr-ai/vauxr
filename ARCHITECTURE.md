@@ -137,6 +137,8 @@ Frames are distinguished by type: if the first byte is `0x7B` (`{`), it's JSON. 
 { "type": "error", "code": "...", "message": "..." }
 ```
 
+`set_barge_in` is a **server-side** control command (`POST /api/devices/{id}/command` with `params.enabled`). It persists `barge_in` on the device config and is **not** forwarded to firmware — barge-in is enforced in the Pipecat session. Default is enabled. When disabled, new user turns are suppressed for the whole TTS window so residual echo cannot cut the reply short.
+
 ### Audio frames (binary)
 
 All audio is sent as raw binary WebSocket frames with a 3-byte header:

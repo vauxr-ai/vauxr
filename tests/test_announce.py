@@ -207,6 +207,42 @@ async def test_command_ota_forwards_url(client: TestClient) -> None:
     assert cmd == {"type": "device.control", "command": "ota", "params": {"url": url}}
 
 
+async def test_command_set_barge_in_persists_and_is_not_forwarded(client: TestClient) -> None:
+    ws = FakeWs()
+    registry.register("dev1", ws=ws)
+    res = await client.post(
+        "/api/devices/dev1/command",
+        headers=_auth(),
+        json={"command": "set_barge_in", "params": {"enabled": False}},
+    )
+    assert res.status == 200
+    body = await res.json()
+    assert body["ok"] is True
+    assert body["barge_in"] is False
+    assert registry.get_config_for("dev1")["barge_in"] is False
+    assert not any("device.control" in t for t in ws.text)
+
+
+async def test_command_set_barge_in_requires_enabled(client: TestClient) -> None:
+    registry.register("dev1", ws=FakeWs())
+    res = await client.post(
+        "/api/devices/dev1/command",
+        headers=_auth(),
+        json={"command": "set_barge_in"},
+    )
+    assert res.status == 400
+
+
+async def test_command_set_barge_in_rejects_non_bool(client: TestClient) -> None:
+    registry.register("dev1", ws=FakeWs())
+    res = await client.post(
+        "/api/devices/dev1/command",
+        headers=_auth(),
+        json={"command": "set_barge_in", "params": {"enabled": "no"}},
+    )
+    assert res.status == 400
+
+
 async def test_firmware_serves_bin(client: TestClient, tmp_path: Path) -> None:
     fw_dir = tmp_path / "firmware"
     fw_dir.mkdir()
@@ -243,6 +279,22 @@ async def test_patch_device_updates_config(client: TestClient) -> None:
     assert body["config"]["name"] == "Kitchen"
     assert body["config"]["voice"] is True
     assert body["config"]["follow_up_mode"] == "always"
+
+
+async def test_patch_device_barge_in(client: TestClient) -> None:
+    registry.register("dev1", ws=FakeWs())
+    res = await client.patch(
+        "/api/devices/dev1", headers=_auth(), json={"barge_in": False}
+    )
+    assert res.status == 200
+    body = await res.json()
+    assert body["config"]["barge_in"] is False
+
+
+async def test_patch_device_invalid_barge_in(client: TestClient) -> None:
+    registry.register("dev1", ws=FakeWs())
+    res = await client.patch("/api/devices/dev1", headers=_auth(), json={"barge_in": "off"})
+    assert res.status == 400
 
 
 async def test_patch_device_invalid_follow_up_mode(client: TestClient) -> None:
