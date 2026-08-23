@@ -29,6 +29,8 @@ class DeviceEntry:
     abort_event: asyncio.Event | None = None
     config: DeviceConfig = field(default_factory=dict)
     output_sample_rate: int | None = None
+    platform: str | None = None
+    fw_version: str | None = None
 
 
 _devices: dict[str, DeviceEntry] = {}
@@ -70,12 +72,16 @@ def register(device_id: str, ws: Any, name: str | None = None) -> DeviceEntry:
     abort_active_turn(device_id)
     _ensure_configs_loaded()
     cfg = _configs.get(device_id, {})
+    prev = _devices.get(device_id)
     entry = DeviceEntry(
         id=device_id,
-        name=name or cfg.get("name") or device_id,
+        name=name or cfg.get("name") or (prev.name if prev else None) or device_id,
         ws=ws,
         config=cfg,
     )
+    if prev is not None:
+        entry.platform = prev.platform
+        entry.fw_version = prev.fw_version
     _devices[device_id] = entry
     return entry
 
@@ -87,6 +93,19 @@ def unregister(device_id: str) -> None:
 
 def get(device_id: str) -> DeviceEntry | None:
     return _devices.get(device_id)
+
+
+def set_hello_info(
+    device_id: str, platform: str | None = None, fw_version: str | None = None
+) -> None:
+    """Stamp identity advertised in the boot-time hello frame."""
+    entry = _devices.get(device_id)
+    if entry is None:
+        return
+    if platform:
+        entry.platform = platform
+    if fw_version:
+        entry.fw_version = fw_version
 
 
 def get_all() -> list[DeviceEntry]:

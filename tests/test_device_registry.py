@@ -113,3 +113,12 @@ def test_register_aborts_prior_turn() -> None:
     # Re-register the same device id.
     reg.register("dev1", ws=object())
     assert ev.is_set()
+
+
+def test_register_preserves_hello_info() -> None:
+    reg.register("dev1", ws=object())
+    reg.set_hello_info("dev1", platform="satellite1", fw_version="abc123")
+    e2 = reg.register("dev1", ws=object(), name="Kitchen")
+    assert e2.platform == "satellite1"
+    assert e2.fw_version == "abc123"
+    assert e2.name == "Kitchen"

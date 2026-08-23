@@ -218,6 +218,26 @@ async def test_hello_realtime_policy_includes_taper_and_vad(client: TestClient) 
         assert "confidence" in policy["vad"]
 
 
+async def test_hello_registers_device_identity(client: TestClient) -> None:
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json(
+            {
+                "type": "hello",
+                "device_id": "dev1",
+                "token": "ws-test-token",
+                "platform": "satellite1",
+                "fw_version": "abc123-dirty",
+                "caps": ["ws", "webrtc", "ota"],
+            }
+        )
+        hello = await _recv_json(ws)
+        assert hello["type"] == "hello"
+        entry = dev_reg.get("dev1")
+        assert entry is not None
+        assert entry.platform == "satellite1"
+        assert entry.fw_version == "abc123-dirty"
+
+
 async def test_hello_ws_only_policy_has_no_extras(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

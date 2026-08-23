@@ -77,7 +77,7 @@ async def handle_text(
 
     msg_type = msg["type"]
     if msg_type == "hello":
-        await _hello(ws, msg)
+        await _hello(ws, ctx, msg)
     elif msg_type == "voice.start":
         # Turn-based capture doesn't apply mid-realtime: running it on the same WS
         # would clobber the channel response listener and force registry state to
@@ -113,7 +113,7 @@ async def handle_text(
         )
 
 
-async def _hello(ws: web.WebSocketResponse, msg: dict[str, Any]) -> None:
+async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]) -> None:
     """Boot-time handshake: device advertises capabilities, server returns policy.
 
     The device is intentionally dumb — whether realtime is enabled, which
@@ -141,6 +141,15 @@ async def _hello(ws: web.WebSocketResponse, msg: dict[str, Any]) -> None:
 
     device_id = msg.get("device_id")
     device_key = device_id if isinstance(device_id, str) else ""
+
+    # Register on hello so an idle device is visible/commandable (OTA, reboot)
+    # without waiting for the first voice turn.
+    if device_key:
+        ctx.device_id = device_key
+        registry.register(device_key, ws=ws)
+        platform = msg.get("platform") if isinstance(msg.get("platform"), str) else None
+        fw_version = msg.get("fw_version") if isinstance(msg.get("fw_version"), str) else None
+        registry.set_hello_info(device_key, platform=platform, fw_version=fw_version)
 
     realtime_policy: dict[str, Any] = {"enabled": False, "transport": "ws"}
     if webrtc_ok:

@@ -149,6 +149,60 @@ async def test_command_forwards_to_device(client: TestClient) -> None:
     assert cmd["params"] == {"level": 0.7}
 
 
+async def test_command_ota_requires_url(client: TestClient) -> None:
+    registry.register("dev1", ws=FakeWs())
+    res = await client.post(
+        "/api/devices/dev1/command", headers=_auth(), json={"command": "ota"}
+    )
+    assert res.status == 400
+    body = await res.json()
+    assert "url" in body["error"]
+
+
+async def test_command_ota_rejects_non_http_url(client: TestClient) -> None:
+    registry.register("dev1", ws=FakeWs())
+    res = await client.post(
+        "/api/devices/dev1/command",
+        headers=_auth(),
+        json={"command": "ota", "params": {"url": "ftp://x/fw.bin"}},
+    )
+    assert res.status == 400
+
+
+async def test_command_ota_forwards_url(client: TestClient) -> None:
+    ws = FakeWs()
+    registry.register("dev1", ws=ws)
+    url = "http://192.168.1.10:8080/firmware/satellite1.bin"
+    res = await client.post(
+        "/api/devices/dev1/command",
+        headers=_auth(),
+        json={"command": "ota", "params": {"url": url}},
+    )
+    assert res.status == 200
+    sent = [json.loads(t) for t in ws.text]
+    cmd = next(m for m in sent if m.get("type") == "device.control")
+    assert cmd == {"type": "device.control", "command": "ota", "params": {"url": url}}
+
+
+async def test_firmware_serves_bin(client: TestClient, tmp_path: Path) -> None:
+    fw_dir = tmp_path / "firmware"
+    fw_dir.mkdir()
+    (fw_dir / "satellite1.bin").write_bytes(b"ESPFW")
+    res = await client.get("/firmware/satellite1.bin")
+    assert res.status == 200
+    assert await res.read() == b"ESPFW"
+
+
+async def test_firmware_missing_is_404(client: TestClient) -> None:
+    res = await client.get("/firmware/missing.bin")
+    assert res.status == 404
+
+
+async def test_firmware_rejects_non_bin_name(client: TestClient) -> None:
+    res = await client.get("/firmware/secret.txt")
+    assert res.status == 404
+
+
 # --- PATCH /api/devices/{id} ---
 
 

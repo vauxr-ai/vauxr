@@ -392,6 +392,31 @@ describe("DevicesPanel", () => {
       });
     });
 
+    it("shows firmware URL for ota and sends params.url", async () => {
+      const user = userEvent.setup();
+      mockCommand.mockResolvedValue(undefined);
+      renderPanel();
+      await waitForDevices();
+      const items = within(screen.getByRole("list")).getAllByRole("listitem");
+      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+
+      const card = items[0];
+      const cmdSelect = within(card).getByLabelText(/command/i);
+      await user.selectOptions(cmdSelect, "ota");
+      expect(within(card).queryByLabelText(/volume/i)).not.toBeInTheDocument();
+      const urlInput = within(card).getByLabelText(/firmware url/i);
+      await user.type(urlInput, "http://nova.lan:8080/firmware/satellite1.bin");
+
+      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
+      await user.click(sendButtons[sendButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(mockCommand).toHaveBeenCalledWith("d1", "ota", {
+          url: "http://nova.lan:8080/firmware/satellite1.bin",
+        });
+      });
+    });
+
     it("shows inline error when command fails", async () => {
       const user = userEvent.setup();
       mockCommand.mockRejectedValue(new Error("Command failed"));
