@@ -47,6 +47,22 @@ def test_unregister_removes() -> None:
     assert reg.get("dev1") is None
 
 
+def test_unregister_ignores_stale_socket() -> None:
+    old_ws, new_ws = object(), object()
+    reg.register("dev1", ws=old_ws)
+    reg.register("dev1", ws=new_ws)
+    reg.unregister("dev1", ws=old_ws)
+    live = reg.get("dev1")
+    assert live is not None
+    assert live.ws is new_ws
+
+
+def test_unregister_without_ws_still_removes() -> None:
+    reg.register("dev1", ws=object())
+    reg.unregister("dev1")
+    assert reg.get("dev1") is None
+
+
 def test_set_state_updates_lastseen() -> None:
     e = reg.register("dev1", ws=object())
     prev = e.last_seen
@@ -113,3 +129,41 @@ def test_register_aborts_prior_turn() -> None:
     # Re-register the same device id.
     reg.register("dev1", ws=object())
     assert ev.is_set()
+
+
+def test_register_preserves_hello_info() -> None:
+    reg.register("dev1", ws=object())
+    reg.set_hello_info("dev1", platform="satellite1", fw_version="abc123")
+    e1 = reg.get("dev1")
+    assert e1 is not None
+    e1.output_sample_rate = 48000
+    e2 = reg.register("dev1", ws=object(), name="Kitchen")
+    assert e2.platform == "satellite1"
+    assert e2.fw_version == "abc123"
+    assert e2.output_sample_rate == 48000
+    assert e2.name == "Kitchen"
+
+
+def test_resolve_output_sample_rate_prefers_msg() -> None:
+    assert (
+        reg.resolve_output_sample_rate(
+            {"output_sample_rate": 24000},
+            config={"output_sample_rate": 16000},
+            platform="satellite1",
+        )
+        == 24000
+    )
+
+
+def test_resolve_output_sample_rate_falls_back_to_platform() -> None:
+    assert reg.resolve_output_sample_rate({}, platform="satellite1") == 48000
+    assert reg.resolve_output_sample_rate({}, platform="waveshare") == 16000
+    assert reg.resolve_output_sample_rate({}, platform="unknown") is None
+
+
+def test_apply_output_sample_rate_stamps_entry() -> None:
+    reg.register("dev1", ws=object())
+    assert reg.apply_output_sample_rate("dev1", {}, platform="satellite1") == 48000
+    e = reg.get("dev1")
+    assert e is not None
+    assert e.output_sample_rate == 48000

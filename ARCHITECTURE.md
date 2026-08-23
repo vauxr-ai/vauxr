@@ -131,7 +131,7 @@ Frames are distinguished by type: if the first byte is `0x7B` (`{`), it's JSON. 
 { "type": "audio.end", "follow_up": false }
 
 // Control command (from HTTP API or agent tool)
-{ "type": "device.control", "command": "set_volume" | "mute" | "unmute" | "reboot", "params": { ... } }
+{ "type": "device.control", "command": "set_volume" | "mute" | "unmute" | "reboot" | "ota", "params": { ... } }
 
 // Error
 { "type": "error", "code": "...", "message": "..." }

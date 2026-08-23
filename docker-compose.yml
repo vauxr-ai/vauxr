@@ -46,6 +46,7 @@ services:
       - vauxr-data:/data
       - ./certs/root.crt:/certs/root.crt:ro
       - ./recordings:/data/recordings
+      - ./firmware:/data/firmware
 
   whisper:
     image: rhasspy/wyoming-whisper
