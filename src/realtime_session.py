@@ -28,7 +28,12 @@ from aiohttp import web
 
 import device_registry as registry
 from config import get_config
-from device_settings import get_realtime_vad, get_realtime_vad_barge_in, get_taper
+from device_settings import (
+    get_realtime_barge_in,
+    get_realtime_vad,
+    get_realtime_vad_barge_in,
+    get_taper,
+)
 from pipeline import strip_follow_up_tag
 
 log = logging.getLogger("vauxr.realtime")
@@ -156,6 +161,7 @@ class RealtimeSession:
         self._vad_normal_params: Any = None
         self._vad_barge_in_params: Any = None
         self._vad_active_params: Any = None
+        self._barge_in = get_realtime_barge_in(device_id)
 
     @property
     def is_closed(self) -> bool:
@@ -231,13 +237,14 @@ class RealtimeSession:
         vad_bi = get_realtime_vad_barge_in(self.device_id)
         log.info(
             "realtime[%s]: VAD idle confidence=%.2f start_secs=%.2f "
-            "stop_secs=%.2f min_volume=%.2f | barge-in confidence=%.2f "
+            "stop_secs=%.2f min_volume=%.2f | barge-in enabled=%s confidence=%.2f "
             "start_secs=%.2f stop_secs=%.2f min_volume=%.2f",
             self.device_id,
             vad.confidence,
             vad.start_secs,
             vad.stop_secs,
             vad.min_volume,
+            self._barge_in,
             vad_bi.confidence,
             vad_bi.start_secs,
             vad_bi.stop_secs,
@@ -271,10 +278,13 @@ class RealtimeSession:
                     # Suppress new user-turn starts (and the interruption they
                     # broadcast) while a reply is pending but the bot hasn't begun
                     # speaking — stops residual echo from cancelling a real reply.
-                    # Barge-in resumes the moment the bot speaks.
+                    # Barge-in resumes the moment the bot speaks unless disabled.
                     start=[
                         SuppressibleVADUserTurnStartStrategy(
-                            is_suppressed=lambda: self._awaiting_reply
+                            is_suppressed=lambda: (
+                                self._awaiting_reply
+                                or (not self._barge_in and self._reply_active())
+                            )
                         )
                     ],
                     stop=[VADStopUserTurnStopStrategy()],
@@ -648,6 +658,10 @@ class RealtimeSession:
             self._schedule_drain_timer()
         self._apply_vad_profile()
 
+    def _reply_active(self) -> bool:
+        """True while the bot is speaking or the post-reply drain debounce is pending."""
+        return self._bot_speaking > 0 or self._drain_timer is not None
+
     def _apply_vad_profile(self) -> None:
         """Swap the live VAD profile based on whether the bot is speaking.
 
@@ -660,12 +674,14 @@ class RealtimeSession:
 
         The pre-speech PROCESSING window is handled separately: new user turns
         are suppressed there entirely (see SuppressibleVADUserTurnStartStrategy),
-        so the VAD profile doesn't need to change until the bot speaks.
+        so the VAD profile doesn't need to change until the bot speaks. When
+        barge-in is disabled, stay on the idle profile and suppress turn starts
+        for this whole window instead.
         """
         if self._vad_analyzer is None:
             return
-        bot_active = self._bot_speaking > 0 or self._drain_timer is not None
-        desired = self._vad_barge_in_params if bot_active else self._vad_normal_params
+        use_barge_in = self._barge_in and self._reply_active()
+        desired = self._vad_barge_in_params if use_barge_in else self._vad_normal_params
         if desired is not self._vad_active_params:
             self._vad_active_params = desired
             self._vad_analyzer.set_params(desired)

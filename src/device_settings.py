@@ -54,6 +54,10 @@ _BARGE_IN_VAD_START_SECS = 0.5
 _BARGE_IN_VAD_STOP_SECS = 1.0
 _BARGE_IN_VAD_MIN_VOLUME = 0.4
 
+# TEMP: residual echo still self-interrupts TTS. Flip back to True when AEC
+# is converging (see .cursor/rules/realtime-audio-recording.mdc).
+_BARGE_IN_ENABLED = False
+
 
 @dataclass(frozen=True)
 class SegmentationSettings:
@@ -101,6 +105,9 @@ class RealtimeDeviceSettings:
     vad: RealtimeVadSettings
     # Stricter VAD swapped in while the bot is speaking; see _BARGE_IN_VAD_*.
     vad_barge_in: RealtimeVadSettings
+    # When False, new user turns are suppressed for the whole bot-speaking
+    # window (not just PROCESSING), so echo cannot cancel TTS.
+    barge_in: bool
 
 
 _DEFAULT_SEGMENTATION = SegmentationSettings(
@@ -133,6 +140,7 @@ _DEFAULT_REALTIME = RealtimeDeviceSettings(
     taper=_DEFAULT_TAPER,
     vad=_DEFAULT_VAD,
     vad_barge_in=_DEFAULT_VAD_BARGE_IN,
+    barge_in=_BARGE_IN_ENABLED,
 )
 
 
@@ -158,6 +166,11 @@ def get_realtime_vad(device_id: str) -> RealtimeVadSettings:
 def get_realtime_vad_barge_in(device_id: str) -> RealtimeVadSettings:
     """Resolve the stricter VAD profile used while the bot is speaking."""
     return get_realtime_settings(device_id).vad_barge_in
+
+
+def get_realtime_barge_in(device_id: str) -> bool:
+    """Whether the user may interrupt the bot while it is speaking."""
+    return get_realtime_settings(device_id).barge_in
 
 
 def get_realtime_settings(device_id: str) -> RealtimeDeviceSettings:

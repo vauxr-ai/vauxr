@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from device_settings import (
+    get_realtime_barge_in,
     get_realtime_settings,
     get_realtime_vad,
     get_segmentation,
@@ -32,11 +33,17 @@ def test_vad_defaults() -> None:
     assert vad.min_volume >= 0
 
 
+def test_barge_in_disabled_temporarily() -> None:
+    assert get_realtime_barge_in("dev-A") is False
+    assert get_realtime_settings("dev-A").barge_in is False
+
+
 def test_realtime_settings_bundle_is_consistent() -> None:
     rt = get_realtime_settings("dev-A")
     assert rt.segmentation == get_segmentation("dev-A")
     assert rt.taper == get_taper("dev-A")
     assert rt.vad == get_realtime_vad("dev-A")
+    assert rt.barge_in == get_realtime_barge_in("dev-A")
 
 
 def test_realtime_policy_extras_shape() -> None:
