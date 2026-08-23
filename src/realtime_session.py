@@ -28,6 +28,7 @@ from aiohttp import web
 
 import device_registry as registry
 from config import get_config
+from device_config import barge_in_enabled
 from device_settings import get_realtime_vad, get_realtime_vad_barge_in, get_taper
 from pipeline import strip_follow_up_tag
 
@@ -231,13 +232,14 @@ class RealtimeSession:
         vad_bi = get_realtime_vad_barge_in(self.device_id)
         log.info(
             "realtime[%s]: VAD idle confidence=%.2f start_secs=%.2f "
-            "stop_secs=%.2f min_volume=%.2f | barge-in confidence=%.2f "
+            "stop_secs=%.2f min_volume=%.2f | barge-in enabled=%s confidence=%.2f "
             "start_secs=%.2f stop_secs=%.2f min_volume=%.2f",
             self.device_id,
             vad.confidence,
             vad.start_secs,
             vad.stop_secs,
             vad.min_volume,
+            self._barge_in_enabled(),
             vad_bi.confidence,
             vad_bi.start_secs,
             vad_bi.stop_secs,
@@ -271,10 +273,12 @@ class RealtimeSession:
                     # Suppress new user-turn starts (and the interruption they
                     # broadcast) while a reply is pending but the bot hasn't begun
                     # speaking — stops residual echo from cancelling a real reply.
-                    # Barge-in resumes the moment the bot speaks.
+                    # Barge-in resumes the moment the bot speaks unless this
+                    # device has barge_in disabled, in which case starts stay
+                    # suppressed for the whole reply (echo can't cut TTS short).
                     start=[
                         SuppressibleVADUserTurnStartStrategy(
-                            is_suppressed=lambda: self._awaiting_reply
+                            is_suppressed=self._turns_suppressed
                         )
                     ],
                     stop=[VADStopUserTurnStopStrategy()],
@@ -588,8 +592,26 @@ class RealtimeSession:
         leave ``_user_barged_in`` set through this turn's own TTS, and
         ``_drain_ends`` would flip a statement's follow_up=false to true.
         """
-        if self._bot_speaking > 0 or self._drain_timer is not None:
+        if self._reply_active():
             self._user_barged_in = True
+
+    def _barge_in_enabled(self) -> bool:
+        return barge_in_enabled(registry.get_config_for(self.device_id))
+
+    def _reply_active(self) -> bool:
+        """True while the bot is speaking or the post-reply drain debounce is pending."""
+        return self._bot_speaking > 0 or self._drain_timer is not None
+
+    def _turns_suppressed(self) -> bool:
+        """Whether new user-turn starts should be ignored.
+
+        Always suppress during PROCESSING (awaiting the reply). When barge-in is
+        disabled, also suppress for the whole bot-speaking / drain window so
+        residual echo cannot cancel TTS.
+        """
+        if self._awaiting_reply:
+            return True
+        return (not self._barge_in_enabled()) and self._reply_active()
 
     async def _on_turn_complete(self, follow_up: bool, reply: str) -> None:
         """Called when an LLM turn ends. Queue its audio.end in turn order."""
@@ -661,12 +683,14 @@ class RealtimeSession:
 
         The pre-speech PROCESSING window is handled separately: new user turns
         are suppressed there entirely (see SuppressibleVADUserTurnStartStrategy),
-        so the VAD profile doesn't need to change until the bot speaks.
+        so the VAD profile doesn't need to change until the bot speaks. When
+        barge_in is disabled for this device, stay on the idle profile and
+        suppress turn starts for the whole reply window instead.
         """
         if self._vad_analyzer is None:
             return
-        bot_active = self._bot_speaking > 0 or self._drain_timer is not None
-        desired = self._vad_barge_in_params if bot_active else self._vad_normal_params
+        use_barge_in = self._barge_in_enabled() and self._reply_active()
+        desired = self._vad_barge_in_params if use_barge_in else self._vad_normal_params
         if desired is not self._vad_active_params:
             self._vad_active_params = desired
             self._vad_analyzer.set_params(desired)
