@@ -73,26 +73,30 @@ def test_record_turn_collapses_consecutive_user_refinalize() -> None:
     assert log == [{"role": "user", "content": "partial final"}]
 
 
+class _FakeWs:
+    def __init__(self) -> None:
+        self.text: list[str] = []
+        self.closed = False
+
+    async def send_str(self, data: str) -> None:
+        self.text.append(data)
+
+
+def _audio_ends(ws: _FakeWs) -> list[dict[str, object]]:
+    return [json.loads(t) for t in ws.text if "audio.end" in t]
+
+
 @pytest.mark.asyncio
 async def test_empty_timeout_completion_does_not_force_follow_up() -> None:
     """Channel timeout completes with (False, ''); do not reopen the mic."""
-
-    class FakeWs:
-        def __init__(self) -> None:
-            self.text: list[str] = []
-            self.closed = False
-
-        async def send_str(self, data: str) -> None:
-            self.text.append(data)
-
     from realtime_session import RealtimeSession
 
-    ws = FakeWs()
+    ws = _FakeWs()
     dev_reg.register("dev-empty", ws=ws)
     try:
         session = RealtimeSession("dev-empty", channel_server=object())
         await session._on_turn_complete(False, "")
-        ends = [json.loads(t) for t in ws.text if "audio.end" in t]
+        ends = _audio_ends(ws)
         assert ends
         assert ends[-1]["type"] == "audio.end"
         assert ends[-1]["follow_up"] is False
@@ -101,6 +105,56 @@ async def test_empty_timeout_completion_does_not_force_follow_up() -> None:
         assert entry.state == "idle"
     finally:
         dev_reg.unregister("dev-empty")
+
+
+@pytest.mark.asyncio
+async def test_idle_interruption_does_not_force_follow_up() -> None:
+    """Pipecat interrupts on every user-turn start; that must not reopen the mic."""
+    from realtime_session import RealtimeSession
+
+    ws = _FakeWs()
+    dev_reg.register("dev-idle-int", ws=ws)
+    try:
+        session = RealtimeSession("dev-idle-int", channel_server=object())
+        session._on_interruption()
+        assert session._user_barged_in is False
+        session._bot_stop_credits = 1
+        await session._on_turn_complete(False, "Glad you like it! \U0001f5a4")
+        ends = _audio_ends(ws)
+        assert ends
+        assert ends[-1]["follow_up"] is False
+        entry = dev_reg.get("dev-idle-int")
+        assert entry is not None
+        assert entry.state == "idle"
+    finally:
+        session._cancel_drain_timer()
+        dev_reg.unregister("dev-idle-int")
+
+
+@pytest.mark.asyncio
+async def test_barge_in_during_reply_keeps_listening() -> None:
+    """A real cut-in over TTS still overrides a follow_up=false end."""
+    from realtime_session import RealtimeSession
+
+    ws = _FakeWs()
+    dev_reg.register("dev-barge-int", ws=ws)
+    try:
+        session = RealtimeSession("dev-barge-int", channel_server=object())
+        session._bot_speaking = 1
+        session._on_interruption()
+        assert session._user_barged_in is True
+        session._bot_speaking = 0
+        session._bot_stop_credits = 1
+        await session._on_turn_complete(False, "Glad you like it!")
+        ends = _audio_ends(ws)
+        assert ends
+        assert ends[-1]["follow_up"] is True
+        entry = dev_reg.get("dev-barge-int")
+        assert entry is not None
+        assert entry.state == "listening"
+    finally:
+        session._cancel_drain_timer()
+        dev_reg.unregister("dev-barge-int")
 
 
 def test_context_messages_is_a_copy() -> None:
