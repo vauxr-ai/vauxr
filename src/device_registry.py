@@ -17,6 +17,15 @@ from device_config import DeviceConfig, load_device_configs, save_device_configs
 
 ConnectionState = Literal["idle", "listening", "processing", "speaking", "offline"]
 
+# Native playback rates for known hardware. Announce/TTS used to learn the
+# sink rate from voice.start / realtime.start; hello now registers idle
+# devices so we must know it before the first turn. Firmware may also send
+# `output_sample_rate` on hello — that wins over this table.
+PLATFORM_OUTPUT_RATES: dict[str, int] = {
+    "satellite1": 48000,
+    "waveshare": 16000,
+}
+
 
 @dataclass
 class DeviceEntry:
@@ -82,6 +91,7 @@ def register(device_id: str, ws: Any, name: str | None = None) -> DeviceEntry:
     if prev is not None:
         entry.platform = prev.platform
         entry.fw_version = prev.fw_version
+        entry.output_sample_rate = prev.output_sample_rate
     _devices[device_id] = entry
     return entry
 
@@ -117,6 +127,42 @@ def set_hello_info(
         entry.platform = platform
     if fw_version:
         entry.fw_version = fw_version
+
+
+def resolve_output_sample_rate(
+    msg: dict[str, Any],
+    *,
+    config: DeviceConfig | None = None,
+    platform: str | None = None,
+) -> int | None:
+    """Playback rate from hello/voice.start, then persisted config, then platform."""
+    raw = msg.get("output_sample_rate") or msg.get("sample_rate")
+    if isinstance(raw, (int, float)) and raw > 0:
+        return int(raw)
+    if config:
+        cfg_rate = config.get("output_sample_rate")
+        if isinstance(cfg_rate, (int, float)) and cfg_rate > 0:
+            return int(cfg_rate)
+    if platform and platform in PLATFORM_OUTPUT_RATES:
+        return PLATFORM_OUTPUT_RATES[platform]
+    return None
+
+
+def apply_output_sample_rate(
+    device_id: str,
+    msg: dict[str, Any],
+    *,
+    platform: str | None = None,
+) -> int | None:
+    """Stamp ``DeviceEntry.output_sample_rate`` from a hello / start message."""
+    entry = _devices.get(device_id)
+    if entry is None:
+        return None
+    plat = platform if platform is not None else entry.platform
+    rate = resolve_output_sample_rate(msg, config=entry.config, platform=plat)
+    if rate is not None:
+        entry.output_sample_rate = rate
+    return rate
 
 
 def get_all() -> list[DeviceEntry]:

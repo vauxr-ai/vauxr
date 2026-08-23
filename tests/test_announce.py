@@ -112,6 +112,29 @@ async def test_announce_sends_audio_frames_and_end(client: TestClient) -> None:
     assert any(m.get("type") == "audio.end" for m in end_msgs)
 
 
+async def test_announce_passes_hello_output_sample_rate(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = FakeWs()
+    registry.register("dev1", ws=ws)
+    registry.set_hello_info("dev1", platform="satellite1")
+    registry.apply_output_sample_rate("dev1", {}, platform="satellite1")
+
+    seen: dict[str, Any] = {}
+
+    async def fake_synth(text: str, **k: Any):
+        seen["target_rate"] = k.get("target_rate")
+        yield b"\x00\x01" * 50
+
+    import http_server as hs
+
+    monkeypatch.setattr(hs, "synthesize", fake_synth)
+
+    res = await client.post("/api/devices/dev1/announce", headers=_auth(), json={"text": "hello"})
+    assert res.status == 200
+    assert seen["target_rate"] == 48000
+
+
 # --- device command ---
 
 

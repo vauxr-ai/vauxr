@@ -134,7 +134,36 @@ def test_register_aborts_prior_turn() -> None:
 def test_register_preserves_hello_info() -> None:
     reg.register("dev1", ws=object())
     reg.set_hello_info("dev1", platform="satellite1", fw_version="abc123")
+    e1 = reg.get("dev1")
+    assert e1 is not None
+    e1.output_sample_rate = 48000
     e2 = reg.register("dev1", ws=object(), name="Kitchen")
     assert e2.platform == "satellite1"
     assert e2.fw_version == "abc123"
+    assert e2.output_sample_rate == 48000
     assert e2.name == "Kitchen"
+
+
+def test_resolve_output_sample_rate_prefers_msg() -> None:
+    assert (
+        reg.resolve_output_sample_rate(
+            {"output_sample_rate": 24000},
+            config={"output_sample_rate": 16000},
+            platform="satellite1",
+        )
+        == 24000
+    )
+
+
+def test_resolve_output_sample_rate_falls_back_to_platform() -> None:
+    assert reg.resolve_output_sample_rate({}, platform="satellite1") == 48000
+    assert reg.resolve_output_sample_rate({}, platform="waveshare") == 16000
+    assert reg.resolve_output_sample_rate({}, platform="unknown") is None
+
+
+def test_apply_output_sample_rate_stamps_entry() -> None:
+    reg.register("dev1", ws=object())
+    assert reg.apply_output_sample_rate("dev1", {}, platform="satellite1") == 48000
+    e = reg.get("dev1")
+    assert e is not None
+    assert e.output_sample_rate == 48000
