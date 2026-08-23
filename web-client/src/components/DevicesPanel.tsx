@@ -17,6 +17,8 @@ interface ApiDeviceWithConfig {
   state: string;
   lastSeen: string;
   config: DeviceConfig;
+  platform?: string;
+  fw_version?: string;
 }
 
 const STATE_PILL: Record<string, string> = {
@@ -36,7 +38,7 @@ const STATE_DOT: Record<string, string> = {
 };
 
 const FOLLOW_UP_OPTIONS: FollowUpMode[] = ["auto", "always", "never"];
-const COMMANDS = ["set_volume", "mute", "unmute", "reboot"] as const;
+const COMMANDS = ["set_volume", "mute", "unmute", "reboot", "ota"] as const;
 
 interface SaveStatus {
   status: "saving" | "saved" | "error";
@@ -201,6 +203,7 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
                 saveStatus={saveStatus[d.id]}
                 api={api}
                 addLog={addLog}
+                httpBase={baseUrl}
               />
             ))}
           </ul>
@@ -218,6 +221,7 @@ interface DeviceCardProps {
   saveStatus?: SaveStatus;
   api: ReturnType<typeof useHttpApi>;
   addLog: (dir: LogEntry["dir"], text: string) => void;
+  httpBase: string;
 }
 
 function DeviceCard({
@@ -228,6 +232,7 @@ function DeviceCard({
   saveStatus,
   api,
   addLog,
+  httpBase,
 }: DeviceCardProps) {
   const pill = STATE_PILL[device.state] ?? STATE_PILL.offline;
   const dot = STATE_DOT[device.state] ?? STATE_DOT.offline;
@@ -251,7 +256,9 @@ function DeviceCard({
 
   const [ctlCommand, setCtlCommand] = useState<string>(COMMANDS[0]);
   const [ctlVolume, setCtlVolume] = useState("50");
+  const [ctlOtaUrl, setCtlOtaUrl] = useState("");
   const [ctlError, setCtlError] = useState("");
+  const otaPlaceholder = `${httpBase}/firmware/${device.platform || "satellite1"}.bin`;
 
   const handleAnnounce = async () => {
     setAnnError("");
@@ -270,7 +277,12 @@ function DeviceCard({
   const handleCommand = async () => {
     setCtlError("");
     try {
-      const params = ctlCommand === "set_volume" ? { volume: Number(ctlVolume) } : undefined;
+      const params =
+        ctlCommand === "set_volume"
+          ? { volume: Number(ctlVolume) }
+          : ctlCommand === "ota"
+            ? { url: ctlOtaUrl.trim() || otaPlaceholder }
+            : undefined;
       await api.command(device.id, ctlCommand, params);
       addLog("sys", `Command ${ctlCommand} sent to ${device.id}`);
     } catch (err) {
@@ -313,7 +325,10 @@ function DeviceCard({
             </span>
           </div>
           <div className="text-[11px] text-zinc-500">
-            {device.id} · last seen {formatLastSeen(device.lastSeen)}
+            {device.id}
+            {device.platform ? ` · ${device.platform}` : ""}
+            {device.fw_version ? ` · ${device.fw_version}` : ""}
+            {" · "}last seen {formatLastSeen(device.lastSeen)}
           </div>
         </div>
         <SaveBadge status={saveStatus} />
@@ -437,6 +452,18 @@ function DeviceCard({
                     className={inputClass + " w-24"}
                     value={ctlVolume}
                     onChange={(e) => setCtlVolume(e.target.value)}
+                  />
+                </label>
+              )}
+              {ctlCommand === "ota" && (
+                <label className={labelClass + " flex-1 min-w-[220px]"}>
+                  Firmware URL
+                  <input
+                    className={inputClass}
+                    value={ctlOtaUrl}
+                    onChange={(e) => setCtlOtaUrl(e.target.value)}
+                    placeholder={otaPlaceholder}
+                    aria-label="Firmware URL"
                   />
                 </label>
               )}

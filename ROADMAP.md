@@ -41,6 +41,7 @@ Features grouped by theme. No ordering assigned.
 - **Stop playback** — server sends a `device.stop` control frame to interrupt any currently playing audio (TTS or stream)
 - ~~**Push TTS / announce** — `POST /api/devices/{id}/announce` synthesizes text via Piper and streams as `0x03` push audio frames to device; enables cron jobs, heartbeats, and proactive agent alerts to speak through the device~~ ✅
 - ~~**Device control from OpenClaw** — `POST /api/devices/{id}/command` sends a `device.control` JSON frame (e.g. `set_volume`, `mute`, `reboot`); enables voice commands like "set the volume to 10" to actually change device state~~ ✅
+- **OTA firmware updates** — `device.control` `ota` with `params.url`; images served from `DATA_DIR/firmware/<platform>.bin`. Device-side dual-slot + rollback lives in vauxr-assistant.
 - **Device queries / telemetry** — bidirectional: server can request data from the device and await a response (e.g. "what's your battery level?"); device responds with a `device.response` frame; server surfaces the answer back to OpenClaw
 
 ### OpenClaw Channel Plugin (`vauxr-openclaw`)

@@ -218,6 +218,46 @@ async def test_hello_realtime_policy_includes_taper_and_vad(client: TestClient) 
         assert "confidence" in policy["vad"]
 
 
+async def test_hello_registers_device_identity(client: TestClient) -> None:
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json(
+            {
+                "type": "hello",
+                "device_id": "dev1",
+                "token": "ws-test-token",
+                "platform": "satellite1",
+                "fw_version": "abc123-dirty",
+                "caps": ["ws", "webrtc", "ota"],
+            }
+        )
+        hello = await _recv_json(ws)
+        assert hello["type"] == "hello"
+        entry = dev_reg.get("dev1")
+        assert entry is not None
+        assert entry.platform == "satellite1"
+        assert entry.fw_version == "abc123-dirty"
+        # Idle announce/TTS needs the sink rate before the first voice turn.
+        assert entry.output_sample_rate == 48000
+
+
+async def test_hello_output_sample_rate_overrides_platform(client: TestClient) -> None:
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json(
+            {
+                "type": "hello",
+                "device_id": "dev1",
+                "token": "ws-test-token",
+                "platform": "satellite1",
+                "output_sample_rate": 24000,
+                "caps": ["ws"],
+            }
+        )
+        await _recv_json(ws)
+        entry = dev_reg.get("dev1")
+        assert entry is not None
+        assert entry.output_sample_rate == 24000
+
+
 async def test_hello_ws_only_policy_has_no_extras(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
