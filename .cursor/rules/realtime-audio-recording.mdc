@@ -1,0 +1,44 @@
+---
+description: How to record and analyze inbound realtime audio, and deploy/tail vauxr on nova
+alwaysApply: true
+---
+
+# Realtime Audio Recording + nova Deploy
+
+## Record inbound audio (what Silero VAD / Whisper actually hear)
+- `_AudioMeter` in `src/realtime_session.py` writes decoded inbound WebRTC PCM to a
+  per-session WAV when `VAUXR_RECORD_DIR` is set. 16 kHz mono s16; one file per
+  session named `<device_id>-<YYYYMMDD-HHMMSS>.wav`. Only captures realtime
+  **follow-up** turns (the first/cold turn is batch-Whisper over WS-buffered PCM).
+- Compose already has `VAUXR_RECORD_DIR=${VAUXR_RECORD_DIR:-}` and a host bind-mount
+  `./recordings:/data/recordings`. To enable on nova set `VAUXR_RECORD_DIR=/data/recordings`
+  in `.env`. The dir must be writable by the container (runs uid 100): `chmod 777 recordings`.
+
+## Deploy to nova (code is BAKED into the image)
+`docker compose restart` does NOT pick up code changes — the Dockerfile copies source
+in. Always rebuild:
+```bash
+ssh lillian@nova 'cd ~/Repos/vauxr && git pull --ff-only origin <branch> && \
+  docker compose up -d --build vauxr'
+```
+Use `required_permissions: ["full_network"]` for ssh. Both repos and nova track the
+same feature branch (e.g. `fix/conversation-quality-fixes`); PRs target `develop`.
+
+## Pull + analyze recordings
+```bash
+scp lillian@nova:'~/Repos/vauxr/recordings/<file>.wav' /tmp/rec.wav
+```
+- `audioop` is gone in Python 3.13+. For levels use `wave` + `array` directly
+  (peak/RMS per second). For spectrograms make a venv and `pip install numpy
+  matplotlib scipy`; render waveform + `specgram`, then view the PNG.
+- Healthy signs: echo drops to ~0.01 once the XMOS AEC converges during bot speech
+  (no self-interruption); user speech transcribes even when quiet IF echo-free (SNR,
+  not raw level, is what matters).
+
+## Tail server logs
+```bash
+ssh lillian@nova 'cd ~/Repos/vauxr && docker compose logs --since 5m vauxr 2>&1 | \
+  grep -iE "VAD speech|interrupt|bot (started|stopped)|transcript|Generating TTS|warm|follow_up"'
+```
+- `broadcast_interruption` + `VAD speech START` during bot speech = echo tripping
+  barge-in. After bot stop = real/near-end speech.
