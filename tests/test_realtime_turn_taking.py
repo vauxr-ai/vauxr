@@ -73,6 +73,36 @@ def test_record_turn_collapses_consecutive_user_refinalize() -> None:
     assert log == [{"role": "user", "content": "partial final"}]
 
 
+@pytest.mark.asyncio
+async def test_empty_timeout_completion_does_not_force_follow_up() -> None:
+    """Channel timeout completes with (False, ''); do not reopen the mic."""
+
+    class FakeWs:
+        def __init__(self) -> None:
+            self.text: list[str] = []
+            self.closed = False
+
+        async def send_str(self, data: str) -> None:
+            self.text.append(data)
+
+    from realtime_session import RealtimeSession
+
+    ws = FakeWs()
+    dev_reg.register("dev-empty", ws=ws)
+    try:
+        session = RealtimeSession("dev-empty", channel_server=object())
+        await session._on_turn_complete(False, "")
+        ends = [json.loads(t) for t in ws.text if "audio.end" in t]
+        assert ends
+        assert ends[-1]["type"] == "audio.end"
+        assert ends[-1]["follow_up"] is False
+        entry = dev_reg.get("dev-empty")
+        assert entry is not None
+        assert entry.state == "idle"
+    finally:
+        dev_reg.unregister("dev-empty")
+
+
 def test_context_messages_is_a_copy() -> None:
     mgr = RealtimeManager()
     mgr.record_turn("dev", "u", "a")

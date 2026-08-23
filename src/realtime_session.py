@@ -591,15 +591,9 @@ class RealtimeSession:
         get_manager().record_turn(self.device_id, user_text, reply)
 
         has_audio = bool(reply and reply.strip())
-        # An empty reply at this point means the turn was interrupted/cancelled
-        # (the user talked over it and is mid-utterance) or the channel dropped
-        # the response — NOT a deliberate conversation end. Tearing the device
-        # down to warm-quiet (follow_up=False) on that strands a real reply and
-        # forces a re-wake. Release it back to listening instead so the user can
-        # simply keep talking. The device's own idle taper still handles a true
-        # lull. (Genuine spoken replies keep their resolved follow_up.)
-        if not has_audio:
-            follow_up = True
+        # Keep the resolver's follow_up. Channel timeout/error completes with
+        # (False, "") — forcing True here reopened the mic after a hung turn.
+        # Barge-in cut-short ends are handled separately in _drain_ends.
         # Turn is resolved — close the PROCESSING window so the user can start a
         # new turn again. (For replies that do speak, _on_bot_started_speaking has
         # already cleared this; clearing here covers empty/cancelled turns that
