@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from device_config import (
+    barge_in_enabled,
     device_config_path,
     load_device_configs,
     save_device_configs,
@@ -33,6 +34,7 @@ def test_round_trip_preserves_known_fields(tmp_path: Path) -> None:
             "voice": True,
             "follow_up_mode": "always",
             "output_sample_rate": 24000,
+            "barge_in": False,
         },
         "dev-B": {"name": "Office"},
     }
@@ -55,6 +57,25 @@ def test_invalid_follow_up_mode_defaults_to_auto(tmp_path: Path) -> None:
     )
     loaded = load_device_configs(str(tmp_path))
     assert loaded == {"dev": {"follow_up_mode": "auto"}}
+
+
+def test_invalid_barge_in_defaults_to_enabled(tmp_path: Path) -> None:
+    (tmp_path / "devices.json").write_text(json.dumps({"dev": {"barge_in": "nope"}}))
+    loaded = load_device_configs(str(tmp_path))
+    assert loaded == {"dev": {"barge_in": True}}
+
+
+def test_barge_in_false_preserved(tmp_path: Path) -> None:
+    (tmp_path / "devices.json").write_text(json.dumps({"dev": {"barge_in": False}}))
+    loaded = load_device_configs(str(tmp_path))
+    assert loaded == {"dev": {"barge_in": False}}
+
+
+def test_barge_in_enabled_defaults_true() -> None:
+    assert barge_in_enabled(None) is True
+    assert barge_in_enabled({}) is True
+    assert barge_in_enabled({"barge_in": True}) is True
+    assert barge_in_enabled({"barge_in": False}) is False
 
 
 def test_invalid_output_sample_rate_dropped(tmp_path: Path) -> None:

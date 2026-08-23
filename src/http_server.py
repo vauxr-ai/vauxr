@@ -31,7 +31,7 @@ log = logging.getLogger("vauxr.http")
 
 WEB_CLIENT_DIST = "web-client/dist"
 
-VALID_COMMANDS = frozenset({"set_volume", "mute", "unmute", "reboot", "ota"})
+VALID_COMMANDS = frozenset({"set_volume", "mute", "unmute", "reboot", "ota", "set_barge_in"})
 
 _FIRMWARE_NAME = re.compile(r"^[A-Za-z0-9._-]+\.bin$")
 
@@ -136,6 +136,10 @@ async def update_device(request: web.Request) -> web.Response:
                 {"error": "follow_up_mode must be 'auto' | 'always' | 'never'"}, status=400
             )
         patch["follow_up_mode"] = mode
+    if "barge_in" in body:
+        if not isinstance(body["barge_in"], bool):
+            return web.json_response({"error": "barge_in must be a boolean"}, status=400)
+        patch["barge_in"] = body["barge_in"]
 
     nxt = registry.update_config(device_id, patch)  # type: ignore[arg-type]
     if nxt.get("name"):
@@ -213,6 +217,15 @@ async def device_command(request: web.Request) -> web.Response:
         url = params["url"]
         if not url.startswith("http://") and not url.startswith("https://"):
             return web.json_response({"error": "ota url must be http:// or https://"}, status=400)
+    if cmd == "set_barge_in":
+        if not isinstance(params, dict) or "enabled" not in params:
+            return web.json_response({"error": "set_barge_in requires params.enabled"}, status=400)
+        enabled = params["enabled"]
+        if not isinstance(enabled, bool):
+            return web.json_response({"error": "params.enabled must be a boolean"}, status=400)
+        nxt = registry.update_config(device_id, {"barge_in": enabled})
+        log.info("command: set_barge_in enabled=%s → %s", enabled, device_id)
+        return web.json_response({"ok": True, "barge_in": nxt.get("barge_in", enabled)})
 
     frame: dict[str, Any] = {"type": "device.control", "command": cmd}
     if "params" in body:

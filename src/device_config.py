@@ -15,7 +15,9 @@ log = logging.getLogger("vauxr.device_config")
 
 FollowUpMode = Literal["auto", "always", "never"]
 VALID_FOLLOW_UP_MODES: frozenset[str] = frozenset({"auto", "always", "never"})
-KNOWN_FIELDS: frozenset[str] = frozenset({"name", "voice", "follow_up_mode", "output_sample_rate"})
+KNOWN_FIELDS: frozenset[str] = frozenset(
+    {"name", "voice", "follow_up_mode", "output_sample_rate", "barge_in"}
+)
 
 
 class DeviceConfig(TypedDict, total=False):
@@ -23,6 +25,7 @@ class DeviceConfig(TypedDict, total=False):
     voice: bool
     follow_up_mode: FollowUpMode
     output_sample_rate: int
+    barge_in: bool
 
 
 def device_config_path(data_dir: str) -> str:
@@ -50,6 +53,16 @@ def _sanitize_entry(device_id: str, raw: Any) -> DeviceConfig:
                     value,
                 )
                 cfg["follow_up_mode"] = "auto"
+        elif key == "barge_in":
+            if isinstance(value, bool):
+                cfg["barge_in"] = value
+            else:
+                log.warning(
+                    "Invalid barge_in for %s: %s — treating as enabled",
+                    device_id,
+                    value,
+                )
+                cfg["barge_in"] = True
         elif key == "output_sample_rate":
             # Node accepts any positive number; we also accept floats but
             # narrow to int because rates are integral. Booleans are int
@@ -57,6 +70,17 @@ def _sanitize_entry(device_id: str, raw: Any) -> DeviceConfig:
             if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
                 cfg["output_sample_rate"] = int(value)
     return cfg
+
+
+def barge_in_enabled(cfg: DeviceConfig | None) -> bool:
+    """Whether the device may interrupt the bot while it is speaking.
+
+    Missing key → enabled (the historic default). Invalid values are sanitized
+    to True on load.
+    """
+    if not cfg:
+        return True
+    return cfg.get("barge_in", True) is True
 
 
 def load_device_configs(data_dir: str) -> dict[str, DeviceConfig]:

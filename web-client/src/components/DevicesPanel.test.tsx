@@ -27,6 +27,7 @@ interface FakeDevice {
     name?: string;
     follow_up_mode?: "auto" | "always" | "never";
     output_sample_rate?: number;
+    barge_in?: boolean;
   };
 }
 
@@ -223,6 +224,36 @@ describe("DevicesPanel", () => {
       });
     });
 
+    it("changing barge-in triggers a PATCH and updates state", async () => {
+      const user = userEvent.setup();
+      const updated = {
+        ...DEVICES[0],
+        config: { ...DEVICES[0].config, barge_in: false },
+      };
+      fetchSpy.mockResolvedValueOnce(jsonResponse(DEVICES));
+      fetchSpy.mockResolvedValueOnce(jsonResponse(updated));
+
+      const addLog = vi.fn();
+      renderPanel({ addLog });
+      const card = await expandFirstCard(user);
+
+      const select = within(card).getByLabelText(/barge-in/i);
+      await user.selectOptions(select, "off");
+
+      await waitFor(() => {
+        const patchCall = fetchSpy.mock.calls.find(
+          (c) => typeof c[0] === "string" && (c[0] as string).includes("/api/devices/d1"),
+        );
+        expect(patchCall).toBeDefined();
+        const init = patchCall![1] as RequestInit;
+        expect(init.method).toBe("PATCH");
+        expect(JSON.parse(init.body as string)).toEqual({ barge_in: false });
+      });
+      await waitFor(() => {
+        expect(addLog).toHaveBeenCalledWith("sys", expect.stringContaining("barge_in → off"));
+      });
+    });
+
     it("name input saves on blur if changed", async () => {
       const user = userEvent.setup();
       fetchSpy.mockResolvedValueOnce(jsonResponse(DEVICES));
@@ -414,6 +445,28 @@ describe("DevicesPanel", () => {
         expect(mockCommand).toHaveBeenCalledWith("d1", "ota", {
           url: "http://nova.lan:8080/firmware/satellite1.bin",
         });
+      });
+    });
+
+    it("set_barge_in Send calls api.command with {enabled} param", async () => {
+      const user = userEvent.setup();
+      mockCommand.mockResolvedValue(undefined);
+      renderPanel();
+      await waitForDevices();
+      const items = within(screen.getByRole("list")).getAllByRole("listitem");
+      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+
+      const card = items[0];
+      const cmdSelect = within(card).getByLabelText(/command/i);
+      await user.selectOptions(cmdSelect, "set_barge_in");
+      const enabled = within(card).getByLabelText(/barge-in enabled/i);
+      await user.selectOptions(enabled, "false");
+
+      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
+      await user.click(sendButtons[sendButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(mockCommand).toHaveBeenCalledWith("d1", "set_barge_in", { enabled: false });
       });
     });
 

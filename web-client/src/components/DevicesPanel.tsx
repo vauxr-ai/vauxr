@@ -9,6 +9,7 @@ interface DeviceConfig {
   name?: string;
   follow_up_mode?: FollowUpMode;
   output_sample_rate?: number;
+  barge_in?: boolean;
 }
 
 interface ApiDeviceWithConfig {
@@ -38,7 +39,7 @@ const STATE_DOT: Record<string, string> = {
 };
 
 const FOLLOW_UP_OPTIONS: FollowUpMode[] = ["auto", "always", "never"];
-const COMMANDS = ["set_volume", "mute", "unmute", "reboot", "ota"] as const;
+const COMMANDS = ["set_volume", "mute", "unmute", "reboot", "ota", "set_barge_in"] as const;
 
 interface SaveStatus {
   status: "saving" | "saved" | "error";
@@ -237,6 +238,7 @@ function DeviceCard({
   const pill = STATE_PILL[device.state] ?? STATE_PILL.offline;
   const dot = STATE_DOT[device.state] ?? STATE_DOT.offline;
   const mode: FollowUpMode = device.config?.follow_up_mode ?? "auto";
+  const bargeIn = device.config?.barge_in !== false;
   const sampleRate = device.config?.output_sample_rate;
 
   const [nameDraft, setNameDraft] = useState(device.config?.name ?? device.name ?? "");
@@ -257,6 +259,7 @@ function DeviceCard({
   const [ctlCommand, setCtlCommand] = useState<string>(COMMANDS[0]);
   const [ctlVolume, setCtlVolume] = useState("50");
   const [ctlOtaUrl, setCtlOtaUrl] = useState("");
+  const [ctlBargeIn, setCtlBargeIn] = useState("true");
   const [ctlError, setCtlError] = useState("");
   const otaPlaceholder = `${httpBase}/firmware/${device.platform || "satellite1"}.bin`;
 
@@ -282,7 +285,9 @@ function DeviceCard({
           ? { volume: Number(ctlVolume) }
           : ctlCommand === "ota"
             ? { url: ctlOtaUrl.trim() || otaPlaceholder }
-            : undefined;
+            : ctlCommand === "set_barge_in"
+              ? { enabled: ctlBargeIn === "true" }
+              : undefined;
       await api.command(device.id, ctlCommand, params);
       addLog("sys", `Command ${ctlCommand} sent to ${device.id}`);
     } catch (err) {
@@ -370,6 +375,24 @@ function DeviceCard({
                       {m}
                     </option>
                   ))}
+                </select>
+              </label>
+              <label className={labelClass}>
+                Barge-in
+                <select
+                  className={inputClass}
+                  value={bargeIn ? "on" : "off"}
+                  onChange={(e) =>
+                    onPatch(
+                      device.id,
+                      { barge_in: e.target.value === "on" },
+                      `barge_in → ${e.target.value}`,
+                    )
+                  }
+                  disabled={saving}
+                >
+                  <option value="on">on</option>
+                  <option value="off">off</option>
                 </select>
               </label>
               <label className={labelClass}>
@@ -465,6 +488,20 @@ function DeviceCard({
                     placeholder={otaPlaceholder}
                     aria-label="Firmware URL"
                   />
+                </label>
+              )}
+              {ctlCommand === "set_barge_in" && (
+                <label className={labelClass}>
+                  Enabled
+                  <select
+                    className={inputClass}
+                    value={ctlBargeIn}
+                    onChange={(e) => setCtlBargeIn(e.target.value)}
+                    aria-label="Barge-in enabled"
+                  >
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
                 </label>
               )}
               <button className={primaryBtn} onClick={handleCommand} type="button">

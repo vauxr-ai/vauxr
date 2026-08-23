@@ -157,6 +157,32 @@ async def test_barge_in_during_reply_keeps_listening() -> None:
         dev_reg.unregister("dev-barge-int")
 
 
+def test_turns_suppressed_when_barge_in_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from realtime_session import RealtimeSession
+
+    monkeypatch.setattr(dev_reg, "get_config_for", lambda _id: {"barge_in": False})
+    session = RealtimeSession("dev-bi", channel_server=object())
+    session._awaiting_reply = False
+    session._bot_speaking = 1
+    assert session._turns_suppressed() is True
+    session._bot_speaking = 0
+    assert session._turns_suppressed() is False
+
+
+def test_turns_not_suppressed_during_tts_when_barge_in_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from realtime_session import RealtimeSession
+
+    monkeypatch.setattr(dev_reg, "get_config_for", lambda _id: {"barge_in": True})
+    session = RealtimeSession("dev-bi", channel_server=object())
+    session._awaiting_reply = False
+    session._bot_speaking = 1
+    assert session._turns_suppressed() is False
+    session._awaiting_reply = True
+    assert session._turns_suppressed() is True
+
+
 def test_context_messages_is_a_copy() -> None:
     mgr = RealtimeManager()
     mgr.record_turn("dev", "u", "a")
