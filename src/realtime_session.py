@@ -403,11 +403,7 @@ class RealtimeSession:
             async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
                 await super().process_frame(frame, direction)
                 if isinstance(frame, InterruptionFrame):
-                    # User barged in over the bot. Whatever turn was speaking is
-                    # being cut short by a *new* user turn, so its (possibly
-                    # deferred, follow_up=false) audio.end must not warm-quiet the
-                    # device — keep it listening so the barge-in reply can play.
-                    session._user_barged_in = True
+                    session._on_interruption()
                 elif isinstance(frame, UserStartedSpeakingFrame):
                     # Server VAD detected speech onset. Tell the device a turn is
                     # underway so it holds off its active-idle taper — otherwise it
@@ -594,6 +590,17 @@ class RealtimeSession:
         if self._task is not None:
             await self._task.queue_frames([LLMRunFrame()])
 
+    def _on_interruption(self) -> None:
+        """Pipecat broadcasts InterruptionFrame on every user-turn start.
+
+        Only treat it as barge-in when a reply is still playing or in the
+        post-TTS drain window. A normal follow-up/wake start would otherwise
+        leave ``_user_barged_in`` set through this turn's own TTS, and
+        ``_drain_ends`` would flip a statement's follow_up=false to true.
+        """
+        if self._reply_active():
+            self._user_barged_in = True
+
     async def _on_turn_complete(self, follow_up: bool, reply: str) -> None:
         """Called when an LLM turn ends. Queue its audio.end in turn order."""
         self._touch_activity()
@@ -725,6 +732,10 @@ class RealtimeSession:
             if self._user_barged_in:
                 self._user_barged_in = False
                 if not follow_up:
+                    log.info(
+                        "realtime[%s]: barge-in cut short a follow_up=false end — stay listening",
+                        self.device_id,
+                    )
                     follow_up = True
             await self._send_audio_end(follow_up)
 
@@ -734,7 +745,9 @@ class RealtimeSession:
         )
         # follow_up:false → Warm-quiet on the device; keep the Pipecat session alive.
         registry.set_state(self.device_id, "listening" if follow_up else "idle")
-        if not follow_up:
+        if follow_up:
+            log.info("realtime[%s]: follow_up=true — stay listening", self.device_id)
+        else:
             log.info(
                 "realtime[%s]: follow_up=false — Warm-quiet (session stays alive)",
                 self.device_id,
