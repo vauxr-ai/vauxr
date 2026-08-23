@@ -47,6 +47,22 @@ def test_unregister_removes() -> None:
     assert reg.get("dev1") is None
 
 
+def test_unregister_ignores_stale_socket() -> None:
+    old_ws, new_ws = object(), object()
+    reg.register("dev1", ws=old_ws)
+    reg.register("dev1", ws=new_ws)
+    reg.unregister("dev1", ws=old_ws)
+    live = reg.get("dev1")
+    assert live is not None
+    assert live.ws is new_ws
+
+
+def test_unregister_without_ws_still_removes() -> None:
+    reg.register("dev1", ws=object())
+    reg.unregister("dev1")
+    assert reg.get("dev1") is None
+
+
 def test_set_state_updates_lastseen() -> None:
     e = reg.register("dev1", ws=object())
     prev = e.last_seen

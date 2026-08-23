@@ -430,12 +430,15 @@ async def device_ws_handler(request: web.Request) -> web.WebSocketResponse:
     finally:
         log.info("device disconnected: %s", ctx.device_id or "unknown")
         if ctx.device_id:
-            registry.abort_active_turn(ctx.device_id)
-            if ctx.realtime:
-                from realtime_session import get_manager
+            live = registry.get(ctx.device_id)
+            # Skip if a newer hello already owns this device_id (OTA reboot).
+            if live is None or live.ws is ws:
+                registry.abort_active_turn(ctx.device_id)
+                if ctx.realtime:
+                    from realtime_session import get_manager
 
-                await get_manager().stop(ctx.device_id)
-            registry.unregister(ctx.device_id)
+                    await get_manager().stop(ctx.device_id)
+                registry.unregister(ctx.device_id, ws)
     return ws
 
 

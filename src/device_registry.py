@@ -86,7 +86,18 @@ def register(device_id: str, ws: Any, name: str | None = None) -> DeviceEntry:
     return entry
 
 
-def unregister(device_id: str) -> None:
+def unregister(device_id: str, ws: Any | None = None) -> None:
+    """Drop a live session.
+
+    If ``ws`` is given, only unregister when that socket still owns the
+    device. A reconnect (OTA reboot, flaky Wi-Fi) registers the new
+    connection first; the old handler's ``finally`` must not wipe it.
+    """
+    entry = _devices.get(device_id)
+    if entry is None:
+        return
+    if ws is not None and entry.ws is not ws:
+        return
     abort_active_turn(device_id)
     _devices.pop(device_id, None)
 
