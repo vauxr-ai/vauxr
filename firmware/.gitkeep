@@ -1,0 +1,3 @@
+# Drop Satellite1 (or Waveshare) app images here as `<platform>.bin`
+# (e.g. satellite1.bin). Served at GET /firmware/<filename>.
+# See vauxr-assistant README "OTA updates".

@@ -26,12 +26,12 @@ _DEFAULT_T_IDLE2_MS = 180_000
 # device via hello so firmware-side tuning stays aligned where applicable.
 _DEFAULT_VAD_CONFIDENCE = 0.6
 _DEFAULT_VAD_START_SECS = 0.4
-# stop_secs is the silence-after-speech that ends a turn. At 0.6 a normal
-# mid-sentence breath/pause ended the turn early, splitting one utterance into
-# several transcripts that fired overlapping channel turns (which then cancelled
-# each other and dropped Nova's real reply). 1.0 coalesces a single utterance
-# into one turn. Onset (start_secs) is unchanged, so barge-in stays responsive.
-_DEFAULT_VAD_STOP_SECS = 1.0
+# stop_secs is the silence-after-speech that ends a turn. At 0.6–1.0 a normal
+# mid-sentence breath/pause ended the turn early ("Sorry, I only caught 'I'"),
+# so the LLM started processing while the user was still talking. 2.0 holds
+# through thinking pauses; onset (start_secs) is unchanged so barge-in stays
+# responsive once they actually start.
+_DEFAULT_VAD_STOP_SECS = 2.0
 # This device's post-AEC speech arrives quietly (peak ~0.15, room noise ~0.05),
 # so even a 0.2 floor clipped normal-volume utterances. Keep min_volume just
 # above the noise floor and let Silero's neural confidence do the real
@@ -51,7 +51,7 @@ _BARGE_IN_VAD_CONFIDENCE = 0.8
 _BARGE_IN_VAD_START_SECS = 0.5
 # Same anti-fragmentation reasoning as the idle profile: hold the turn open
 # through brief pauses so a barge-in utterance stays a single turn.
-_BARGE_IN_VAD_STOP_SECS = 1.0
+_BARGE_IN_VAD_STOP_SECS = 2.0
 _BARGE_IN_VAD_MIN_VOLUME = 0.4
 
 

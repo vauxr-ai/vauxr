@@ -77,7 +77,7 @@ async def handle_text(
 
     msg_type = msg["type"]
     if msg_type == "hello":
-        await _hello(ws, msg)
+        await _hello(ws, ctx, msg)
     elif msg_type == "voice.start":
         # Turn-based capture doesn't apply mid-realtime: running it on the same WS
         # would clobber the channel response listener and force registry state to
@@ -113,7 +113,7 @@ async def handle_text(
         )
 
 
-async def _hello(ws: web.WebSocketResponse, msg: dict[str, Any]) -> None:
+async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]) -> None:
     """Boot-time handshake: device advertises capabilities, server returns policy.
 
     The device is intentionally dumb — whether realtime is enabled, which
@@ -141,6 +141,18 @@ async def _hello(ws: web.WebSocketResponse, msg: dict[str, Any]) -> None:
 
     device_id = msg.get("device_id")
     device_key = device_id if isinstance(device_id, str) else ""
+
+    # Register on hello so an idle device is visible/commandable (OTA, reboot)
+    # without waiting for the first voice turn.
+    if device_key:
+        ctx.device_id = device_key
+        registry.register(device_key, ws=ws)
+        platform = msg.get("platform") if isinstance(msg.get("platform"), str) else None
+        fw_version = msg.get("fw_version") if isinstance(msg.get("fw_version"), str) else None
+        registry.set_hello_info(device_key, platform=platform, fw_version=fw_version)
+        rate = registry.apply_output_sample_rate(device_key, msg, platform=platform)
+        if rate is not None:
+            ctx.output_sample_rate = rate
 
     realtime_policy: dict[str, Any] = {"enabled": False, "transport": "ws"}
     if webrtc_ok:
@@ -191,13 +203,10 @@ async def _voice_start(
     ctx.device_id = device_id
     ctx.audio_chunks = []
     ctx.state = ConnectionState.LISTENING
-    entry = registry.register(device_id, ws=ws, name=msg.get("name") or device_id)
-    output_rate = (
-        msg.get("output_sample_rate") or msg.get("sample_rate") or entry.config.get("output_sample_rate")
-    )
-    if isinstance(output_rate, (int, float)) and output_rate > 0:
-        ctx.output_sample_rate = int(output_rate)
-        entry.output_sample_rate = ctx.output_sample_rate
+    registry.register(device_id, ws=ws, name=msg.get("name") or device_id)
+    rate = registry.apply_output_sample_rate(device_id, msg)
+    if rate is not None:
+        ctx.output_sample_rate = rate
 
     registry.set_state(device_id, "listening")
     await send_json(ws, {"type": "ready"})
@@ -340,11 +349,10 @@ async def _realtime_start(
     ctx.device_id = device_id
     ctx.realtime = True
     ctx.realtime_media = False
-    entry = registry.register(device_id, ws=ws, name=msg.get("name") or device_id)
-    output_rate = msg.get("output_sample_rate") or entry.config.get("output_sample_rate")
-    if isinstance(output_rate, (int, float)) and output_rate > 0:
-        ctx.output_sample_rate = int(output_rate)
-        entry.output_sample_rate = ctx.output_sample_rate
+    registry.register(device_id, ws=ws, name=msg.get("name") or device_id)
+    rate = registry.apply_output_sample_rate(device_id, msg)
+    if rate is not None:
+        ctx.output_sample_rate = rate
 
     from realtime_session import get_manager
 
@@ -421,12 +429,15 @@ async def device_ws_handler(request: web.Request) -> web.WebSocketResponse:
     finally:
         log.info("device disconnected: %s", ctx.device_id or "unknown")
         if ctx.device_id:
-            registry.abort_active_turn(ctx.device_id)
-            if ctx.realtime:
-                from realtime_session import get_manager
+            live = registry.get(ctx.device_id)
+            # Skip if a newer hello already owns this device_id (OTA reboot).
+            if live is None or live.ws is ws:
+                registry.abort_active_turn(ctx.device_id)
+                if ctx.realtime:
+                    from realtime_session import get_manager
 
-                await get_manager().stop(ctx.device_id)
-            registry.unregister(ctx.device_id)
+                    await get_manager().stop(ctx.device_id)
+                registry.unregister(ctx.device_id, ws)
     return ws
 
 

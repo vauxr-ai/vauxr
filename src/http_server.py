@@ -11,6 +11,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
@@ -30,7 +31,9 @@ log = logging.getLogger("vauxr.http")
 
 WEB_CLIENT_DIST = "web-client/dist"
 
-VALID_COMMANDS = frozenset({"set_volume", "mute", "unmute", "reboot"})
+VALID_COMMANDS = frozenset({"set_volume", "mute", "unmute", "reboot", "ota", "set_barge_in"})
+
+_FIRMWARE_NAME = re.compile(r"^[A-Za-z0-9._-]+\.bin$")
 
 _MIME_TYPES = {
     ".html": "text/html",
@@ -79,13 +82,18 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
 
 
 def _device_dict(d) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "id": d.id,
         "name": d.name,
         "state": d.state,
         "lastSeen": d.last_seen.isoformat().replace("+00:00", "Z"),
         "config": dict(d.config),
     }
+    if d.platform:
+        out["platform"] = d.platform
+    if d.fw_version:
+        out["fw_version"] = d.fw_version
+    return out
 
 
 # --- /api/devices ---
@@ -128,6 +136,10 @@ async def update_device(request: web.Request) -> web.Response:
                 {"error": "follow_up_mode must be 'auto' | 'always' | 'never'"}, status=400
             )
         patch["follow_up_mode"] = mode
+    if "barge_in" in body:
+        if not isinstance(body["barge_in"], bool):
+            return web.json_response({"error": "barge_in must be a boolean"}, status=400)
+        patch["barge_in"] = body["barge_in"]
 
     nxt = registry.update_config(device_id, patch)  # type: ignore[arg-type]
     if nxt.get("name"):
@@ -197,6 +209,23 @@ async def device_command(request: web.Request) -> web.Response:
     cmd = body["command"]
     if cmd not in VALID_COMMANDS:
         return web.json_response({"error": f"unknown command: {cmd}"}, status=400)
+
+    params = body.get("params")
+    if cmd == "ota":
+        if not isinstance(params, dict) or not isinstance(params.get("url"), str) or not params["url"]:
+            return web.json_response({"error": "ota requires params.url"}, status=400)
+        url = params["url"]
+        if not url.startswith("http://") and not url.startswith("https://"):
+            return web.json_response({"error": "ota url must be http:// or https://"}, status=400)
+    if cmd == "set_barge_in":
+        if not isinstance(params, dict) or "enabled" not in params:
+            return web.json_response({"error": "set_barge_in requires params.enabled"}, status=400)
+        enabled = params["enabled"]
+        if not isinstance(enabled, bool):
+            return web.json_response({"error": "params.enabled must be a boolean"}, status=400)
+        nxt = registry.update_config(device_id, {"barge_in": enabled})
+        log.info("command: set_barge_in enabled=%s → %s", enabled, device_id)
+        return web.json_response({"ok": True, "barge_in": nxt.get("barge_in", enabled)})
 
     frame: dict[str, Any] = {"type": "device.control", "command": cmd}
     if "params" in body:
@@ -334,7 +363,25 @@ async def serve_static(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(candidate, headers={"Content-Type": ctype})
 
 
-# --- App factories ---
+async def serve_firmware(request: web.Request) -> web.StreamResponse:
+    """Serve a .bin from DATA_DIR/firmware/. Unauthenticated on purpose: the
+    device HTTP OTA client has no easy way to attach a Bearer token, and
+    triggering the update still requires an authenticated device.control.
+    """
+    name = request.match_info["filename"]
+    if not _FIRMWARE_NAME.fullmatch(name):
+        return web.json_response({"error": "not found"}, status=404)
+    root = os.path.realpath(os.path.join(get_config().data_dir, "firmware"))
+    path = os.path.realpath(os.path.join(root, name))
+    if os.path.dirname(path) != root or not os.path.isfile(path):
+        return web.json_response({"error": "not found"}, status=404)
+    return web.FileResponse(
+        path,
+        headers={
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": f'attachment; filename="{name}"',
+        },
+    )
 
 
 def attach_http_routes(app: web.Application) -> None:
@@ -351,6 +398,7 @@ def attach_http_routes(app: web.Application) -> None:
     app.router.add_delete("/api/channels/{channel_id}", delete_channel)
     app.router.add_post("/api/channels/{channel_id}/activate", activate_channel)
     app.router.add_post("/api/channels/{channel_id}/rotate", rotate_token)
+    app.router.add_get("/firmware/{filename}", serve_firmware)
 
 
 def make_http_app(_channel_server: "ChannelServer | None" = None) -> web.Application:

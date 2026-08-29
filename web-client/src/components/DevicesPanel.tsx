@@ -9,6 +9,7 @@ interface DeviceConfig {
   name?: string;
   follow_up_mode?: FollowUpMode;
   output_sample_rate?: number;
+  barge_in?: boolean;
 }
 
 interface ApiDeviceWithConfig {
@@ -17,6 +18,8 @@ interface ApiDeviceWithConfig {
   state: string;
   lastSeen: string;
   config: DeviceConfig;
+  platform?: string;
+  fw_version?: string;
 }
 
 const STATE_PILL: Record<string, string> = {
@@ -36,7 +39,7 @@ const STATE_DOT: Record<string, string> = {
 };
 
 const FOLLOW_UP_OPTIONS: FollowUpMode[] = ["auto", "always", "never"];
-const COMMANDS = ["set_volume", "mute", "unmute", "reboot"] as const;
+const COMMANDS = ["set_volume", "mute", "unmute", "reboot", "ota", "set_barge_in"] as const;
 
 interface SaveStatus {
   status: "saving" | "saved" | "error";
@@ -201,6 +204,7 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
                 saveStatus={saveStatus[d.id]}
                 api={api}
                 addLog={addLog}
+                httpBase={baseUrl}
               />
             ))}
           </ul>
@@ -218,6 +222,7 @@ interface DeviceCardProps {
   saveStatus?: SaveStatus;
   api: ReturnType<typeof useHttpApi>;
   addLog: (dir: LogEntry["dir"], text: string) => void;
+  httpBase: string;
 }
 
 function DeviceCard({
@@ -228,10 +233,12 @@ function DeviceCard({
   saveStatus,
   api,
   addLog,
+  httpBase,
 }: DeviceCardProps) {
   const pill = STATE_PILL[device.state] ?? STATE_PILL.offline;
   const dot = STATE_DOT[device.state] ?? STATE_DOT.offline;
   const mode: FollowUpMode = device.config?.follow_up_mode ?? "auto";
+  const bargeIn = device.config?.barge_in !== false;
   const sampleRate = device.config?.output_sample_rate;
 
   const [nameDraft, setNameDraft] = useState(device.config?.name ?? device.name ?? "");
@@ -251,7 +258,10 @@ function DeviceCard({
 
   const [ctlCommand, setCtlCommand] = useState<string>(COMMANDS[0]);
   const [ctlVolume, setCtlVolume] = useState("50");
+  const [ctlOtaUrl, setCtlOtaUrl] = useState("");
+  const [ctlBargeIn, setCtlBargeIn] = useState("true");
   const [ctlError, setCtlError] = useState("");
+  const otaPlaceholder = `${httpBase}/firmware/${device.platform || "satellite1"}.bin`;
 
   const handleAnnounce = async () => {
     setAnnError("");
@@ -270,7 +280,14 @@ function DeviceCard({
   const handleCommand = async () => {
     setCtlError("");
     try {
-      const params = ctlCommand === "set_volume" ? { volume: Number(ctlVolume) } : undefined;
+      const params =
+        ctlCommand === "set_volume"
+          ? { volume: Number(ctlVolume) }
+          : ctlCommand === "ota"
+            ? { url: ctlOtaUrl.trim() || otaPlaceholder }
+            : ctlCommand === "set_barge_in"
+              ? { enabled: ctlBargeIn === "true" }
+              : undefined;
       await api.command(device.id, ctlCommand, params);
       addLog("sys", `Command ${ctlCommand} sent to ${device.id}`);
     } catch (err) {
@@ -313,7 +330,10 @@ function DeviceCard({
             </span>
           </div>
           <div className="text-[11px] text-zinc-500">
-            {device.id} · last seen {formatLastSeen(device.lastSeen)}
+            {device.id}
+            {device.platform ? ` · ${device.platform}` : ""}
+            {device.fw_version ? ` · ${device.fw_version}` : ""}
+            {" · "}last seen {formatLastSeen(device.lastSeen)}
           </div>
         </div>
         <SaveBadge status={saveStatus} />
@@ -355,6 +375,24 @@ function DeviceCard({
                       {m}
                     </option>
                   ))}
+                </select>
+              </label>
+              <label className={labelClass}>
+                Barge-in
+                <select
+                  className={inputClass}
+                  value={bargeIn ? "on" : "off"}
+                  onChange={(e) =>
+                    onPatch(
+                      device.id,
+                      { barge_in: e.target.value === "on" },
+                      `barge_in → ${e.target.value}`,
+                    )
+                  }
+                  disabled={saving}
+                >
+                  <option value="on">on</option>
+                  <option value="off">off</option>
                 </select>
               </label>
               <label className={labelClass}>
@@ -438,6 +476,32 @@ function DeviceCard({
                     value={ctlVolume}
                     onChange={(e) => setCtlVolume(e.target.value)}
                   />
+                </label>
+              )}
+              {ctlCommand === "ota" && (
+                <label className={labelClass + " flex-1 min-w-[220px]"}>
+                  Firmware URL
+                  <input
+                    className={inputClass}
+                    value={ctlOtaUrl}
+                    onChange={(e) => setCtlOtaUrl(e.target.value)}
+                    placeholder={otaPlaceholder}
+                    aria-label="Firmware URL"
+                  />
+                </label>
+              )}
+              {ctlCommand === "set_barge_in" && (
+                <label className={labelClass}>
+                  Enabled
+                  <select
+                    className={inputClass}
+                    value={ctlBargeIn}
+                    onChange={(e) => setCtlBargeIn(e.target.value)}
+                    aria-label="Barge-in enabled"
+                  >
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
                 </label>
               )}
               <button className={primaryBtn} onClick={handleCommand} type="button">
