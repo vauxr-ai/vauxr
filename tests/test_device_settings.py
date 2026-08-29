@@ -28,7 +28,7 @@ def test_vad_defaults() -> None:
     vad = get_realtime_vad("dev-A")
     assert 0.0 < vad.confidence <= 1.0
     assert vad.start_secs > 0
-    assert vad.stop_secs > 0
+    assert vad.stop_secs == 2.0
     assert vad.min_volume >= 0
 
 
@@ -37,6 +37,7 @@ def test_realtime_settings_bundle_is_consistent() -> None:
     assert rt.segmentation == get_segmentation("dev-A")
     assert rt.taper == get_taper("dev-A")
     assert rt.vad == get_realtime_vad("dev-A")
+    assert rt.vad_barge_in.stop_secs == 2.0
 
 
 def test_realtime_policy_extras_shape() -> None:
@@ -47,6 +48,7 @@ def test_realtime_policy_extras_shape() -> None:
     taper = get_taper("dev-A")
     assert extras["taper"]["t_idle1_ms"] == taper.t_idle1_ms
     assert extras["taper"]["t_idle2_ms"] == taper.t_idle2_ms
+    assert extras["vad"]["stop_secs"] == 2.0
 
 
 def test_settings_keyed_by_device_id() -> None:

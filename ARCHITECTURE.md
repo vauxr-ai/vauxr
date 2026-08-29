@@ -116,8 +116,8 @@ Frames are distinguished by type: if the first byte is `0x7B` (`{`), it's JSON. 
                                  "offer_url": "http://<host>:8080/api/offer",
                                  "stun": "stun:stun.l.google.com:19302",
                                  "taper": { "t_idle1_ms": 60000, "t_idle2_ms": 30000 },
-                                 "vad": { "confidence": 0.85, "start_secs": 0.4,
-                                          "stop_secs": 0.6, "min_volume": 0.8 } } }
+                                 "vad": { "confidence": 0.6, "start_secs": 0.4,
+                                          "stop_secs": 2.0, "min_volume": 0.1 } } }
 
 // Auth OK, ready for voice
 { "type": "ready" }
