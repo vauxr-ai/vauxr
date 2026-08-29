@@ -326,6 +326,7 @@ async def test_hello_realtime_policy_includes_taper_and_vad(client: TestClient) 
         assert "taper" in policy and "vad" in policy
         assert policy["taper"]["t_idle1_ms"] > 0
         assert "confidence" in policy["vad"]
+        assert policy["vad"]["stop_secs"] == 2.0
 
 
 async def test_hello_registers_device_identity(client: TestClient) -> None:
