@@ -61,7 +61,12 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  fetchSpy = vi.fn().mockResolvedValue(jsonResponse(DEVICES));
+  fetchSpy = vi.fn().mockImplementation((url: string) => {
+    if (String(url).includes("/api/webhooks")) {
+      return Promise.resolve(jsonResponse([]));
+    }
+    return Promise.resolve(jsonResponse(DEVICES));
+  });
   globalThis.fetch = fetchSpy as unknown as typeof fetch;
 });
 
@@ -251,6 +256,46 @@ describe("DevicesPanel", () => {
       });
       await waitFor(() => {
         expect(addLog).toHaveBeenCalledWith("sys", expect.stringContaining("barge_in → off"));
+      });
+    });
+
+    it("changing a button gesture kind PATCHes button_actions", async () => {
+      const user = userEvent.setup();
+      const updated = {
+        ...DEVICES[0],
+        config: {
+          ...DEVICES[0].config,
+          button_actions: { double_press: { kind: "announce", text: "Goodnight" } },
+        },
+      };
+      fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
+        if (String(url).includes("/api/webhooks")) return Promise.resolve(jsonResponse([]));
+        if (init?.method === "PATCH") return Promise.resolve(jsonResponse(updated));
+        return Promise.resolve(jsonResponse(DEVICES));
+      });
+
+      const addLog = vi.fn();
+      renderPanel({ addLog });
+      const card = await expandFirstCard(user);
+
+      const select = within(card).getByLabelText(/double press action/i);
+      await user.selectOptions(select, "announce");
+      const text = within(card).getByLabelText(/double press text/i);
+      await user.type(text, "Goodnight");
+      await user.tab();
+
+      await waitFor(() => {
+        const patchCall = fetchSpy.mock.calls.find(
+          (c) =>
+            typeof c[0] === "string" &&
+            (c[0] as string).includes("/api/devices/d1") &&
+            (c[1] as RequestInit | undefined)?.method === "PATCH",
+        );
+        expect(patchCall).toBeDefined();
+        const init = patchCall![1] as RequestInit;
+        expect(JSON.parse(init.body as string)).toEqual({
+          button_actions: { double_press: { kind: "announce", text: "Goodnight" } },
+        });
       });
     });
 

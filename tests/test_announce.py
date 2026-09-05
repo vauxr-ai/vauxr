@@ -48,11 +48,9 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             yield b"\x00\x01" * 50
 
     monkeypatch.setattr(wyoming_tts, "synthesize", fake_synth)
-    # The http_server module imports synthesize at module load; rebind via the
-    # http_server namespace too.
-    import http_server as hs
+    import button_dispatch as bd
 
-    monkeypatch.setattr(hs, "synthesize", fake_synth)
+    monkeypatch.setattr(bd, "synthesize", fake_synth)
 
     yield
     registry.reset()
@@ -126,9 +124,9 @@ async def test_announce_passes_hello_output_sample_rate(
         seen["target_rate"] = k.get("target_rate")
         yield b"\x00\x01" * 50
 
-    import http_server as hs
+    import button_dispatch as bd
 
-    monkeypatch.setattr(hs, "synthesize", fake_synth)
+    monkeypatch.setattr(bd, "synthesize", fake_synth)
 
     res = await client.post("/api/devices/dev1/announce", headers=_auth(), json={"text": "hello"})
     assert res.status == 200
@@ -314,6 +312,34 @@ async def test_patch_device_invalid_name_type(client: TestClient) -> None:
 async def test_patch_unknown_device_404(client: TestClient) -> None:
     res = await client.patch("/api/devices/missing", headers=_auth(), json={"name": "x"})
     assert res.status == 404
+
+
+async def test_patch_button_actions(client: TestClient) -> None:
+    registry.register("dev1", ws=FakeWs())
+    res = await client.patch(
+        "/api/devices/dev1",
+        headers=_auth(),
+        json={
+            "button_actions": {
+                "double_press": {"kind": "prompt", "text": "lights off"},
+                "long_press": {"kind": "command", "command": "mute"},
+            }
+        },
+    )
+    assert res.status == 200
+    body = await res.json()
+    assert body["config"]["button_actions"]["double_press"]["kind"] == "prompt"
+    assert body["config"]["button_actions"]["long_press"]["command"] == "mute"
+
+
+async def test_patch_button_actions_invalid(client: TestClient) -> None:
+    registry.register("dev1", ws=FakeWs())
+    res = await client.patch(
+        "/api/devices/dev1",
+        headers=_auth(),
+        json={"button_actions": {"double_press": {"kind": "prompt"}}},
+    )
+    assert res.status == 400
 
 
 # --- /api/channels CRUD ---

@@ -35,6 +35,9 @@ def test_round_trip_preserves_known_fields(tmp_path: Path) -> None:
             "follow_up_mode": "always",
             "output_sample_rate": 24000,
             "barge_in": False,
+            "button_actions": {
+                "double_press": {"kind": "prompt", "text": "turn off the lights"},
+            },
         },
         "dev-B": {"name": "Office"},
     }
@@ -117,3 +120,51 @@ def test_save_creates_dir(tmp_path: Path) -> None:
 
 def test_device_config_path_helper(tmp_path: Path) -> None:
     assert device_config_path(str(tmp_path)) == str(tmp_path / "devices.json")
+
+
+def test_button_actions_invalid_kind_dropped(tmp_path: Path) -> None:
+    (tmp_path / "devices.json").write_text(
+        json.dumps({"dev": {"button_actions": {"double_press": {"kind": "nope"}}}})
+    )
+    loaded = load_device_configs(str(tmp_path))
+    assert loaded == {"dev": {}}
+
+
+def test_button_actions_unknown_gesture_dropped(tmp_path: Path) -> None:
+    (tmp_path / "devices.json").write_text(
+        json.dumps(
+            {
+                "dev": {
+                    "button_actions": {
+                        "quadruple_press": {"kind": "announce", "text": "hi"},
+                        "long_press": {"kind": "command", "command": "mute"},
+                    }
+                }
+            }
+        )
+    )
+    loaded = load_device_configs(str(tmp_path))
+    assert loaded == {
+        "dev": {"button_actions": {"long_press": {"kind": "command", "command": "mute"}}}
+    }
+
+
+def test_parse_button_actions_strict_errors() -> None:
+    from device_config import parse_button_actions
+
+    _, err = parse_button_actions({"double_press": {"kind": "prompt"}})
+    assert err is not None
+    assert "text" in err
+
+    _, err = parse_button_actions({"nope": {"kind": "none"}})
+    assert err is not None
+
+    actions, err = parse_button_actions(
+        {"double_press": {"kind": "webhook", "webhook_id": "wh_1"}}
+    )
+    assert err is None
+    assert actions == {"double_press": {"kind": "webhook", "webhook_id": "wh_1"}}
+
+    actions, err = parse_button_actions({"double_press": {"kind": "none"}})
+    assert err is None
+    assert actions == {}

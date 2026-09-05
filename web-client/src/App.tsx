@@ -275,7 +275,14 @@ function renderSection(id: SectionId, props: SectionProps) {
         />
       );
     case "settings":
-      return <SettingsPanel />;
+      return (
+        <SettingsPanel
+          wsUrl={props.wsUrl}
+          token={props.wsToken}
+          wsState={props.wsState}
+          addLog={props.addLog}
+        />
+      );
   }
 }
 

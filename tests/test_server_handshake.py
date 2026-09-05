@@ -14,9 +14,10 @@ from server import make_app
 
 
 @pytest.fixture(autouse=True)
-def _device_token(monkeypatch: pytest.MonkeyPatch):
+def _device_token(monkeypatch: pytest.MonkeyPatch, tmp_path):
     cfg_mod.reset_config()
     monkeypatch.setenv("DEVICE_TOKEN", "ws-test-token")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
     yield
     cfg_mod.reset_config()
 
@@ -114,3 +115,24 @@ async def test_output_sample_rate_accepted(client: TestClient) -> None:
         )
         ready = await _recv_json(ws)
         assert ready == {"type": "ready"}
+
+
+async def test_device_button_is_not_unknown_message(client: TestClient) -> None:
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json(
+            {
+                "type": "hello",
+                "device_id": "dev1",
+                "token": "ws-test-token",
+                "caps": ["ws"],
+            }
+        )
+        hello = await _recv_json(ws)
+        assert hello["type"] == "hello"
+        await ws.send_json(
+            {"type": "device.button", "button": "action", "gesture": "double_press"}
+        )
+        await ws.send_json({"type": "not.a.real.type"})
+        err = await _recv_json(ws)
+        assert err["code"] == "UNKNOWN_MESSAGE"
+        assert "not.a.real.type" in err["message"]

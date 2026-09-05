@@ -106,6 +106,8 @@ async def handle_text(
         _realtime_media_ready(ctx)
     elif msg_type == "realtime.stop":
         await _realtime_stop(ctx)
+    elif msg_type == "device.button":
+        await _device_button(state, ctx, msg)
     else:
         await send_json(
             ws,
@@ -174,6 +176,28 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
         realtime_policy.get("transport"),
     )
     await send_json(ws, {"type": "hello", "realtime": realtime_policy})
+
+
+async def _device_button(state: AppState, ctx: ConnectionCtx, msg: dict[str, Any]) -> None:
+    device_id = ctx.device_id if isinstance(ctx.device_id, str) else msg.get("device_id")
+    if not isinstance(device_id, str) or not device_id:
+        log.warning("device.button missing device_id")
+        return
+    if ctx.device_id is None:
+        ctx.device_id = device_id
+    button = msg.get("button") if isinstance(msg.get("button"), str) else "action"
+    gesture = msg.get("gesture") if isinstance(msg.get("gesture"), str) else ""
+    from button_dispatch import handle_device_button
+
+    asyncio.create_task(
+        handle_device_button(
+            device_id=device_id,
+            button=button,
+            gesture=gesture,
+            openclaw_client=state.openclaw_client,
+            channel_server=state.channel_server,
+        )
+    )
 
 
 async def _voice_start(
@@ -475,6 +499,10 @@ async def _startup(app: web.Application) -> None:
     # Load channel registry.
     channel_registry.load()
     log.info("channel registry loaded")
+    import webhooks
+
+    webhooks.load()
+    log.info("webhooks loaded")
 
     active = channel_registry.get_active()
     if cfg.openclaw.url and active is not None and active.type == "openclaw-direct":

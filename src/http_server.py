@@ -6,7 +6,6 @@ auth check (device token OR channel token).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import mimetypes
@@ -19,10 +18,9 @@ from aiohttp import web
 import channel_registry, device_registry as registry
 from auth import validate_channel_http_token, validate_token
 from config import get_config
-from device_config import VALID_FOLLOW_UP_MODES, FollowUpMode
+from device_config import VALID_FOLLOW_UP_MODES, parse_button_actions
 from protocol import encode_text_message
-from utils import make_binary_frame
-from wyoming_tts import synthesize
+import webhooks
 
 if TYPE_CHECKING:
     from channel_server import ChannelServer
@@ -140,6 +138,11 @@ async def update_device(request: web.Request) -> web.Response:
         if not isinstance(body["barge_in"], bool):
             return web.json_response({"error": "barge_in must be a boolean"}, status=400)
         patch["barge_in"] = body["barge_in"]
+    if "button_actions" in body:
+        actions, err = parse_button_actions(body["button_actions"])
+        if err:
+            return web.json_response({"error": err}, status=400)
+        patch["button_actions"] = actions
 
     nxt = registry.update_config(device_id, patch)  # type: ignore[arg-type]
     if nxt.get("name"):
@@ -166,30 +169,9 @@ async def announce(request: web.Request) -> web.Response:
 
     text: str = body["text"]
     log.info("announce: synthesizing for %s %r", device_id, text)
+    from button_dispatch import announce_to_device
 
-    abort = asyncio.Event()
-    sent_start = {"v": False}
-
-    def on_rate(rate: int) -> None:
-        if not sent_start["v"]:
-            asyncio.create_task(
-                _device_send_text(device.ws, {"type": "audio.start", "sample_rate": rate})
-            )
-            sent_start["v"] = True
-
-    chunk_count = 0
-    try:
-        async for chunk in synthesize(
-            text, target_rate=device.output_sample_rate, abort_event=abort, on_sample_rate=on_rate
-        ):
-            seq = registry.next_seq(device_id)
-            await _device_send_bytes(device.ws, make_binary_frame(0x03, seq, chunk))
-            chunk_count += 1
-    except Exception as e:  # noqa: BLE001
-        log.error("TTS error for announce to %s: %s", device_id, e)
-
-    await _device_send_text(device.ws, {"type": "audio.end"})
-    log.info("announce: done %s, %d chunks sent", device_id, chunk_count)
+    await announce_to_device(device, text)
     return web.json_response({"ok": True})
 
 
@@ -331,13 +313,90 @@ async def _device_send_text(ws, obj: dict[str, Any]) -> None:
         pass
 
 
-async def _device_send_bytes(ws, data: bytes) -> None:
-    if getattr(ws, "closed", False):
-        return
+# --- /api/webhooks ---
+
+
+@_require_auth
+async def list_webhooks(_request: web.Request) -> web.Response:
+    return web.json_response([webhooks.public_dict(w) for w in webhooks.get_all()])
+
+
+def _webhook_fields(body: dict[str, Any], *, require_name_url: bool) -> tuple[dict[str, str], str | None]:
+    """Pull name/url/authorization from a JSON body. Returns (fields, error)."""
+    fields: dict[str, str] = {}
+    if "name" in body or require_name_url:
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return {}, "name is required"
+        fields["name"] = name.strip()
+    if "url" in body or require_name_url:
+        url = body.get("url")
+        if not isinstance(url, str) or not url.strip():
+            return {}, "url is required"
+        err = webhooks.validate_url(url.strip())
+        if err:
+            return {}, err
+        fields["url"] = url.strip()
+    if "authorization" in body:
+        auth = body.get("authorization")
+        if auth is None:
+            fields["authorization"] = ""
+        elif not isinstance(auth, str):
+            return {}, "authorization must be a string"
+        else:
+            fields["authorization"] = auth
+    return fields, None
+
+
+@_require_auth
+async def create_webhook(request: web.Request) -> web.Response:
     try:
-        await ws.send_bytes(data)
-    except ConnectionResetError:
-        pass
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    fields, err = _webhook_fields(body, require_name_url=True)
+    if err:
+        return web.json_response({"error": err}, status=400)
+    hook = webhooks.create(fields["name"], fields["url"], fields.get("authorization", ""))
+    log.info("201 webhook created: %s (%s)", hook.name, hook.id)
+    return web.json_response(webhooks.public_dict(hook), status=201)
+
+
+@_require_auth
+async def update_webhook(request: web.Request) -> web.Response:
+    webhook_id = request.match_info["webhook_id"]
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if webhooks.get(webhook_id) is None:
+        return web.json_response({"error": "webhook not found"}, status=404)
+    fields, err = _webhook_fields(body, require_name_url=False)
+    if err:
+        return web.json_response({"error": err}, status=400)
+    hook = webhooks.update(
+        webhook_id,
+        name=fields.get("name"),
+        url=fields.get("url"),
+        authorization=fields["authorization"] if "authorization" in fields else None,
+    )
+    if hook is None:
+        return web.json_response({"error": "webhook not found"}, status=404)
+    log.info("200 webhook updated: %s", webhook_id)
+    return web.json_response(webhooks.public_dict(hook))
+
+
+@_require_auth
+async def delete_webhook(request: web.Request) -> web.Response:
+    webhook_id = request.match_info["webhook_id"]
+    if not webhooks.remove(webhook_id):
+        return web.json_response({"error": "webhook not found"}, status=404)
+    log.info("200 webhook deleted: %s", webhook_id)
+    return web.json_response({"ok": True})
 
 
 # --- Static files ---
@@ -398,6 +457,10 @@ def attach_http_routes(app: web.Application) -> None:
     app.router.add_delete("/api/channels/{channel_id}", delete_channel)
     app.router.add_post("/api/channels/{channel_id}/activate", activate_channel)
     app.router.add_post("/api/channels/{channel_id}/rotate", rotate_token)
+    app.router.add_get("/api/webhooks", list_webhooks)
+    app.router.add_post("/api/webhooks", create_webhook)
+    app.router.add_patch("/api/webhooks/{webhook_id}", update_webhook)
+    app.router.add_delete("/api/webhooks/{webhook_id}", delete_webhook)
     app.router.add_get("/firmware/{filename}", serve_firmware)
 
 

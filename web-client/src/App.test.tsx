@@ -46,7 +46,7 @@ describe("App shell", () => {
     const main = screen.getByRole("main");
 
     await user.click(within(sidebar).getByRole("button", { name: /settings/i }));
-    expect(within(main).getByText(/coming soon/i)).toBeInTheDocument();
+    expect(within(main).getByText(/connect to a server to manage webhooks/i)).toBeInTheDocument();
 
     await user.click(within(sidebar).getByRole("button", { name: /channels/i }));
     expect(within(main).getByText(/connect to a server to manage channels/i)).toBeInTheDocument();

@@ -524,8 +524,6 @@ class RealtimeSession:
 
     async def seed_buffered_turn(self, pcm: bytes) -> None:
         """Transcribe cold-wake WS audio and seed one turn into Pipecat."""
-        from pipecat.frames.frames import LLMRunFrame
-
         if self._closed:
             return
         if not pcm:
@@ -573,7 +571,38 @@ class RealtimeSession:
             await self._release_failed_turn("peer dropped during STT")
             return
 
-        log.info("realtime[%s]: seeding cold->warm turn: %r", self.device_id, text)
+        await self._seed_user_text(text)
+
+    async def seed_text_turn(self, text: str) -> None:
+        """Seed a canned user utterance into Pipecat (no STT)."""
+        text = (text or "").strip()
+        if not text:
+            await self._release_failed_turn("empty text")
+            return
+        if self._closed:
+            return
+        try:
+            await asyncio.wait_for(self._pipeline_ready.wait(), timeout=15.0)
+        except asyncio.TimeoutError:
+            log.warning(
+                "realtime[%s]: pipeline never ready — dropping text seed",
+                self.device_id,
+            )
+            await self._release_failed_turn("pipeline not ready")
+            return
+        if not self.is_peer_live():
+            log.warning(
+                "realtime[%s]: peer not live — refusing text seed turn",
+                self.device_id,
+            )
+            await self._release_failed_turn("peer not live")
+            return
+        await self._seed_user_text(text)
+
+    async def _seed_user_text(self, text: str) -> None:
+        from pipecat.frames.frames import LLMRunFrame
+
+        log.info("realtime[%s]: seeding turn: %r", self.device_id, text)
         self._touch_activity()
         # Same PROCESSING-window protection as warm turns (see _ControlTap):
         # suppress new user-turn starts until this seeded reply begins speaking so
@@ -875,6 +904,14 @@ class RealtimeManager:
         """Whether a warm Pipecat session with a live peer exists."""
         session = self._sessions.get(device_id)
         return session is not None and session.is_peer_live()
+
+    async def seed_text_turn(self, device_id: str, text: str) -> bool:
+        """Seed canned text into a live Pipecat session. Returns False if none."""
+        session = self._sessions.get(device_id)
+        if session is None or not session.is_peer_live():
+            return False
+        await session.seed_text_turn(text)
+        return True
 
     async def handle_cold_voice_end(
         self,

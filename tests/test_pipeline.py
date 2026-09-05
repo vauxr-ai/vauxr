@@ -17,7 +17,7 @@ import pipeline
 import wyoming_stt
 import wyoming_tts
 from channel_server import ChannelServer
-from pipeline import resolve_follow_up, run_voice_turn
+from pipeline import resolve_follow_up, run_text_turn, run_voice_turn
 
 
 # --- Test doubles ---
@@ -379,3 +379,17 @@ async def test_audio_end_no_active_channel(monkeypatch: pytest.MonkeyPatch) -> N
     await run_voice_turn("dev1", [b"\x00" * 100], ws, None, ChannelServer(), asyncio.Event())
     end = next(m for m in ws.json_messages() if m.get("type") == "audio.end")
     assert end.get("follow_up") is False
+
+
+@pytest.mark.asyncio
+async def test_run_text_turn_skips_stt(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_direct_active()
+    _patch_tts(monkeypatch)
+    ws = FakeWs()
+    oc = FakeOpenClawClient(["Done."])
+    dev_reg.register("dev1", ws=ws)
+    await run_text_turn("dev1", "turn off the lights", ws, oc, ChannelServer(), asyncio.Event())
+    msgs = ws.json_messages()
+    assert any(m.get("type") == "transcript" and m.get("text") == "turn off the lights" for m in msgs)
+    assert any(m.get("type") == "audio.end" for m in msgs)
+    assert oc.calls and oc.calls[0][1] == "turn off the lights"

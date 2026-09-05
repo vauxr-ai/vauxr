@@ -1,15 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deriveHttpUrl, useHttpApi } from "../hooks/useHttpApi";
+import { type ApiWebhook, useWebhooks } from "../hooks/useWebhooks";
 import type { ConnectionState, LogEntry } from "../hooks/useWebSocket";
 import Icon from "./Icon";
 
 type FollowUpMode = "auto" | "always" | "never";
+type GestureId = "double_press" | "triple_press" | "long_press";
+type ActionKind = "none" | "prompt" | "announce" | "command" | "webhook";
+
+interface ButtonAction {
+  kind: ActionKind;
+  text?: string;
+  command?: string;
+  volume?: number;
+  webhook_id?: string;
+}
 
 interface DeviceConfig {
   name?: string;
   follow_up_mode?: FollowUpMode;
   output_sample_rate?: number;
   barge_in?: boolean;
+  button_actions?: Partial<Record<GestureId, ButtonAction>>;
 }
 
 interface ApiDeviceWithConfig {
@@ -40,6 +52,19 @@ const STATE_DOT: Record<string, string> = {
 
 const FOLLOW_UP_OPTIONS: FollowUpMode[] = ["auto", "always", "never"];
 const COMMANDS = ["set_volume", "mute", "unmute", "reboot", "ota", "set_barge_in"] as const;
+const GESTURE_ROWS: { id: GestureId; label: string }[] = [
+  { id: "double_press", label: "Double press" },
+  { id: "triple_press", label: "Triple press" },
+  { id: "long_press", label: "Long press" },
+];
+const ACTION_KINDS: { id: ActionKind; label: string }[] = [
+  { id: "none", label: "none" },
+  { id: "prompt", label: "prompt" },
+  { id: "announce", label: "announce" },
+  { id: "command", label: "command" },
+  { id: "webhook", label: "webhook" },
+];
+const BUTTON_COMMANDS = ["mute", "unmute", "reboot", "set_volume"] as const;
 
 interface SaveStatus {
   status: "saving" | "saved" | "error";
@@ -81,8 +106,10 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
   tokenRef.current = token;
 
   const api = useHttpApi(baseUrl, token);
+  const { listWebhooks } = useWebhooks(baseUrl, token);
 
   const [devices, setDevices] = useState<ApiDeviceWithConfig[]>([]);
+  const [webhooks, setWebhooks] = useState<ApiWebhook[]>([]);
   const [error, setError] = useState("");
   const [saveStatus, setSaveStatus] = useState<Record<string, SaveStatus>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -104,11 +131,16 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
       const body = await res.json();
       const list: ApiDeviceWithConfig[] = Array.isArray(body) ? body : (body.devices ?? []);
       setDevices(list);
+      try {
+        setWebhooks(await listWebhooks());
+      } catch {
+        // Webhooks are optional for the devices list; gesture editors degrade.
+      }
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [listWebhooks]);
 
   useEffect(() => {
     if (wsState === "disconnected") return;
@@ -205,6 +237,7 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
                 api={api}
                 addLog={addLog}
                 httpBase={baseUrl}
+                webhooks={webhooks}
               />
             ))}
           </ul>
@@ -223,6 +256,7 @@ interface DeviceCardProps {
   api: ReturnType<typeof useHttpApi>;
   addLog: (dir: LogEntry["dir"], text: string) => void;
   httpBase: string;
+  webhooks: ApiWebhook[];
 }
 
 function DeviceCard({
@@ -234,6 +268,7 @@ function DeviceCard({
   api,
   addLog,
   httpBase,
+  webhooks,
 }: DeviceCardProps) {
   const pill = STATE_PILL[device.state] ?? STATE_PILL.offline;
   const dot = STATE_DOT[device.state] ?? STATE_DOT.offline;
@@ -418,6 +453,35 @@ function DeviceCard({
                 </select>
               </label>
             </div>
+            <div className="space-y-2">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                Action button
+              </div>
+              {GESTURE_ROWS.map((row) => (
+                <GestureRow
+                  key={row.id}
+                  label={row.label}
+                  action={device.config?.button_actions?.[row.id]}
+                  webhooks={webhooks}
+                  disabled={saving}
+                  onChange={(next) => {
+                    const merged: Partial<Record<GestureId, ButtonAction>> = {
+                      ...(device.config?.button_actions ?? {}),
+                    };
+                    if (!next || next.kind === "none") {
+                      delete merged[row.id];
+                    } else {
+                      merged[row.id] = next;
+                    }
+                    onPatch(
+                      device.id,
+                      { button_actions: merged },
+                      `${row.label} → ${next?.kind ?? "none"}`,
+                    );
+                  }}
+                />
+              ))}
+            </div>
             {saveStatus?.status === "error" && (
               <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
                 {saveStatus.message ?? "Save failed"}
@@ -517,6 +581,166 @@ function DeviceCard({
         </div>
       )}
     </li>
+  );
+}
+
+function GestureRow({
+  label,
+  action,
+  webhooks,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  action?: ButtonAction;
+  webhooks: ApiWebhook[];
+  disabled: boolean;
+  onChange: (next: ButtonAction | undefined) => void;
+}) {
+  const [kindDraft, setKindDraft] = useState<ActionKind>(action?.kind ?? "none");
+  const [textDraft, setTextDraft] = useState(action?.text ?? "");
+  useEffect(() => {
+    setKindDraft(action?.kind ?? "none");
+  }, [action?.kind]);
+  useEffect(() => {
+    setTextDraft(action?.text ?? "");
+  }, [action?.text]);
+
+  const commitKind = (nextKind: ActionKind) => {
+    setKindDraft(nextKind);
+    if (nextKind === "none") {
+      onChange(undefined);
+      return;
+    }
+    if (nextKind === "prompt" || nextKind === "announce") {
+      const text = textDraft.trim();
+      if (text) onChange({ kind: nextKind, text });
+      return;
+    }
+    if (nextKind === "command") {
+      onChange({ kind: "command", command: action?.command ?? "mute" });
+      return;
+    }
+    const id = action?.webhook_id ?? webhooks[0]?.id;
+    if (!id) return;
+    onChange({ kind: "webhook", webhook_id: id });
+  };
+
+  const commitText = () => {
+    const trimmed = textDraft.trim();
+    if (kindDraft !== "prompt" && kindDraft !== "announce") return;
+    if (trimmed === (action?.text ?? "") && action?.kind === kindDraft) return;
+    if (!trimmed) {
+      onChange(undefined);
+      setKindDraft("none");
+      return;
+    }
+    onChange({ kind: kindDraft, text: trimmed });
+  };
+
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <label className={labelClass + " w-28"}>
+        {label}
+        <select
+          className={inputClass}
+          value={kindDraft}
+          disabled={disabled}
+          aria-label={`${label} action`}
+          onChange={(e) => commitKind(e.target.value as ActionKind)}
+        >
+          {ACTION_KINDS.map((k) => (
+            <option key={k.id} value={k.id}>
+              {k.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {(kindDraft === "prompt" || kindDraft === "announce") && (
+        <label className={labelClass + " min-w-[180px] flex-1"}>
+          Text
+          <input
+            className={inputClass}
+            value={textDraft}
+            disabled={disabled}
+            aria-label={`${label} text`}
+            onChange={(e) => setTextDraft(e.target.value)}
+            onBlur={commitText}
+            placeholder={kindDraft === "prompt" ? "turn off the kitchen lights" : "Goodnight"}
+          />
+        </label>
+      )}
+      {kindDraft === "command" && (
+        <>
+          <label className={labelClass}>
+            Command
+            <select
+              className={inputClass}
+              value={action?.command ?? "mute"}
+              disabled={disabled}
+              aria-label={`${label} command`}
+              onChange={(e) => {
+                const command = e.target.value;
+                if (command === "set_volume") {
+                  onChange({ kind: "command", command, volume: action?.volume ?? 50 });
+                } else {
+                  onChange({ kind: "command", command });
+                }
+              }}
+            >
+              {BUTTON_COMMANDS.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+          {action?.command === "set_volume" && (
+            <label className={labelClass}>
+              Volume
+              <input
+                type="number"
+                min={0}
+                max={100}
+                className={inputClass + " w-20"}
+                value={action.volume ?? 50}
+                disabled={disabled}
+                aria-label={`${label} volume`}
+                onChange={(e) =>
+                  onChange({
+                    kind: "command",
+                    command: "set_volume",
+                    volume: Number(e.target.value),
+                  })
+                }
+              />
+            </label>
+          )}
+        </>
+      )}
+      {kindDraft === "webhook" && (
+        <label className={labelClass + " min-w-[160px] flex-1"}>
+          Webhook
+          <select
+            className={inputClass}
+            value={action?.webhook_id ?? ""}
+            disabled={disabled || webhooks.length === 0}
+            aria-label={`${label} webhook`}
+            onChange={(e) => onChange({ kind: "webhook", webhook_id: e.target.value })}
+          >
+            {webhooks.length === 0 ? (
+              <option value="">Add a webhook in Settings</option>
+            ) : (
+              webhooks.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+      )}
+    </div>
   );
 }
 
