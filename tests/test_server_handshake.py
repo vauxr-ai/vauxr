@@ -136,3 +136,61 @@ async def test_device_button_is_not_unknown_message(client: TestClient) -> None:
         err = await _recv_json(ws)
         assert err["code"] == "UNKNOWN_MESSAGE"
         assert "not.a.real.type" in err["message"]
+
+
+async def test_device_button_without_hello_is_ignored(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called: list[str] = []
+
+    async def fake_handle(**kwargs):
+        called.append(kwargs.get("device_id") or "")
+
+    monkeypatch.setattr("button_dispatch.handle_device_button", fake_handle)
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json(
+            {
+                "type": "device.button",
+                "device_id": "victim",
+                "button": "action",
+                "gesture": "double_press",
+            }
+        )
+        await ws.send_json({"type": "not.a.real.type"})
+        err = await _recv_json(ws)
+        assert err["code"] == "UNKNOWN_MESSAGE"
+    assert called == []
+
+
+async def test_device_button_ignores_spoofed_device_id(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called: list[str] = []
+
+    async def fake_handle(**kwargs):
+        called.append(kwargs.get("device_id") or "")
+
+    monkeypatch.setattr("button_dispatch.handle_device_button", fake_handle)
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json(
+            {
+                "type": "hello",
+                "device_id": "dev1",
+                "token": "ws-test-token",
+                "caps": ["ws"],
+            }
+        )
+        hello = await _recv_json(ws)
+        assert hello["type"] == "hello"
+        await ws.send_json(
+            {
+                "type": "device.button",
+                "device_id": "victim",
+                "button": "action",
+                "gesture": "double_press",
+            }
+        )
+        await ws.send_json({"type": "not.a.real.type"})
+        err = await _recv_json(ws)
+        assert err["code"] == "UNKNOWN_MESSAGE"
+    assert called == ["dev1"]

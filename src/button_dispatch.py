@@ -179,9 +179,10 @@ async def _dispatch_prompt(
     from realtime_session import get_manager
 
     manager = get_manager()
-    # Live open-mic realtime (not idle/warm): seed into Pipecat so TTS rides
-    # the WebRTC track. Idle/warm-quiet has media paused — use the WS path.
-    if manager.has_live_session(device_id) and entry.state not in ("idle",):
+    # Live Pipecat session (including idle/warm-quiet): seed so TTS rides the
+    # WebRTC track and the conversation log stays on the same LLMContext.
+    # Classic WS devices have no session — run_text_turn over 0x02.
+    if manager.has_live_session(device_id):
         await manager.seed_text_turn(device_id, text)
         return
 

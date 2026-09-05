@@ -179,12 +179,13 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
 
 
 async def _device_button(state: AppState, ctx: ConnectionCtx, msg: dict[str, Any]) -> None:
-    device_id = ctx.device_id if isinstance(ctx.device_id, str) else msg.get("device_id")
+    # Only the device_id bound by an authenticated hello / voice.start /
+    # realtime.start. Never trust msg.device_id — an unauthenticated socket
+    # must not fire another device's webhook, mute, reboot, or prompt.
+    device_id = ctx.device_id
     if not isinstance(device_id, str) or not device_id:
-        log.warning("device.button missing device_id")
+        log.warning("device.button ignored (no authenticated hello)")
         return
-    if ctx.device_id is None:
-        ctx.device_id = device_id
     button = msg.get("button") if isinstance(msg.get("button"), str) else "action"
     gesture = msg.get("gesture") if isinstance(msg.get("gesture"), str) else ""
     from button_dispatch import handle_device_button
