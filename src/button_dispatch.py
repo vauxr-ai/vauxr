@@ -72,7 +72,7 @@ async def _dispatch_webhook(device_id: str, button: str, gesture: str, action: B
     if hook is None:
         log.warning("device.button webhook %r not found (device %s)", webhook_id, device_id)
         return
-    payload = {
+    payload = hook.body if hook.body else {
         "type": "vauxr.button_press",
         "device_id": device_id,
         "button": button,

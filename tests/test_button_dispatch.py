@@ -194,3 +194,53 @@ async def test_webhook_posts_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     assert posted[0]["json"]["gesture"] == "triple_press"
     assert posted[0]["json"]["device_id"] == "dev1"
     assert posted[0]["headers"]["Authorization"] == "Bearer tok"
+
+
+async def test_webhook_posts_configured_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = FakeWs()
+    registry.register("dev1", ws=ws)
+    hook = webhooks.create(
+        "Lights low",
+        "http://ha.example/api/services/scene/turn_on",
+        "Bearer tok",
+        {"entity_id": "scene.lights_low"},
+    )
+    registry.update_config(
+        "dev1",
+        {"button_actions": {"double_press": {"kind": "webhook", "webhook_id": hook.id}}},
+    )
+    posted: list[dict[str, Any]] = []
+
+    class FakeResp:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class FakeSession:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        def post(self, url, json, headers):
+            posted.append({"url": url, "json": json, "headers": headers})
+            return FakeResp()
+
+    monkeypatch.setattr(button_dispatch.aiohttp, "ClientSession", FakeSession)
+    await button_dispatch.handle_device_button(
+        device_id="dev1",
+        button="action",
+        gesture="double_press",
+        openclaw_client=None,
+        channel_server=ChannelServer(),
+    )
+    assert posted[0]["json"] == {"entity_id": "scene.lights_low"}
+    assert posted[0]["url"] == "http://ha.example/api/services/scene/turn_on"

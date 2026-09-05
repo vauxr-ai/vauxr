@@ -5,6 +5,7 @@ export interface ApiWebhook {
   name: string;
   url: string;
   has_authorization: boolean;
+  body?: Record<string, unknown> | null;
 }
 
 export function useWebhooks(baseUrl: string, token: string) {
@@ -40,10 +41,20 @@ export function useWebhooks(baseUrl: string, token: string) {
   }, [request]);
 
   const createWebhook = useCallback(
-    async (name: string, url: string, authorization?: string): Promise<ApiWebhook> => {
+    async (
+      name: string,
+      url: string,
+      authorization?: string,
+      body?: Record<string, unknown>,
+    ): Promise<ApiWebhook> => {
       const res = await request("/api/webhooks", {
         method: "POST",
-        body: JSON.stringify({ name, url, authorization: authorization || undefined }),
+        body: JSON.stringify({
+          name,
+          url,
+          authorization: authorization || undefined,
+          body: body ?? undefined,
+        }),
       });
       return await res.json();
     },
@@ -53,7 +64,12 @@ export function useWebhooks(baseUrl: string, token: string) {
   const updateWebhook = useCallback(
     async (
       id: string,
-      patch: { name?: string; url?: string; authorization?: string },
+      patch: {
+        name?: string;
+        url?: string;
+        authorization?: string;
+        body?: Record<string, unknown> | null;
+      },
     ): Promise<ApiWebhook> => {
       const res = await request(`/api/webhooks/${encodeURIComponent(id)}`, {
         method: "PATCH",

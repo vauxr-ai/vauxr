@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,38 @@ def test_create_and_list_round_trip() -> None:
     public = webhooks.public_dict(listed[0])
     assert "authorization" not in public
     assert public["has_authorization"] is True
+    assert public["body"] is None
+
+
+def test_create_with_body_round_trip(tmp_path: Path) -> None:
+    hook = webhooks.create(
+        "Lights low",
+        "http://ha.local:8123/api/services/scene/turn_on",
+        "Bearer secret",
+        {"entity_id": "scene.lights_low"},
+    )
+    assert hook.body == {"entity_id": "scene.lights_low"}
+    public = webhooks.public_dict(hook)
+    assert public["body"] == {"entity_id": "scene.lights_low"}
+    webhooks.reset_for_tests()
+    webhooks.load()
+    loaded = webhooks.get(hook.id)
+    assert loaded is not None
+    assert loaded.body == {"entity_id": "scene.lights_low"}
+    disk = json.loads((tmp_path / "webhooks.json").read_text())
+    assert disk["webhooks"][0]["body"] == {"entity_id": "scene.lights_low"}
+
+
+def test_parse_body_rejects_non_object() -> None:
+    parsed, err = webhooks.parse_body("[1]")
+    assert parsed is None
+    assert err is not None
+    parsed, err = webhooks.parse_body("")
+    assert parsed is None
+    assert err is None
+    parsed, err = webhooks.parse_body({"entity_id": "scene.x"})
+    assert parsed == {"entity_id": "scene.x"}
+    assert err is None
 
 
 def test_validate_url_rejects_non_http() -> None:
@@ -112,5 +145,38 @@ async def test_http_create_webhook_rejects_bad_url(client: TestClient) -> None:
         "/api/webhooks",
         headers=_auth(),
         json={"name": "x", "url": "not-a-url"},
+    )
+    assert res.status == 400
+
+
+async def test_http_create_webhook_with_body(client: TestClient) -> None:
+    res = await client.post(
+        "/api/webhooks",
+        headers=_auth(),
+        json={
+            "name": "Lights low",
+            "url": "http://ha.local:8123/api/services/scene/turn_on",
+            "body": {"entity_id": "scene.lights_low"},
+        },
+    )
+    assert res.status == 201
+    body = await res.json()
+    assert body["body"] == {"entity_id": "scene.lights_low"}
+
+    res = await client.patch(
+        f"/api/webhooks/{body['id']}",
+        headers=_auth(),
+        json={"body": None},
+    )
+    assert res.status == 200
+    updated = await res.json()
+    assert updated["body"] is None
+
+
+async def test_http_create_webhook_rejects_bad_body(client: TestClient) -> None:
+    res = await client.post(
+        "/api/webhooks",
+        headers=_auth(),
+        json={"name": "x", "url": "http://ok.example/h", "body": ["nope"]},
     )
     assert res.status == 400

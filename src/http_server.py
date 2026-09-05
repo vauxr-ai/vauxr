@@ -321,9 +321,9 @@ async def list_webhooks(_request: web.Request) -> web.Response:
     return web.json_response([webhooks.public_dict(w) for w in webhooks.get_all()])
 
 
-def _webhook_fields(body: dict[str, Any], *, require_name_url: bool) -> tuple[dict[str, str], str | None]:
-    """Pull name/url/authorization from a JSON body. Returns (fields, error)."""
-    fields: dict[str, str] = {}
+def _webhook_fields(body: dict[str, Any], *, require_name_url: bool) -> tuple[dict[str, Any], str | None]:
+    """Pull name/url/authorization/body from a JSON body. Returns (fields, error)."""
+    fields: dict[str, Any] = {}
     if "name" in body or require_name_url:
         name = body.get("name")
         if not isinstance(name, str) or not name.strip():
@@ -345,6 +345,11 @@ def _webhook_fields(body: dict[str, Any], *, require_name_url: bool) -> tuple[di
             return {}, "authorization must be a string"
         else:
             fields["authorization"] = auth
+    if "body" in body:
+        parsed, err = webhooks.parse_body(body.get("body"))
+        if err:
+            return {}, err
+        fields["body"] = parsed
     return fields, None
 
 
@@ -359,7 +364,12 @@ async def create_webhook(request: web.Request) -> web.Response:
     fields, err = _webhook_fields(body, require_name_url=True)
     if err:
         return web.json_response({"error": err}, status=400)
-    hook = webhooks.create(fields["name"], fields["url"], fields.get("authorization", ""))
+    hook = webhooks.create(
+        fields["name"],
+        fields["url"],
+        fields.get("authorization", ""),
+        fields.get("body"),
+    )
     log.info("201 webhook created: %s (%s)", hook.name, hook.id)
     return web.json_response(webhooks.public_dict(hook), status=201)
 
@@ -378,12 +388,14 @@ async def update_webhook(request: web.Request) -> web.Response:
     fields, err = _webhook_fields(body, require_name_url=False)
     if err:
         return web.json_response({"error": err}, status=400)
-    hook = webhooks.update(
-        webhook_id,
-        name=fields.get("name"),
-        url=fields.get("url"),
-        authorization=fields["authorization"] if "authorization" in fields else None,
-    )
+    kwargs: dict[str, Any] = {
+        "name": fields.get("name"),
+        "url": fields.get("url"),
+        "authorization": fields["authorization"] if "authorization" in fields else None,
+    }
+    if "body" in fields:
+        kwargs["body"] = fields["body"]
+    hook = webhooks.update(webhook_id, **kwargs)
     if hook is None:
         return web.json_response({"error": "webhook not found"}, status=404)
     log.info("200 webhook updated: %s", webhook_id)

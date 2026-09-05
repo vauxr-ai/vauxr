@@ -23,6 +23,20 @@ const ghostBtn =
 const dangerBtn =
   "focus-ring inline-flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1.5 text-xs font-medium text-red-300 hover:bg-red-500/20";
 
+function parseBodyField(text: string): { body?: Record<string, unknown> | null; error?: string } {
+  const trimmed = text.trim();
+  if (!trimmed) return { body: null };
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { error: "Body must be a JSON object" };
+    }
+    return { body: parsed as Record<string, unknown> };
+  } catch {
+    return { error: "Body must be valid JSON" };
+  }
+}
+
 export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) {
   const httpUrl = deriveHttpUrl(wsUrl);
   const api = useWebhooks(httpUrl, token);
@@ -33,10 +47,12 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [authorization, setAuthorization] = useState("");
+  const [bodyText, setBodyText] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editUrl, setEditUrl] = useState("");
   const [editAuth, setEditAuth] = useState("");
+  const [editBody, setEditBody] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -57,12 +73,23 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
 
   const handleCreate = async () => {
     setError("");
+    const parsed = parseBodyField(bodyText);
+    if (parsed.error) {
+      setError(parsed.error);
+      return;
+    }
     try {
-      const created = await api.createWebhook(name.trim(), url.trim(), authorization.trim());
+      const created = await api.createWebhook(
+        name.trim(),
+        url.trim(),
+        authorization.trim(),
+        parsed.body ?? undefined,
+      );
       addLog("sys", `Webhook created: ${created.name}`);
       setName("");
       setUrl("");
       setAuthorization("");
+      setBodyText("");
       setShowAdd(false);
       await refresh();
     } catch (err) {
@@ -74,10 +101,21 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
 
   const handleSaveEdit = async (id: string) => {
     setError("");
+    const parsed = parseBodyField(editBody);
+    if (parsed.error) {
+      setError(parsed.error);
+      return;
+    }
     try {
-      const patch: { name: string; url: string; authorization?: string } = {
+      const patch: {
+        name: string;
+        url: string;
+        authorization?: string;
+        body: Record<string, unknown> | null;
+      } = {
         name: editName.trim(),
         url: editUrl.trim(),
+        body: parsed.body ?? null,
       };
       if (editAuth.trim()) patch.authorization = editAuth.trim();
       await api.updateWebhook(id, patch);
@@ -155,7 +193,7 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                 className={inputClass}
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                placeholder="http://homeassistant.local:8123/api/events/vauxr.button_press"
+                placeholder="https://homeassistant.local:8123/api/services/scene/turn_on"
               />
             </label>
           </div>
@@ -170,15 +208,25 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                 placeholder="Bearer eyJ… (optional)"
               />
             </label>
-            <button
-              className={primaryBtn}
-              onClick={handleCreate}
-              disabled={!name.trim() || !url.trim()}
-              type="button"
-            >
-              Create
-            </button>
           </div>
+          <label className="flex flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+            JSON body
+            <textarea
+              className={inputClass + " min-h-[72px] font-mono text-xs"}
+              value={bodyText}
+              onChange={(e) => setBodyText(e.target.value)}
+              placeholder='{"entity_id":"scene.living_room"}'
+              spellCheck={false}
+            />
+          </label>
+          <button
+            className={primaryBtn}
+            onClick={handleCreate}
+            disabled={!name.trim() || !url.trim()}
+            type="button"
+          >
+            Create
+          </button>
         </div>
       )}
 
@@ -223,6 +271,14 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                       }
                       aria-label="Authorization header"
                     />
+                    <textarea
+                      className={inputClass + " min-h-[72px] w-full font-mono text-xs"}
+                      value={editBody}
+                      onChange={(e) => setEditBody(e.target.value)}
+                      placeholder='{"entity_id":"scene.living_room"}'
+                      aria-label="JSON body"
+                      spellCheck={false}
+                    />
                     <div className="flex gap-2">
                       <button className={primaryBtn} type="button" onClick={() => handleSaveEdit(hook.id)}>
                         Save
@@ -237,6 +293,11 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                     <div className="min-w-0">
                       <div className="truncate font-medium text-zinc-200">{hook.name}</div>
                       <div className="truncate font-mono text-[11px] text-zinc-500">{hook.url}</div>
+                      {hook.body && (
+                        <div className="mt-1 truncate font-mono text-[11px] text-zinc-600">
+                          {JSON.stringify(hook.body)}
+                        </div>
+                      )}
                       {hook.has_authorization && (
                         <div className="mt-1 text-[10px] uppercase tracking-wider text-zinc-600">
                           Authorization set
@@ -252,6 +313,7 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                           setEditName(hook.name);
                           setEditUrl(hook.url);
                           setEditAuth("");
+                          setEditBody(hook.body ? JSON.stringify(hook.body, null, 2) : "");
                         }}
                       >
                         Edit

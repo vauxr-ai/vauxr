@@ -85,8 +85,8 @@ All endpoints require `Authorization: Bearer <channel-token>` — a `vx_ch_…` 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/webhooks` | List webhooks (authorization secrets are never returned) |
-| `POST` | `/api/webhooks` | Create a webhook (`name`, `url`, optional `authorization`) |
-| `PATCH` | `/api/webhooks/{id}` | Update name / url / authorization |
+| `POST` | `/api/webhooks` | Create a webhook (`name`, `url`, optional `authorization`, optional JSON `body`) |
+| `PATCH` | `/api/webhooks/{id}` | Update name / url / authorization / body |
 | `DELETE` | `/api/webhooks/{id}` | Delete a webhook |
 
 A Postman collection is included at `postman/vauxr.postman_collection.json` — run the Channels folder top-to-bottom to exercise the full create → activate → rotate → channel-token-auth → delete flow.
