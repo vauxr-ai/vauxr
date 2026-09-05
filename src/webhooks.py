@@ -210,6 +210,32 @@ def remove(webhook_id: str) -> bool:
     return True
 
 
+def _unique_copy_name(name: str) -> str:
+    taken = {w.name for w in _webhooks}
+    candidate = f"{name} copy"
+    if candidate not in taken:
+        return candidate
+    n = 2
+    while True:
+        candidate = f"{name} copy {n}"
+        if candidate not in taken:
+            return candidate
+        n += 1
+
+
+def duplicate(webhook_id: str) -> Webhook | None:
+    """Clone a webhook including the authorization secret. Returns None if missing."""
+    hook = get(webhook_id)
+    if hook is None:
+        return None
+    return create(
+        name=_unique_copy_name(hook.name),
+        url=hook.url,
+        authorization=hook.authorization,
+        body=dict(hook.body) if hook.body is not None else None,
+    )
+
+
 def public_dict(hook: Webhook) -> dict[str, Any]:
     """JSON for the HTTP API — never includes the authorization secret."""
     return {

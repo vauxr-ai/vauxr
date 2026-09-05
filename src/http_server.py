@@ -411,6 +411,16 @@ async def delete_webhook(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+@_require_auth
+async def duplicate_webhook(request: web.Request) -> web.Response:
+    webhook_id = request.match_info["webhook_id"]
+    hook = webhooks.duplicate(webhook_id)
+    if hook is None:
+        return web.json_response({"error": "webhook not found"}, status=404)
+    log.info("201 webhook duplicated: %s (%s)", hook.name, hook.id)
+    return web.json_response(webhooks.public_dict(hook), status=201)
+
+
 # --- Static files ---
 
 
@@ -473,6 +483,7 @@ def attach_http_routes(app: web.Application) -> None:
     app.router.add_post("/api/webhooks", create_webhook)
     app.router.add_patch("/api/webhooks/{webhook_id}", update_webhook)
     app.router.add_delete("/api/webhooks/{webhook_id}", delete_webhook)
+    app.router.add_post("/api/webhooks/{webhook_id}/duplicate", duplicate_webhook)
     app.router.add_get("/firmware/{filename}", serve_firmware)
 
 

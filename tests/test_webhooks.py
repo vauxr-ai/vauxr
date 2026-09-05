@@ -95,6 +95,41 @@ def test_load_from_disk(tmp_path: Path) -> None:
     assert listed[0].name == "Kitchen"
 
 
+def test_duplicate_copies_secret_but_public_omits_it(tmp_path: Path) -> None:
+    hook = webhooks.create(
+        "Lights low",
+        "http://ha.local:8123/api/services/scene/turn_on",
+        "Bearer secret",
+        {"entity_id": "scene.lights_low"},
+    )
+    clone = webhooks.duplicate(hook.id)
+    assert clone is not None
+    assert clone.id != hook.id
+    assert clone.name == "Lights low copy"
+    assert clone.url == hook.url
+    assert clone.authorization == "Bearer secret"
+    assert clone.body == {"entity_id": "scene.lights_low"}
+    assert clone.body is not hook.body
+    public = webhooks.public_dict(clone)
+    assert "authorization" not in public
+    assert public["has_authorization"] is True
+    disk = json.loads((tmp_path / "webhooks.json").read_text())
+    by_id = {w["id"]: w for w in disk["webhooks"]}
+    assert by_id[clone.id]["authorization"] == "Bearer secret"
+
+
+def test_duplicate_unique_copy_names() -> None:
+    hook = webhooks.create("HA", "http://ha.local/hook")
+    first = webhooks.duplicate(hook.id)
+    second = webhooks.duplicate(hook.id)
+    third = webhooks.duplicate(hook.id)
+    assert first is not None and second is not None and third is not None
+    assert first.name == "HA copy"
+    assert second.name == "HA copy 2"
+    assert third.name == "HA copy 3"
+    assert webhooks.duplicate("wh_missing") is None
+
+
 # --- HTTP API ---
 
 
@@ -180,3 +215,38 @@ async def test_http_create_webhook_rejects_bad_body(client: TestClient) -> None:
         json={"name": "x", "url": "http://ok.example/h", "body": ["nope"]},
     )
     assert res.status == 400
+
+
+async def test_http_duplicate_webhook(client: TestClient, tmp_path: Path) -> None:
+    res = await client.post(
+        "/api/webhooks",
+        headers=_auth(),
+        json={
+            "name": "HA",
+            "url": "http://ha.local/hook",
+            "authorization": "Bearer s",
+            "body": {"entity_id": "scene.x"},
+        },
+    )
+    assert res.status == 201
+    src = await res.json()
+    assert "authorization" not in src
+
+    res = await client.post(f"/api/webhooks/{src['id']}/duplicate", headers=_auth())
+    assert res.status == 201
+    clone = await res.json()
+    assert clone["name"] == "HA copy"
+    assert clone["url"] == src["url"]
+    assert clone["body"] == {"entity_id": "scene.x"}
+    assert clone["has_authorization"] is True
+    assert "authorization" not in clone
+    assert clone["id"] != src["id"]
+
+    disk = json.loads((tmp_path / "webhooks.json").read_text())
+    by_id = {w["id"]: w for w in disk["webhooks"]}
+    assert by_id[clone["id"]]["authorization"] == "Bearer s"
+
+
+async def test_http_duplicate_webhook_404(client: TestClient) -> None:
+    res = await client.post("/api/webhooks/wh_missing/duplicate", headers=_auth())
+    assert res.status == 404

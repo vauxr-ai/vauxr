@@ -23,6 +23,40 @@ const ghostBtn =
 const dangerBtn =
   "focus-ring inline-flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1.5 text-xs font-medium text-red-300 hover:bg-red-500/20";
 
+function AuthInput({
+  value,
+  onChange,
+  placeholder,
+  "aria-label": ariaLabel,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  "aria-label"?: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative w-full">
+      <input
+        type={visible ? "text" : "password"}
+        className={inputClass + " w-full pr-10"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+      />
+      <button
+        type="button"
+        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 hover:text-zinc-300"
+        aria-label={visible ? "Hide authorization" : "Show authorization"}
+        onClick={() => setVisible((v) => !v)}
+      >
+        <Icon name={visible ? "eye-off" : "eye"} size={16} />
+      </button>
+    </div>
+  );
+}
+
 function parseBodyField(text: string): { body?: Record<string, unknown> | null; error?: string } {
   const trimmed = text.trim();
   if (!trimmed) return { body: null };
@@ -129,6 +163,19 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
     }
   };
 
+  const handleDuplicate = async (id: string) => {
+    setError("");
+    try {
+      const created = await api.duplicateWebhook(id);
+      addLog("sys", `Webhook duplicated: ${created.name}`);
+      await refresh();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      addLog("sys", `Webhook duplicate error: ${msg}`);
+    }
+  };
+
   const handleDelete = async (id: string) => {
     setError("");
     setConfirmDelete(null);
@@ -200,11 +247,9 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex min-w-[240px] flex-1 flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
               Authorization header
-              <input
-                type="password"
-                className={inputClass}
+              <AuthInput
                 value={authorization}
-                onChange={(e) => setAuthorization(e.target.value)}
+                onChange={setAuthorization}
                 placeholder="Bearer eyJ… (optional)"
               />
             </label>
@@ -259,11 +304,9 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                       onChange={(e) => setEditUrl(e.target.value)}
                       aria-label="Webhook URL"
                     />
-                    <input
-                      type="password"
-                      className={inputClass + " w-full"}
+                    <AuthInput
                       value={editAuth}
-                      onChange={(e) => setEditAuth(e.target.value)}
+                      onChange={setEditAuth}
                       placeholder={
                         hook.has_authorization
                           ? "Leave blank to keep existing authorization"
@@ -317,6 +360,13 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                         }}
                       >
                         Edit
+                      </button>
+                      <button
+                        className={ghostBtn}
+                        type="button"
+                        onClick={() => handleDuplicate(hook.id)}
+                      >
+                        Duplicate
                       </button>
                       {confirmDelete === hook.id ? (
                         <>

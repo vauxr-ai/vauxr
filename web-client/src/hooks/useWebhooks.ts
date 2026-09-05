@@ -84,5 +84,12 @@ export function useWebhooks(baseUrl: string, token: string) {
     await request(`/api/webhooks/${encodeURIComponent(id)}`, { method: "DELETE" });
   }, [request]);
 
-  return { listWebhooks, createWebhook, updateWebhook, deleteWebhook };
+  const duplicateWebhook = useCallback(async (id: string): Promise<ApiWebhook> => {
+    const res = await request(`/api/webhooks/${encodeURIComponent(id)}/duplicate`, {
+      method: "POST",
+    });
+    return await res.json();
+  }, [request]);
+
+  return { listWebhooks, createWebhook, updateWebhook, deleteWebhook, duplicateWebhook };
 }

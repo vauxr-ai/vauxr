@@ -76,4 +76,84 @@ describe("SettingsPanel", () => {
       });
     });
   });
+
+  it("duplicates a webhook via POST /api/webhooks/{id}/duplicate", async () => {
+    const user = userEvent.setup();
+    const existing = {
+      id: "wh_1",
+      name: "HA",
+      url: "http://ha.local/hook",
+      has_authorization: true,
+    };
+    const cloned = {
+      id: "wh_2",
+      name: "HA copy",
+      url: "http://ha.local/hook",
+      has_authorization: true,
+    };
+    fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
+      const path = String(url);
+      if (init?.method === "POST" && path.includes("/duplicate")) {
+        return Promise.resolve(jsonResponse(cloned, true, 201));
+      }
+      if (path.includes("/api/webhooks")) {
+        const posted = fetchSpy.mock.calls.some(
+          (c) =>
+            String(c[0]).includes("/duplicate") &&
+            (c[1] as RequestInit | undefined)?.method === "POST",
+        );
+        return Promise.resolve(jsonResponse(posted ? [existing, cloned] : [existing]));
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+
+    const addLog = vi.fn();
+    render(
+      <SettingsPanel
+        wsUrl="ws://localhost:8765/ws"
+        token="tok"
+        wsState="connected"
+        addLog={addLog}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("HA")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /^duplicate$/i }));
+
+    await waitFor(() => {
+      const post = fetchSpy.mock.calls.find(
+        (c) =>
+          String(c[0]).includes("/api/webhooks/wh_1/duplicate") &&
+          (c[1] as RequestInit | undefined)?.method === "POST",
+      );
+      expect(post).toBeDefined();
+      expect(addLog).toHaveBeenCalledWith("sys", "Webhook duplicated: HA copy");
+    });
+  });
+
+  it("toggles authorization visibility on the add form", async () => {
+    const user = userEvent.setup();
+    render(
+      <SettingsPanel
+        wsUrl="ws://localhost:8765/ws"
+        token="tok"
+        wsState="connected"
+        addLog={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Webhooks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /add webhook/i }));
+    const input = screen.getByPlaceholderText(/bearer eyj/i);
+    expect(input).toHaveAttribute("type", "password");
+    await user.click(screen.getByRole("button", { name: /show authorization/i }));
+    expect(input).toHaveAttribute("type", "text");
+    expect(screen.getByRole("button", { name: /hide authorization/i })).toBeInTheDocument();
+  });
 });
