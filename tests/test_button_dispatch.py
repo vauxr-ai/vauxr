@@ -144,6 +144,78 @@ async def test_prompt_seeds_idle_warm_realtime_session(monkeypatch: pytest.Monke
     )
     assert seeded == [("dev1", "hi")]
     fake.assert_not_called()
+    assert registry.get("dev1").state == "processing"
+
+
+async def test_prompt_second_seed_dropped_while_processing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = FakeWs()
+    registry.register("dev1", ws=ws)
+    registry.update_config(
+        "dev1",
+        {"button_actions": {"double_press": {"kind": "prompt", "text": "hi"}}},
+    )
+    seeded: list[str] = []
+
+    class _Mgr:
+        def has_live_session(self, device_id: str) -> bool:
+            return device_id == "dev1"
+
+        async def seed_text_turn(self, device_id: str, text: str) -> bool:
+            seeded.append(text)
+            return True
+
+    monkeypatch.setattr("realtime_session.get_manager", lambda: _Mgr())
+    fake = AsyncMock()
+    monkeypatch.setattr(button_dispatch, "run_text_turn", fake)
+
+    await button_dispatch.handle_device_button(
+        device_id="dev1",
+        button="action",
+        gesture="double_press",
+        openclaw_client=None,
+        channel_server=ChannelServer(),
+    )
+    await button_dispatch.handle_device_button(
+        device_id="dev1",
+        button="action",
+        gesture="double_press",
+        openclaw_client=None,
+        channel_server=ChannelServer(),
+    )
+    assert seeded == ["hi"]
+    fake.assert_not_called()
+    assert registry.get("dev1").state == "processing"
+
+
+async def test_prompt_seed_miss_restores_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = FakeWs()
+    registry.register("dev1", ws=ws)
+    registry.update_config(
+        "dev1",
+        {"button_actions": {"double_press": {"kind": "prompt", "text": "hi"}}},
+    )
+
+    class _Mgr:
+        def has_live_session(self, device_id: str) -> bool:
+            return True
+
+        async def seed_text_turn(self, device_id: str, text: str) -> bool:
+            return False
+
+    monkeypatch.setattr("realtime_session.get_manager", lambda: _Mgr())
+    fake = AsyncMock()
+    monkeypatch.setattr(button_dispatch, "run_text_turn", fake)
+    await button_dispatch.handle_device_button(
+        device_id="dev1",
+        button="action",
+        gesture="double_press",
+        openclaw_client=None,
+        channel_server=ChannelServer(),
+    )
+    fake.assert_not_called()
+    assert registry.get("dev1").state == "idle"
 
 
 async def test_webhook_posts_payload(monkeypatch: pytest.MonkeyPatch) -> None:

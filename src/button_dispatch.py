@@ -176,6 +176,11 @@ async def _dispatch_prompt(
         log.info("device.button prompt dropped, device busy: %s", device_id)
         return
 
+    # Lock before any await so a second gesture cannot seed/run another turn
+    # on the same device. Live sessions restore idle/listening via audio.end;
+    # the WS path restores idle in the finally below.
+    registry.set_state(device_id, "processing")
+
     from realtime_session import get_manager
 
     manager = get_manager()
@@ -183,12 +188,19 @@ async def _dispatch_prompt(
     # WebRTC track and the conversation log stays on the same LLMContext.
     # Classic WS devices have no session — run_text_turn over 0x02.
     if manager.has_live_session(device_id):
-        await manager.seed_text_turn(device_id, text)
+        try:
+            seeded = await manager.seed_text_turn(device_id, text)
+        except Exception as err:  # noqa: BLE001
+            log.error("device.button prompt seed failed for %s: %s", device_id, err)
+            seeded = False
+        if not seeded:
+            e = registry.get(device_id)
+            if e is not None and e.state == "processing":
+                registry.set_state(device_id, "idle")
         return
 
     abort = asyncio.Event()
     entry.abort_event = abort
-    registry.set_state(device_id, "processing")
     try:
         await run_text_turn(
             device_id,
