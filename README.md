@@ -90,7 +90,7 @@ All endpoints require `Authorization: Bearer <channel-token>` — a `vx_ch_…` 
 | `DELETE` | `/api/webhooks/{id}` | Delete a webhook |
 | `POST` | `/api/webhooks/{id}/duplicate` | Clone a webhook (copies url, authorization, and body; unique `{name} copy` / `{name} copy N`) |
 
-A Postman collection is included at `postman/vauxr.postman_collection.json` — run the Channels folder top-to-bottom to exercise the full create → activate → rotate → channel-token-auth → delete flow.
+A Postman collection is included at `postman/vauxr.postman_collection.json` covering devices, announce, control (including `ota` and `set_barge_in`), channels, webhooks, and firmware download. Run the Channels folder top-to-bottom to exercise create → activate → rotate → channel-token-auth → delete; run Webhooks the same way so Create captures `webhook_id`.
 
 ## Architecture
 
