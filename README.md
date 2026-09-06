@@ -65,7 +65,7 @@ All endpoints require `Authorization: Bearer <channel-token>` — a `vx_ch_…` 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/devices` | List connected devices and state |
-| `PATCH` | `/api/devices/{id}` | Update device config (`name`, `voice`, `follow_up_mode`, `barge_in`) |
+| `PATCH` | `/api/devices/{id}` | Update device config (`name`, `voice`, `follow_up_mode`, `barge_in`, `button_actions`) |
 | `POST` | `/api/devices/{id}/announce` | Push TTS announcement to a device |
 | `POST` | `/api/devices/{id}/command` | Send control command (`set_volume`, `mute`, `unmute`, `reboot`, `ota`, `set_barge_in`) |
 | `GET` | `/firmware/{name}.bin` | Serve an app image from `DATA_DIR/firmware/` for device HTTP OTA |
@@ -79,6 +79,16 @@ All endpoints require `Authorization: Bearer <channel-token>` — a `vx_ch_…` 
 | `POST` | `/api/channels/{id}/activate` | Make this channel the active routing target |
 | `POST` | `/api/channels/{id}/rotate` | Issue a new token for the channel; the old one stops working immediately |
 | `DELETE` | `/api/channels/{id}` | Remove a channel (built-in channels can't be deleted) |
+
+**Webhooks** — named HTTP endpoints configured in Settings, then selected per device gesture.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/webhooks` | List webhooks (authorization secrets are never returned) |
+| `POST` | `/api/webhooks` | Create a webhook (`name`, `url`, optional `authorization`, optional JSON `body`) |
+| `PATCH` | `/api/webhooks/{id}` | Update name / url / authorization / body |
+| `DELETE` | `/api/webhooks/{id}` | Delete a webhook |
+| `POST` | `/api/webhooks/{id}/duplicate` | Clone a webhook (copies url, authorization, and body; unique `{name} copy` / `{name} copy N`) |
 
 A Postman collection is included at `postman/vauxr.postman_collection.json` — run the Channels folder top-to-bottom to exercise the full create → activate → rotate → channel-token-auth → delete flow.
 

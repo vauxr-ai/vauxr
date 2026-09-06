@@ -378,6 +378,31 @@ async def run_voice_turn(
         await _send_audio_end(ws, False)
         return
 
+    await run_text_turn(
+        device_id, transcript_text, ws, openclaw_client, channel_server, abort, target_rate
+    )
+
+
+async def run_text_turn(
+    device_id: str,
+    transcript_text: str,
+    ws: Any,
+    openclaw_client: "OpenClawClient | None",
+    channel_server: "ChannelServer",
+    abort: asyncio.Event,
+    target_rate: int | None = None,
+) -> None:
+    """Drive a turn from already-known user text (no STT). Used by voice turns
+    after Whisper and by action-button prompt mappings.
+    """
+    if abort.is_set():
+        return
+
+    transcript_text = (transcript_text or "").strip()
+    if not transcript_text:
+        await _send_audio_end(ws, False)
+        return
+
     log.info("Transcript for %s: %r", device_id, transcript_text)
     await _send_json(ws, {"type": "transcript", "text": transcript_text})
 

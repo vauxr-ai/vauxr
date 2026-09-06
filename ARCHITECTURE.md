@@ -106,6 +106,11 @@ Frames are distinguished by type: if the first byte is `0x7B` (`{`), it's JSON. 
 
 // User interrupted — abort current response
 { "type": "abort" }
+
+// Multi-click on the Action button (double / triple / long). Single press is
+// local wake and is not sent. The server looks up `button_actions` on the device.
+{ "type": "device.button", "button": "action",
+  "gesture": "double_press" | "triple_press" | "long_press" }
 ```
 
 **Server → Device:**
@@ -138,6 +143,10 @@ Frames are distinguished by type: if the first byte is `0x7B` (`{`), it's JSON. 
 ```
 
 `set_barge_in` is a **server-side** control command (`POST /api/devices/{id}/command` with `params.enabled`). It persists `barge_in` on the device config and is **not** forwarded to firmware — barge-in is enforced in the Pipecat session. Default is enabled. When disabled, new user turns are suppressed for the whole TTS window so residual echo cannot cut the reply short.
+
+### Action-button gestures
+
+The device detects double / triple / long press locally and sends `device.button`. Single press stays wake. Per-device `button_actions` in `devices.json` maps each gesture to `prompt`, `announce`, `command`, `webhook`, or nothing. Named webhooks are configured globally (Settings → `DATA_DIR/webhooks.json`) and selected by `webhook_id` on the gesture. Each webhook POSTs its configured JSON `body` (for Home Assistant, typically `{"entity_id":"scene.living_room"}` to `/api/services/scene/turn_on`). If `body` is empty, the default payload is `{ "type": "vauxr.button_press", "device_id", "button", "gesture" }`.
 
 ### Audio frames (binary)
 

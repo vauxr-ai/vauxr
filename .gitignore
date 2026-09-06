@@ -4,6 +4,7 @@ dist/
 certs/
 .vscode/settings.json
 data/
+recordings/
 
 # Playwright / e2e
 e2e/test-results/
