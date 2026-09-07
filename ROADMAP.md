@@ -8,7 +8,7 @@ Features grouped by theme. No ordering assigned.
 
 ### Conversation Quality
 - ~~**Follow-up mode** — server sends `follow_up` flag; device stays in listening state automatically after a response~~ ✅
-- ~~**Interruption** — server `abort` + per-device `barge_in` config. Firmware still needs Satellite1 hardware validation (see vauxr-assistant ROADMAP).~~ ✅
+- ~~**Interruption** — server `abort` + per-device `barge_in` config~~ ✅
 - **Response sanitization for voice** — strip emojis, code blocks, markdown formatting, URLs, and other non-spoken content from LLM output before TTS; catches what voice formatting prompts miss so the device never reads aloud ` ```python ` or 🔥
 - ~~**Streaming TTS via idle-pause detection** — flush buffered assistant text to Piper whenever the delta stream goes idle (default 400ms) so the device starts speaking while the agent is still thinking or running tools, instead of waiting for the full reply~~ ✅
 
@@ -29,9 +29,6 @@ Features grouped by theme. No ordering assigned.
 
 ### Transcription Accuracy
 - **Conversation context for Whisper** — pass recent conversation history as an initial prompt to the Whisper API (`initial_prompt` field); primes the model with relevant vocabulary, proper nouns, and topic context from the current session, improving accuracy especially for domain-specific terms and follow-up questions
-
-### Audio Quality
-- **Sibilance / hiss on "s" sounds** — TTS output has white noise on sibilants (sounds like "sh"); needs investigation: Piper voice model selection, sample rate / bit depth in the audio pipeline, MP3 encoding settings
 
 ### Multi-Device & Proximity Detection
 - **Wake word dedup** — when multiple devices hear the wake word simultaneously, server arbitrates: devices include a confidence score with the wake event, server holds a ~500ms dedup window, highest-confidence device wins (closest device naturally tends to win), losers receive a `cancel` frame to abort listening; prevents duplicate STT submissions and overlapping spoken responses
