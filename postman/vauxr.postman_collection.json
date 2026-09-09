@@ -2,7 +2,7 @@
   "info": {
     "name": "vauxr",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "vauxr HTTP API — device management endpoints"
+    "description": "vauxr HTTP API \u2014 devices, announce, control, channels, webhooks, firmware. Run Channels top-to-bottom (create \u2192 activate \u2192 rotate \u2192 channel-token-auth \u2192 delete). Run Webhooks top-to-bottom so Create captures webhook_id."
   },
   "variable": [
     {
@@ -24,6 +24,14 @@
     {
       "key": "channel_token",
       "value": ""
+    },
+    {
+      "key": "webhook_id",
+      "value": ""
+    },
+    {
+      "key": "firmware_name",
+      "value": "satellite1.bin"
     }
   ],
   "auth": {
@@ -105,6 +113,81 @@
               }
             }
           ]
+        },
+        {
+          "name": "Update device config (name, barge_in)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/api/devices/{{device_id}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Living room\",\n  \"voice\": true,\n  \"barge_in\": true\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has config', () => pm.expect(pm.response.json().config).to.be.an('object'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update device button_actions",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/api/devices/{{device_id}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"button_actions\": {\n    \"double_press\": { \"kind\": \"prompt\", \"text\": \"What time is it?\" },\n    \"triple_press\": { \"kind\": \"announce\", \"text\": \"Button triple-press\" },\n    \"long_press\": { \"kind\": \"command\", \"command\": \"mute\" }\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -150,7 +233,7 @@
           ]
         },
         {
-          "name": "Announce — 404 unknown device",
+          "name": "Announce \u2014 404 unknown device",
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/devices/unknown-id/announce",
@@ -187,7 +270,7 @@
           ]
         },
         {
-          "name": "Announce — 400 missing text",
+          "name": "Announce \u2014 400 missing text",
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/devices/{{device_id}}/announce",
@@ -377,7 +460,83 @@
           ]
         },
         {
-          "name": "Unknown command — 400",
+          "name": "OTA",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/devices/{{device_id}}/command",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Device downloads the image from params.url (unauthenticated GET /firmware/...). Triggering OTA still requires this authenticated command.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"command\": \"ota\", \"params\": { \"url\": \"{{base_url}}/firmware/{{firmware_name}}\" } }"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Set barge-in",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/devices/{{device_id}}/command",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"command\": \"set_barge_in\", \"params\": { \"enabled\": true } }"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('ok is true', () => pm.expect(pm.response.json().ok).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown command \u2014 400",
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/devices/{{device_id}}/command",
@@ -417,7 +576,7 @@
     },
     {
       "name": "Channels",
-      "description": "Routing-channel CRUD. The OpenClaw plugin authenticates with a channel token (see Auth › Channel token authorizes). Run requests top-to-bottom: Create captures `channel_id` + `channel_token` into collection variables that the later requests consume.",
+      "description": "Routing-channel CRUD. The OpenClaw plugin authenticates with a channel token (see Auth \u203a Channel token authorizes). Run requests top-to-bottom: Create captures `channel_id` + `channel_token` into collection variables that the later requests consume.",
       "item": [
         {
           "name": "List channels",
@@ -565,7 +724,7 @@
                 }
               ]
             },
-            "description": "Channel tokens (vx_ch_…) are valid Bearer credentials — this is how the OpenClaw plugin talks to the HTTP API. Uses the `channel_token` captured by Create channel / refreshed by Rotate token."
+            "description": "Channel tokens (vx_ch_\u2026) are valid Bearer credentials \u2014 this is how the OpenClaw plugin talks to the HTTP API. Uses the `channel_token` captured by Create channel / refreshed by Rotate token."
           },
           "event": [
             {
@@ -609,10 +768,206 @@
       ]
     },
     {
+      "name": "Webhooks",
+      "description": "Named HTTP endpoints configured in Settings, then selected per device gesture. Authorization secrets are never returned. Run Create first so webhook_id is captured.",
+      "item": [
+        {
+          "name": "List webhooks",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/webhooks",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response is array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create webhook",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/webhooks",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman webhook\",\n  \"url\": \"http://homeassistant.local:8123/api/events/vauxr.test\",\n  \"authorization\": \"Bearer REPLACE_ME\",\n  \"body\": { \"source\": \"postman\" }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns id', () => pm.expect(body.id).to.match(/^wh_/));",
+                  "pm.test('Never returns authorization secret', () => pm.expect(body).to.not.have.property('authorization'));",
+                  "pm.collectionVariables.set('webhook_id', body.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update webhook",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/api/webhooks/{{webhook_id}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman webhook updated\",\n  \"body\": { \"source\": \"postman\", \"updated\": true }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Duplicate webhook",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/webhooks/{{webhook_id}}/duplicate",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('New id', () => { pm.expect(body.id).to.match(/^wh_/); pm.expect(body.id).to.not.eql(pm.collectionVariables.get('webhook_id')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete webhook",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/api/webhooks/{{webhook_id}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('ok is true', () => pm.expect(pm.response.json().ok).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Firmware",
+      "description": "Unauthenticated on purpose: the device HTTP OTA client cannot attach a Bearer token. Triggering the update still requires POST /api/devices/{id}/command ota.",
+      "item": [
+        {
+          "name": "Download firmware image",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/firmware/{{firmware_name}}",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Serves DATA_DIR/firmware/<name>.bin. 404 if missing or the name is not a simple .bin filename."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Auth",
       "item": [
         {
-          "name": "No token — 401",
+          "name": "No token \u2014 401",
           "request": {
             "method": "GET",
             "url": "{{base_url}}/api/devices",
