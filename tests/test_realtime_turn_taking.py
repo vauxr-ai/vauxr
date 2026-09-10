@@ -100,6 +100,7 @@ async def test_empty_timeout_completion_does_not_force_follow_up() -> None:
         assert ends
         assert ends[-1]["type"] == "audio.end"
         assert ends[-1]["follow_up"] is False
+        assert session._mic_paused is True
         entry = dev_reg.get("dev-empty")
         assert entry is not None
         assert entry.state == "idle"
@@ -181,6 +182,34 @@ def test_turns_not_suppressed_during_tts_when_barge_in_enabled(
     assert session._turns_suppressed() is False
     session._awaiting_reply = True
     assert session._turns_suppressed() is True
+
+
+def test_turns_suppressed_when_mic_paused() -> None:
+    from realtime_session import RealtimeSession
+
+    session = RealtimeSession("dev-pause", channel_server=object())
+    assert session._turns_suppressed() is False
+    session.set_mic_paused(True)
+    assert session._turns_suppressed() is True
+    session.set_mic_paused(False)
+    assert session._turns_suppressed() is False
+
+
+@pytest.mark.asyncio
+async def test_follow_up_false_pauses_mic() -> None:
+    from realtime_session import RealtimeSession
+
+    ws = _FakeWs()
+    dev_reg.register("dev-fu", ws=ws)
+    try:
+        session = RealtimeSession("dev-fu", channel_server=object())
+        await session._on_turn_complete(False, "bye")
+        assert session._mic_paused is True
+        await session._on_turn_complete(True, "and?")
+        assert session._mic_paused is False
+    finally:
+        session._cancel_drain_timer()
+        dev_reg.unregister("dev-fu")
 
 
 def test_context_messages_is_a_copy() -> None:

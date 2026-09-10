@@ -181,24 +181,6 @@ async def _dispatch_prompt(
     # the WS path restores idle in the finally below.
     registry.set_state(device_id, "processing")
 
-    from realtime_session import get_manager
-
-    manager = get_manager()
-    # Live Pipecat session (including idle/warm-quiet): seed so TTS rides the
-    # WebRTC track and the conversation log stays on the same LLMContext.
-    # Classic WS devices have no session — run_text_turn over 0x02.
-    if manager.has_live_session(device_id):
-        try:
-            seeded = await manager.seed_text_turn(device_id, text)
-        except Exception as err:  # noqa: BLE001
-            log.error("device.button prompt seed failed for %s: %s", device_id, err)
-            seeded = False
-        if not seeded:
-            e = registry.get(device_id)
-            if e is not None and e.state == "processing":
-                registry.set_state(device_id, "idle")
-        return
-
     abort = asyncio.Event()
     entry.abort_event = abort
     try:
@@ -217,7 +199,8 @@ async def _dispatch_prompt(
         e = registry.get(device_id)
         if e is not None:
             e.abort_event = None
-            registry.set_state(device_id, "idle")
+            if e.state == "processing":
+                registry.set_state(device_id, "idle")
 
 
 async def _send_text(ws: Any, obj: dict[str, Any]) -> None:

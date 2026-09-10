@@ -148,6 +148,10 @@ class RealtimeSession:
         # OpenClaw) — stuck PROCESSING + "ignored". Only relay a transcript to the
         # device when a turn-level UserStartedSpeaking actually opened a turn.
         self._turn_active = False
+        # Device is in warm-quiet (follow_up=false): do not accept new user speech
+        # until a wake word (realtime.resume). Firmware #61 used to resume the mic
+        # on any transcript in that state, which pulled room talk into a new turn.
+        self._mic_paused = False
         # VAD profile swapping: a snappy idle profile so quiet speech is heard,
         # and a stricter barge-in profile applied while the bot speaks so the
         # device's residual echo doesn't self-interrupt the reply. Populated when
@@ -391,6 +395,24 @@ class RealtimeSession:
                 await super().cleanup()
                 self._close_wav()
 
+        class _MicGate(FrameProcessor):
+            """Drop inbound mic audio while the device must not be heard.
+
+            Covers PROCESSING (_awaiting_reply) and warm-quiet (_mic_paused) so
+            leftover RTP or a still-open track cannot start a new user turn.
+            """
+
+            async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+                await super().process_frame(frame, direction)
+                if (
+                    direction == FrameDirection.DOWNSTREAM
+                    and isinstance(frame, InputAudioRawFrame)
+                    and session._turns_suppressed()
+                    and frame.audio
+                ):
+                    frame.audio = bytes(len(frame.audio))
+                await self.push_frame(frame, direction)
+
         class _ControlTap(FrameProcessor):
             """Relay transcript + bot-speaking events to the device WS."""
 
@@ -403,14 +425,20 @@ class RealtimeSession:
                     # underway so it holds off its active-idle taper — otherwise it
                     # can fall into warm-quiet mid-utterance (before STT/LLM emits
                     # the transcript) and mishandle the late reply.
-                    log.info("realtime[%s]: VAD speech START", session.device_id)
-                    # A real turn-level start opened a turn — its transcript may now
-                    # be relayed to the device.
-                    session._turn_active = True
-                    session._touch_activity()
-                    await _send_json(
-                        _device_ws(session.device_id), {"type": "speech.start"}
-                    )
+                    if session._turns_suppressed():
+                        log.info(
+                            "realtime[%s]: ignoring VAD speech START (processing/warm-quiet)",
+                            session.device_id,
+                        )
+                    else:
+                        log.info("realtime[%s]: VAD speech START", session.device_id)
+                        # A real turn-level start opened a turn — its transcript
+                        # may now be relayed to the device.
+                        session._turn_active = True
+                        session._touch_activity()
+                        await _send_json(
+                            _device_ws(session.device_id), {"type": "speech.start"}
+                        )
                 elif isinstance(frame, UserStoppedSpeakingFrame):
                     log.info("realtime[%s]: VAD speech STOP", session.device_id)
                 elif isinstance(frame, TranscriptionFrame) and frame.text and frame.text.strip():
@@ -451,6 +479,7 @@ class RealtimeSession:
         pipeline = Pipeline(
             [
                 transport.input(),
+                _MicGate(),
                 _AudioMeter(),
                 stt,
                 _ControlTap(),
@@ -608,7 +637,9 @@ class RealtimeSession:
         # suppress new user-turn starts until this seeded reply begins speaking so
         # echo can't cancel it.
         self._awaiting_reply = True
-        await _send_json(_device_ws(self.device_id), {"type": "transcript", "text": text})
+        await _send_json(
+            _device_ws(self.device_id), {"type": "transcript", "text": text}
+        )
         self._context.add_message({"role": "user", "content": text})
         if self._task is not None:
             await self._task.queue_frames([LLMRunFrame()])
@@ -634,13 +665,22 @@ class RealtimeSession:
     def _turns_suppressed(self) -> bool:
         """Whether new user-turn starts should be ignored.
 
-        Always suppress during PROCESSING (awaiting the reply). When barge-in is
-        disabled, also suppress for the whole bot-speaking / drain window so
-        residual echo cannot cancel TTS.
+        Always suppress during PROCESSING (awaiting the reply) and warm-quiet
+        (mic paused until the next wake word). When barge-in is disabled, also
+        suppress for the whole bot-speaking / drain window so residual echo
+        cannot cancel TTS.
         """
-        if self._awaiting_reply:
+        if self._awaiting_reply or self._mic_paused:
             return True
         return (not self._barge_in_enabled()) and self._reply_active()
+
+    def set_mic_paused(self, paused: bool) -> None:
+        """Hold or release inbound mic audio (device warm-quiet / wake)."""
+        self._mic_paused = paused
+        if paused:
+            self._turn_active = False
+        else:
+            self._touch_activity()
 
     async def _on_turn_complete(self, follow_up: bool, reply: str) -> None:
         """Called when an LLM turn ends. Queue its audio.end in turn order."""
@@ -656,8 +696,11 @@ class RealtimeSession:
         # new turn again. (For replies that do speak, _on_bot_started_speaking has
         # already cleared this; clearing here covers empty/cancelled turns that
         # never produced bot audio so the device isn't left unable to be heard.)
+        # follow_up=false means the device is about to warm-quiet: hold the mic
+        # *now*, before leftover RTP can start another turn.
         self._awaiting_reply = False
         self._turn_active = False
+        self._mic_paused = not follow_up
         self._pending_ends.append((follow_up, has_audio))
         if has_audio and self._bot_speaking == 0:
             self._schedule_drain_timer()
@@ -904,6 +947,12 @@ class RealtimeManager:
         """Whether a warm Pipecat session with a live peer exists."""
         session = self._sessions.get(device_id)
         return session is not None and session.is_peer_live()
+
+    def set_mic_paused(self, device_id: str, paused: bool) -> None:
+        """Hold or release inbound WebRTC mic audio for a live session."""
+        session = self._sessions.get(device_id)
+        if session is not None:
+            session.set_mic_paused(paused)
 
     async def seed_text_turn(self, device_id: str, text: str) -> bool:
         """Seed canned text into a live Pipecat session. Returns False if none."""
