@@ -21,7 +21,7 @@ services:
     environment:
       WHISPER_URL: tcp://127.0.0.1:10300
       PIPER_URL: tcp://127.0.0.1:10200
-      OPENCLAW_URL: ${OPENCLAW_URL}
+      OPENCLAW_URL: ${OPENCLAW_URL:-}
       OPENCLAW_TOKEN: ${OPENCLAW_TOKEN:-}
       DEVICE_TOKEN: ${DEVICE_TOKEN}
       PIPER_VOICE: en_US-libritts_r-medium
