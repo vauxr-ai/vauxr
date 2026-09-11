@@ -19,6 +19,7 @@ from typing import Any
 
 from loguru import logger
 from pipecat.frames.frames import ErrorFrame, Frame, TranscriptionFrame
+from pipecat.services.settings import STTSettings, TTSSettings
 from pipecat.services.stt_service import SegmentedSTTService
 from pipecat.services.tts_service import TextAggregationMode, TTSService
 from pipecat.transcriptions.language import Language
@@ -92,7 +93,8 @@ class WyomingSTTService(SegmentedSTTService):
     """Batch STT via Wyoming faster-whisper — one transcript per VAD segment."""
 
     def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
+        # Wyoming owns model/language selection; these are not Pipecat controls.
+        super().__init__(settings=STTSettings(model=None, language=None), **kwargs)
         ep = get_config().whisper
         self._host, self._port = ep.host, ep.port
 
@@ -175,6 +177,8 @@ class WyomingTTSService(TTSService):
         # - SENTENCE: pipecat buffers tokens and cuts on sentence boundaries
         #   (NLTK). Used when sentence segmentation is enabled for the device.
         super().__init__(
+            # Voice is configured on Piper below, not through Pipecat updates.
+            settings=TTSSettings(model=None, voice=None, language=None),
             text_aggregation_mode=text_aggregation_mode,
             push_start_frame=True,
             push_stop_frames=True,
