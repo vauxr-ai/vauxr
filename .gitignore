@@ -26,3 +26,8 @@ build/
 .coverage
 htmlcov/
 uv.lock
+
+# Private data migration staging and backups
+data-migration/
+data.backup*/
+data-backup*/
