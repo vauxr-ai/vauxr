@@ -61,61 +61,92 @@ Recordings and firmware retain their separate `./recordings` and `./firmware`
 mounts. Whisper and Piper bind-mount `./data/whisper` and `./data/piper`,
 respectively, into their own `/data` directories for model caches.
 
-### Existing Whisper and Piper model caches
+### Migrating existing installations
 
-Changing the mounts does not copy existing named-volume contents. On the Docker
-host, from the directory containing this Compose file, stop only the model
-services and copy their caches before recreating them:
+Use `scripts/migrate-data.py` **before recreating the old containers**. It inspects
+those containers' actual `/data` mounts; it does not infer Compose volume prefixes.
+It supports either legacy named Vauxr data plus named Piper/Whisper caches, or
+Vauxr already bound to this repository's `./data` with both caches still named.
+
+Run on the Docker host, from this repository, with the daemon/context that owns
+all three old containers:
 
 ```bash
-docker compose stop whisper piper
-mkdir -p data/whisper data/piper
-docker cp -a whisper:/data/. ./data/whisper/
-docker cp -a piper:/data/. ./data/piper/
-docker compose up -d --no-deps whisper piper
-docker compose ps whisper piper
+python3 scripts/migrate-data.py                 # read-only discovery, even while running
+# Arrange a maintenance window and manually stop all listed storage consumers.
+# Keep the old containers present for inspection; do not recreate them yet.
+python3 scripts/migrate-data.py --apply
 ```
 
-These commands assume the destination directories are new or empty; back up any
-existing contents first. Copy from the actual old containers before recreating
-them, using the daemon that owns them. Preserve cache ownership for that daemon
-and verify both services are healthy and voice works. Keep the old named volumes
-for rollback; do not remove them during migration.
+Use `--vauxr NAME --piper NAME --whisper NAME` for different container names and
+`--root /absolute/path/to/vauxr` for another repository location. Dry-run lists
+sources and consumers; destination contents and daemon path visibility are checked
+only on apply. The script never stops, starts, or recreates services. Apply refuses
+running, paused, restarting, removing, or dead consumers, including containers
+outside this stack and containers with overlapping bind mounts. Keep services,
+automation, and other filesystem writers stopped throughout copying and verification;
+Docker has no atomic storage-consumer lock. Discovery is repeated before the helper
+starts, and a filesystem lock excludes simultaneous runs of this script.
 
-### Existing installations
+Requirements and limitations:
 
-Earlier versions used the Docker-managed `vauxr-data` volume. Switching to
-`./data` does not migrate its contents automatically. Before recreating Vauxr:
+- Linux, Python 3, Docker CLI, a local Unix-socket daemon, and an already installed,
+  trusted `python:3.12-slim` helper image (Python, GNU coreutils, `renameat2` support).
+  `--helper-image` selects an alternative compatible image. Apply pins its inspected
+  image ID and runs it with no network, no pull, and a read-only container root.
+- Plain `local` named volumes without driver options only; no remote Docker,
+  Docker Desktop path translation, external volume drivers, cross-daemon or
+  rootful-to-rootless migration, per-container user-namespace overrides, or volume
+  subpaths. A private probe verifies that the daemon sees the
+  same repository path. In a containerized shell, socket access alone is insufficient:
+  the repository must also exist at the identical path in both namespaces.
+- The repository path must be canonical, without symlinks or commas. `data` must
+  be a real directory, not a symlink or mount point. Allow disk space for a complete
+  staged copy plus the retained original. Regular files, directories and symlinks
+  are supported; special files fail closed. No concurrent host writers are supported.
+- For legacy named Vauxr data, `./data` must be absent or empty. For existing bound
+  Vauxr data, `data/piper` and `data/whisper` must be absent or empty real directories.
+  Existing nonempty destinations are never merged or overwritten: move them to a
+  separately named secure backup yourself and rerun. Legacy `/data` containing
+  `piper` or `whisper` entries is refused as ambiguous.
+- Only separate bind mounts at `/data/recordings` and `/data/firmware` are supported
+  below Vauxr `/data`; their host paths must be outside `./data`. Those entries are
+  excluded from the copy, including any hidden underlying contents. Other nested
+  mounts are refused. Keep the existing recordings/firmware Compose mounts intact.
+- Copying and ownership preservation run as UID 0 **inside the selected daemon's
+  namespace**, including rootless Docker. Files retain numeric ownership, modes,
+  timestamps, links and supported extended attributes/ACLs; metadata errors abort.
+  No blanket host `chown` is performed. The host filesystem must support the source
+  metadata. Cross-file hard links between separately copied top-level entries,
+  inode numbers, ctime, and filesystem-specific flags are not preserved.
 
-1. Using the Docker daemon that owns the old container, stop only Vauxr:
-   `docker stop vauxr`.
-2. Copy its actual data into a new private staging directory on the Docker host:
+Apply copies into private `.data-migration-<id>/payload`, then publishes with
+no-replace renames. An existing `data` directory is retained as
+`.data-backup-<id>`; backups from earlier runs are never overwritten or deleted.
+Source volumes are mounted read-only and remain untouched. Treat staged copies and
+backups as sensitive data; all migration paths are ignored by Git.
 
-   ```bash
-   (umask 077; mkdir ./data-migration)
-   docker cp vauxr:/data/. ./data-migration/
-   ```
+After successful publication, manually recreate the three services using the new
+Compose binds during the same maintenance window. An old Vauxr bind container may
+still reference the original directory inode, so it too must be recreated. Verify
+saved settings, channel authentication, cache contents, ownership, model-service
+health and a voice turn before considering the migration complete.
 
-3. Back up any existing repo `./data` folder, then move `./data-migration` to
-   `./data`. Keep the old named volume for rollback. Recordings and firmware
-   use separate mounts; leave their existing host directories intact.
-4. With the destination daemon selected, initialize ownership and start only
-   Vauxr (after building the image if necessary):
+If copying fails, `data` remains unchanged and staging is retained. If publication
+fails after moving the original, the script attempts to restore it without replacing
+anything. An interruption or failed recovery can leave `data` missing: inspect the
+printed recovery paths with services still stopped. The complete original is in
+`.data-backup-<id>` if it was moved; otherwise it remains at `data`. Preserve any
+partially published `data` under a new secure name before restoring the backup.
+Do not blindly rerun or publish incomplete staging. Resolve the failure and retry
+from the intact source volumes/original bind. The persistent lock file is harmless;
+the kernel releases its lock when the helper exits. If the client was interrupted,
+verify the migration helper has exited before recovery.
 
-   ```bash
-   docker compose run --rm --no-deps --user 0 vauxr \
-     sh -c 'chown -R 100:101 /data && chmod 700 /data'
-   docker compose up -d --no-deps vauxr
-   ```
-
-Verify saved settings, channel authentication, and voice before removing old
-storage. To roll back, stop the new container and restore the previous volume
-mount. Do not run `docker compose down -v` during migration.
-
-Bind paths refer to the Docker host, not a remote client's filesystem. For a
-rootful-to-rootless move, copy from the old daemon first and ensure the new
-account can access the destination repo. Keep staging copies and backups out
-of Git; they may contain secrets.
+For rollback after service verification fails, manually stop affected services,
+retain the new `data` under a separate backup name, restore the original bind backup
+(if applicable), and restore the old Compose mounts using the **exact volume names
+printed by discovery**. Recreate with those old mounts. Never run `docker compose down -v`, prune volumes, or delete source volumes as part of this procedure.
 
 ## Connecting to OpenClaw
 
