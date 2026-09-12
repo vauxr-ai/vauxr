@@ -176,28 +176,19 @@ async def _dispatch_prompt(
         log.info("device.button prompt dropped, device busy: %s", device_id)
         return
 
-    # Lock before any await so a second gesture cannot seed/run another turn
-    # on the same device. Live sessions restore idle/listening via audio.end;
-    # the WS path restores idle in the finally below.
+    # Lock before any await so a second gesture cannot run another turn.
+    # Warm-quiet peers have paused WebRTC playback: use WS TTS, which firmware
+    # can play without opening the mic or requiring a realtime wake.
     registry.set_state(device_id, "processing")
 
-    from realtime_session import get_manager
+    async def send_audio_end(follow_up: bool) -> None:
+        from realtime_session import get_manager
 
-    manager = get_manager()
-    # Live Pipecat session (including idle/warm-quiet): seed so TTS rides the
-    # WebRTC track and the conversation log stays on the same LLMContext.
-    # Classic WS devices have no session — run_text_turn over 0x02.
-    if manager.has_live_session(device_id):
-        try:
-            seeded = await manager.seed_text_turn(device_id, text)
-        except Exception as err:  # noqa: BLE001
-            log.error("device.button prompt seed failed for %s: %s", device_id, err)
-            seeded = False
-        if not seeded:
-            e = registry.get(device_id)
-            if e is not None and e.state == "processing":
-                registry.set_state(device_id, "idle")
-        return
+        # Playback can outlive its connection or be superseded by another turn.
+        # Its completion must not resume that new owner's realtime mic.
+        if registry.get(device_id) is not entry or entry.abort_event is not abort or abort.is_set():
+            return
+        await get_manager().send_prompt_audio_end(device_id, follow_up)
 
     abort = asyncio.Event()
     entry.abort_event = abort
@@ -210,14 +201,16 @@ async def _dispatch_prompt(
             channel_server,
             abort,
             entry.output_sample_rate,
+            send_audio_end=send_audio_end,
         )
     except Exception as err:  # noqa: BLE001
         log.error("device.button prompt failed for %s: %s", device_id, err)
     finally:
         e = registry.get(device_id)
-        if e is not None:
+        if e is entry and e.abort_event is abort:
             e.abort_event = None
-            registry.set_state(device_id, "idle")
+            if e.state == "processing":
+                registry.set_state(device_id, "idle")
 
 
 async def _send_text(ws: Any, obj: dict[str, Any]) -> None:

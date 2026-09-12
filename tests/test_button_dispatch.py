@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -115,24 +116,20 @@ async def test_prompt_dropped_when_listening(monkeypatch: pytest.MonkeyPatch) ->
     fake.assert_not_called()
 
 
-async def test_prompt_seeds_idle_warm_realtime_session(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_prompt_uses_ws_turn_even_with_live_realtime_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Warm-quiet keeps the WebRTC mic paused; prompts speak over WS 0x02."""
     ws = FakeWs()
     registry.register("dev1", ws=ws)
     registry.update_config(
         "dev1",
         {"button_actions": {"double_press": {"kind": "prompt", "text": "hi"}}},
     )
-    seeded: list[tuple[str, str]] = []
-
-    class _Mgr:
-        def has_live_session(self, device_id: str) -> bool:
-            return device_id == "dev1"
-
-        async def seed_text_turn(self, device_id: str, text: str) -> bool:
-            seeded.append((device_id, text))
-            return True
-
-    monkeypatch.setattr("realtime_session.get_manager", lambda: _Mgr())
+    manager = Mock()
+    manager.has_live_session.return_value = True
+    manager.seed_text_turn = AsyncMock()
+    monkeypatch.setattr("realtime_session.get_manager", lambda: manager)
     fake = AsyncMock()
     monkeypatch.setattr(button_dispatch, "run_text_turn", fake)
     await button_dispatch.handle_device_button(
@@ -142,12 +139,14 @@ async def test_prompt_seeds_idle_warm_realtime_session(monkeypatch: pytest.Monke
         openclaw_client=None,
         channel_server=ChannelServer(),
     )
-    assert seeded == [("dev1", "hi")]
-    fake.assert_not_called()
-    assert registry.get("dev1").state == "processing"
+    manager.seed_text_turn.assert_not_awaited()
+    fake.assert_awaited_once()
+    assert fake.await_args.args[0] == "dev1"
+    assert fake.await_args.args[1] == "hi"
+    assert registry.get("dev1").state == "idle"
 
 
-async def test_prompt_second_seed_dropped_while_processing(
+async def test_prompt_second_dropped_while_processing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ws = FakeWs()
@@ -156,20 +155,27 @@ async def test_prompt_second_seed_dropped_while_processing(
         "dev1",
         {"button_actions": {"double_press": {"kind": "prompt", "text": "hi"}}},
     )
-    seeded: list[str] = []
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
 
-    class _Mgr:
-        def has_live_session(self, device_id: str) -> bool:
-            return device_id == "dev1"
+    async def fake_turn(*_a: object, **_k: object) -> None:
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
 
-        async def seed_text_turn(self, device_id: str, text: str) -> bool:
-            seeded.append(text)
-            return True
-
-    monkeypatch.setattr("realtime_session.get_manager", lambda: _Mgr())
-    fake = AsyncMock()
-    monkeypatch.setattr(button_dispatch, "run_text_turn", fake)
-
+    monkeypatch.setattr(button_dispatch, "run_text_turn", fake_turn)
+    first = asyncio.create_task(
+        button_dispatch.handle_device_button(
+            device_id="dev1",
+            button="action",
+            gesture="double_press",
+            openclaw_client=None,
+            channel_server=ChannelServer(),
+        )
+    )
+    await started.wait()
     await button_dispatch.handle_device_button(
         device_id="dev1",
         button="action",
@@ -177,19 +183,14 @@ async def test_prompt_second_seed_dropped_while_processing(
         openclaw_client=None,
         channel_server=ChannelServer(),
     )
-    await button_dispatch.handle_device_button(
-        device_id="dev1",
-        button="action",
-        gesture="double_press",
-        openclaw_client=None,
-        channel_server=ChannelServer(),
-    )
-    assert seeded == ["hi"]
-    fake.assert_not_called()
+    assert calls == 1
     assert registry.get("dev1").state == "processing"
+    release.set()
+    await first
+    assert registry.get("dev1").state == "idle"
 
 
-async def test_prompt_seed_miss_restores_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_prompt_failure_restores_idle(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWs()
     registry.register("dev1", ws=ws)
     registry.update_config(
@@ -197,16 +198,10 @@ async def test_prompt_seed_miss_restores_idle(monkeypatch: pytest.MonkeyPatch) -
         {"button_actions": {"double_press": {"kind": "prompt", "text": "hi"}}},
     )
 
-    class _Mgr:
-        def has_live_session(self, device_id: str) -> bool:
-            return True
+    async def boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("tts failed")
 
-        async def seed_text_turn(self, device_id: str, text: str) -> bool:
-            return False
-
-    monkeypatch.setattr("realtime_session.get_manager", lambda: _Mgr())
-    fake = AsyncMock()
-    monkeypatch.setattr(button_dispatch, "run_text_turn", fake)
+    monkeypatch.setattr(button_dispatch, "run_text_turn", boom)
     await button_dispatch.handle_device_button(
         device_id="dev1",
         button="action",
@@ -214,7 +209,6 @@ async def test_prompt_seed_miss_restores_idle(monkeypatch: pytest.MonkeyPatch) -
         openclaw_client=None,
         channel_server=ChannelServer(),
     )
-    fake.assert_not_called()
     assert registry.get("dev1").state == "idle"
 
 
@@ -316,3 +310,56 @@ async def test_webhook_posts_configured_body(monkeypatch: pytest.MonkeyPatch) ->
     )
     assert posted[0]["json"] == {"entity_id": "scene.lights_low"}
     assert posted[0]["url"] == "http://ha.example/api/services/scene/turn_on"
+
+
+@pytest.mark.parametrize("follow_up", [False, True])
+@pytest.mark.parametrize("paused", [False, True])
+async def test_warm_prompt_emits_ws_audio_and_records_conversation(
+    monkeypatch: pytest.MonkeyPatch, follow_up: bool, paused: bool,
+) -> None:
+    import json
+    from collections.abc import AsyncIterator, Callable
+    from types import SimpleNamespace
+
+    import pipeline
+    import realtime_session
+
+    ws = FakeWs()
+    registry.register("dev1", ws=ws)
+    registry.update_config("dev1", {
+        "button_actions": {"double_press": {"kind": "prompt", "text": "Say hello"}},
+    })
+    manager = realtime_session.RealtimeManager()
+    session = realtime_session.RealtimeSession("dev1", channel_server=object())
+    session.set_mic_paused(paused)
+    manager._sessions["dev1"] = session
+    monkeypatch.setattr(session, "is_peer_live", lambda: True)
+    monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
+    seed = AsyncMock()
+    monkeypatch.setattr(manager, "seed_text_turn", seed)
+    channel = ChannelServer()
+    monkeypatch.setattr(channel, "get_active_channel", lambda: SimpleNamespace(type="openclaw-direct"))
+
+    async def chat(_key: str, _text: str, on_delta: Callable[[str], None]) -> None:
+        on_delta("Hello?" if follow_up else "Hello.")
+
+    async def synthesize(_text: str, **_kwargs: object) -> AsyncIterator[bytes]:
+        yield b"\x01\x00" * 320
+
+    monkeypatch.setattr(pipeline, "synthesize", synthesize)
+    await button_dispatch.handle_device_button(
+        device_id="dev1", button="action", gesture="double_press",
+        openclaw_client=SimpleNamespace(chat=chat), channel_server=channel,
+    )
+    seed.assert_not_awaited()
+    assert ws.binary and all(frame[0] == 0x02 for frame in ws.binary)
+    assert any(json.loads(text)["type"] == "audio.end" for text in ws.text)
+    assert manager.context_messages("dev1") == [
+        {"role": "user", "content": "Say hello"},
+        {"role": "assistant", "content": "Hello?" if follow_up else "Hello."},
+    ]
+    assert registry.get("dev1").state == ("listening" if follow_up else "idle")
+    assert session._mic_paused is (paused and not follow_up)
+    if follow_up:
+        assert not session._turns_suppressed()
+    assert not session.is_closed

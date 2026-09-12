@@ -165,7 +165,13 @@ async def _route_via_openclaw_direct(
     openclaw_client: "OpenClawClient",
     abort: asyncio.Event,
     target_rate: int | None,
+    *,
+    send_audio_end: Callable[[bool], Awaitable[None]] | None = None,
 ) -> None:
+    if send_audio_end is None:
+        async def send_audio_end(follow_up: bool) -> None:
+            await _send_audio_end(ws, follow_up)
+
     session_key = f"vauxr:{device_id}"
     full_reply = ""
 
@@ -183,7 +189,7 @@ async def _route_via_openclaw_direct(
         )
         await _synthesize_error_message(ws, device_id, abort, target_rate)
         if not abort.is_set():
-            await _send_audio_end(ws, False)
+            await send_audio_end(False)
         return
 
     if abort.is_set():
@@ -199,7 +205,7 @@ async def _route_via_openclaw_direct(
     await _synthesize_and_send(ws, device_id, result.reply_text, abort, target_rate)
     if not abort.is_set():
         _record_completed_turn(device_id, transcript_text, result.reply_text)
-        await _send_audio_end(ws, result.follow_up)
+        await send_audio_end(result.follow_up)
 
 
 async def _route_via_channel(
@@ -209,14 +215,20 @@ async def _route_via_channel(
     channel_server: "ChannelServer",
     abort: asyncio.Event,
     target_rate: int | None,
+    *,
+    send_audio_end: Callable[[bool], Awaitable[None]] | None = None,
 ) -> None:
+    if send_audio_end is None:
+        async def send_audio_end(follow_up: bool) -> None:
+            await _send_audio_end(ws, follow_up)
+
     sent = channel_server.send_transcript(device_id, transcript_text)
     if not sent:
         await _send_json(
             ws, {"type": "error", "code": "NO_CHANNEL", "message": "Active channel not connected"}
         )
         if not abort.is_set():
-            await _send_audio_end(ws, False)
+            await send_audio_end(False)
         return
 
     log.info("Awaiting channel response for %s", device_id)
@@ -315,7 +327,7 @@ async def _route_via_channel(
         )
         await _synthesize_error_message(ws, device_id, abort, target_rate)
         if not abort.is_set():
-            await _send_audio_end(ws, False)
+            await send_audio_end(False)
         return
     except RuntimeError as err:
         await queue.done()
@@ -328,7 +340,7 @@ async def _route_via_channel(
         )
         await _synthesize_error_message(ws, device_id, abort, target_rate)
         if not abort.is_set():
-            await _send_audio_end(ws, False)
+            await send_audio_end(False)
         return
 
     abort_waiter.cancel()
@@ -346,7 +358,7 @@ async def _route_via_channel(
         result.reply_text[:200],
     )
     _record_completed_turn(device_id, transcript_text, result.reply_text)
-    await _send_audio_end(ws, result.follow_up)
+    await send_audio_end(result.follow_up)
 
 
 async def run_voice_turn(
@@ -391,16 +403,22 @@ async def run_text_turn(
     channel_server: "ChannelServer",
     abort: asyncio.Event,
     target_rate: int | None = None,
+    *,
+    send_audio_end: Callable[[bool], Awaitable[None]] | None = None,
 ) -> None:
     """Drive a turn from already-known user text (no STT). Used by voice turns
     after Whisper and by action-button prompt mappings.
     """
+    if send_audio_end is None:
+        async def send_audio_end(follow_up: bool) -> None:
+            await _send_audio_end(ws, follow_up)
+
     if abort.is_set():
         return
 
     transcript_text = (transcript_text or "").strip()
     if not transcript_text:
-        await _send_audio_end(ws, False)
+        await send_audio_end(False)
         return
 
     log.info("Transcript for %s: %r", device_id, transcript_text)
@@ -413,14 +431,18 @@ async def run_text_turn(
     if active is not None and getattr(active, "type", None) == "openclaw-direct" and openclaw_client is not None:
         log.info("Routing via openclaw-direct for %s", device_id)
         await _route_via_openclaw_direct(
-            device_id, transcript_text, ws, openclaw_client, abort, target_rate
+            device_id, transcript_text, ws, openclaw_client, abort, target_rate,
+            send_audio_end=send_audio_end,
         )
     elif active is not None and getattr(active, "type", None) != "openclaw-direct":
         log.info("Routing via channel %r for %s", getattr(active, "name", "?"), device_id)
-        await _route_via_channel(device_id, transcript_text, ws, channel_server, abort, target_rate)
+        await _route_via_channel(
+            device_id, transcript_text, ws, channel_server, abort, target_rate,
+            send_audio_end=send_audio_end,
+        )
     else:
         log.warning("No active channel or backend available — dropping turn")
         await _send_json(
             ws, {"type": "error", "code": "NO_CHANNEL", "message": "No active channel configured"}
         )
-        await _send_audio_end(ws, False)
+        await send_audio_end(False)

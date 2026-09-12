@@ -104,6 +104,10 @@ async def handle_text(
         await _realtime_start(state, ws, ctx, msg)
     elif msg_type == "realtime.media_ready":
         _realtime_media_ready(ctx)
+    elif msg_type == "realtime.pause":
+        _realtime_pause(ctx)
+    elif msg_type == "realtime.resume":
+        _realtime_resume(ctx)
     elif msg_type == "realtime.stop":
         await _realtime_stop(ctx)
     elif msg_type == "device.button":
@@ -408,6 +412,26 @@ def _realtime_media_ready(ctx: ConnectionCtx) -> None:
     ctx.realtime_media = True
     if ctx.device_id:
         log.info("realtime.media_ready from %s", ctx.device_id)
+
+
+def _realtime_pause(ctx: ConnectionCtx) -> None:
+    """Device entered warm-quiet — ignore inbound mic until the next wake."""
+    if not ctx.device_id:
+        return
+    from realtime_session import get_manager
+
+    get_manager().set_mic_paused(ctx.device_id, True)
+    log.info("realtime.pause from %s", ctx.device_id)
+
+
+def _realtime_resume(ctx: ConnectionCtx) -> None:
+    """Wake word on a warm peer — accept inbound mic again."""
+    if not ctx.device_id:
+        return
+    from realtime_session import get_manager
+
+    get_manager().set_mic_paused(ctx.device_id, False)
+    log.info("realtime.resume from %s", ctx.device_id)
 
 
 async def _realtime_stop(ctx: ConnectionCtx) -> None:
