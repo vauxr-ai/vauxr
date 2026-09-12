@@ -69,8 +69,8 @@ Vauxr already bound with named caches, and **already recreated containers** boun
 `./data`, `./data/piper`, and `./data/whisper`. The original containers need not exist;
 use the current three containers for mount and consumer checks. An `already-bound`
 status describes mounts only: it does **not** establish that old data was migrated.
-Older identity timestamps alongside recently downloaded model caches do not establish
-provenance or completeness either.
+Identity-file and model-cache timestamps cannot prove data provenance or migration
+completeness either.
 
 Run on the Docker host, from this repository, with the daemon/context that owns
 the current three containers and the old source volumes:
