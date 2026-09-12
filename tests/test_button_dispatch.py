@@ -312,8 +312,10 @@ async def test_webhook_posts_configured_body(monkeypatch: pytest.MonkeyPatch) ->
     assert posted[0]["url"] == "http://ha.example/api/services/scene/turn_on"
 
 
+@pytest.mark.parametrize("follow_up", [False, True])
+@pytest.mark.parametrize("paused", [False, True])
 async def test_warm_prompt_emits_ws_audio_and_records_conversation(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, follow_up: bool, paused: bool,
 ) -> None:
     import json
     from collections.abc import AsyncIterator, Callable
@@ -329,6 +331,7 @@ async def test_warm_prompt_emits_ws_audio_and_records_conversation(
     })
     manager = realtime_session.RealtimeManager()
     session = realtime_session.RealtimeSession("dev1", channel_server=object())
+    session.set_mic_paused(paused)
     manager._sessions["dev1"] = session
     monkeypatch.setattr(session, "is_peer_live", lambda: True)
     monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
@@ -338,7 +341,7 @@ async def test_warm_prompt_emits_ws_audio_and_records_conversation(
     monkeypatch.setattr(channel, "get_active_channel", lambda: SimpleNamespace(type="openclaw-direct"))
 
     async def chat(_key: str, _text: str, on_delta: Callable[[str], None]) -> None:
-        on_delta("Hello.")
+        on_delta("Hello?" if follow_up else "Hello.")
 
     async def synthesize(_text: str, **_kwargs: object) -> AsyncIterator[bytes]:
         yield b"\x01\x00" * 320
@@ -353,7 +356,10 @@ async def test_warm_prompt_emits_ws_audio_and_records_conversation(
     assert any(json.loads(text)["type"] == "audio.end" for text in ws.text)
     assert manager.context_messages("dev1") == [
         {"role": "user", "content": "Say hello"},
-        {"role": "assistant", "content": "Hello."},
+        {"role": "assistant", "content": "Hello?" if follow_up else "Hello."},
     ]
-    assert registry.get("dev1").state == "idle"
+    assert registry.get("dev1").state == ("listening" if follow_up else "idle")
+    assert session._mic_paused is (paused and not follow_up)
+    if follow_up:
+        assert not session._turns_suppressed()
     assert not session.is_closed

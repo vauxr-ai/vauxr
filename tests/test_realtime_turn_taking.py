@@ -416,11 +416,13 @@ async def test_text_completion_leaves_barge_in_open_until_late_tts_drain(
     try:
         session._awaiting_reply = True
         session._on_bot_started_speaking()
+        complete = session._turn_complete_callback()
         if barge_at == "before_text":
+            session._turn_generation += 1
             session._on_interruption()
             session._turn_active = True
             session._awaiting_reply = True
-        await session._on_turn_complete(follow_up, "A long spoken reply.")
+        await complete(follow_up, "A long spoken reply.")
         assert _audio_ends(ws) == []
         assert not session._mic_paused
         if barge_at == "before_text":
@@ -497,3 +499,39 @@ async def test_explicit_pause_resume_routes_to_existing_session(
             await ws.send_json({"type": "test.barrier"})
             assert (await _recv_json(ws))["message"] == "Unknown type: test.barrier"
             assert session._turns_suppressed() is paused
+
+
+@pytest.mark.parametrize("old_text_complete", [False, True])
+async def test_empty_barge_in_completion_releases_processing_before_old_audio_drains(
+    old_text_complete: bool,
+) -> None:
+    from realtime_session import RealtimeSession
+
+    ws = _FakeWs()
+    dev_reg.register("dev-empty-barge", ws=ws)
+    session = RealtimeSession("dev-empty-barge", channel_server=object())
+    try:
+        old_complete = session._turn_complete_callback()
+        session._on_bot_started_speaking()
+        if old_text_complete:
+            await old_complete(False, "Old spoken answer.")
+        session._on_interruption()
+        session._turn_generation += 1
+        session._turn_active = True
+        session._awaiting_reply = True
+        if not old_text_complete:
+            await old_complete(False, "Old spoken answer.")
+            assert session._awaiting_reply and session._turn_active
+        await session._turn_complete_callback()(False, "")
+        assert session._user_barged_in  # the old audio end is still deferred
+        assert not session._awaiting_reply
+        assert not session._turn_active
+        assert not session._turns_suppressed()
+        session._bot_speaking = 0
+        session._bot_stop_credits = 1
+        await session._drain_ends()
+        assert [e["follow_up"] for e in _audio_ends(ws)] == [True, False]
+        assert dev_reg.get("dev-empty-barge").state == "idle"
+    finally:
+        session._cancel_drain_timer()
+        dev_reg.unregister("dev-empty-barge")

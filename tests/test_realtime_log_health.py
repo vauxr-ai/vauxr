@@ -235,6 +235,7 @@ async def test_pending_audio_end_does_not_hide_new_activity(
             await release.wait()
 
     control_ws.send_str.side_effect = send
+    device_registry.set_state("log-health-test", "listening")
     task = asyncio.create_task(session._send_audio_end(False))
     try:
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -258,6 +259,8 @@ async def test_pending_audio_end_does_not_hide_new_activity(
             await asyncio.wait_for(task, timeout=1)
         assert track.is_enabled() is (intervening not in ("none", "pause"))
         assert session._mic_paused is (intervening == "pause")
+        if intervening in ("none", "pause"):
+            assert device_registry.get("log-health-test").state == "idle"
         if intervening == "follow_up":
             assert device_registry.get("log-health-test").state == "listening"
         if intervening in ("closed", "ended"):
@@ -332,3 +335,80 @@ async def test_rtp_only_warm_wake_can_promote_new_turn(control_ws: SimpleNamespa
         assert track.is_enabled()
     finally:
         track.stop()
+
+
+@pytest.mark.parametrize("completion", ["end", "error"])
+async def test_channel_completion_owns_processing_gate(
+    control_ws: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, completion: str,
+) -> None:
+    from pipecat.processors.aggregators.llm_context import LLMContext
+
+    session = RealtimeSession("log-health-test", channel_server=SimpleNamespace())
+    session._context = LLMContext([{"role": "user", "content": "first"}])
+    listener = {}
+    sends = 0
+
+    def send_transcript(*_args: object) -> bool:
+        nonlocal sends
+        sends += 1
+        if sends == 1:
+            session._on_bot_started_speaking()
+            listener["on_delta"]("old", "Old reply.")
+            session._on_interruption()
+            session._turn_generation += 1
+            session._awaiting_reply = True
+            listener["on_end"]("old")
+        elif completion == "error":
+            listener["on_error"]("new", "test backend error")
+        else:
+            listener["on_end"]("new")
+        return True
+
+    def add_listener(_device: str, callbacks: dict) -> None:
+        listener.clear()
+        listener.update(callbacks)
+
+    channel = SimpleNamespace(
+        send_transcript=send_transcript, add_response_listener=add_listener,
+        remove_response_listener=lambda *_args: None,
+    )
+    llm = ChannelLLMService(
+        device_id=session.device_id, channel_server=channel,
+        turn_complete_factory=session._turn_complete_callback,
+    )
+    monkeypatch.setattr(llm, "push_frame", AsyncMock())
+    monkeypatch.setattr(llm, "push_error", AsyncMock())
+    await llm._run_turn(session._context)
+    assert session._awaiting_reply  # late old completion cannot release the new turn
+    session._context.add_message({"role": "user", "content": "second"})
+    await llm._run_turn(session._context)
+    assert session._user_barged_in
+    assert not session._awaiting_reply
+    assert not session._turns_suppressed()
+    assert len(session._pending_ends) == 2
+
+
+@pytest.mark.parametrize("intervening", ["none", "pause", "speech", "disconnect", "ended"])
+async def test_prompt_follow_up_reopens_mic_only_after_current_control_delivery(
+    control_ws: SimpleNamespace, intervening: str,
+) -> None:
+    session = RealtimeSession("log-health-test", channel_server=SimpleNamespace())
+    session.set_mic_paused(True)
+    device_registry.set_state(session.device_id, "processing")
+
+    async def send(_data: str) -> None:
+        if intervening == "pause":
+            session.set_mic_paused(True)
+        elif intervening == "speech":
+            session.set_mic_paused(False)
+            device_registry.set_state(session.device_id, "processing")
+        elif intervening == "disconnect":
+            raise ConnectionResetError
+        elif intervening == "ended":
+            session._ended_notified = True
+
+    control_ws.send_str.side_effect = send
+    await session._send_audio_end(True, resume_mic=True)
+    assert session._mic_paused is (intervening not in ("none", "speech"))
+    expected = {"none": "listening", "pause": "idle"}.get(intervening, "processing")
+    assert device_registry.get(session.device_id).state == expected

@@ -95,6 +95,7 @@ class ChannelLLMService(LLMService):
         device_id: str,
         channel_server: ChannelServer,
         on_turn_complete: TurnCompleteCb | None = None,
+        turn_complete_factory: Callable[[], TurnCompleteCb] | None = None,
         on_turn_skipped: TurnSkippedCb | None = None,
         **kwargs,
     ) -> None:
@@ -119,6 +120,7 @@ class ChannelLLMService(LLMService):
         self._device_id = device_id
         self._channel_server = channel_server
         self._on_turn_complete = on_turn_complete
+        self._turn_complete_factory = turn_complete_factory
         self._on_turn_skipped = on_turn_skipped
         # User-message count at the last turn we routed. VADStopUserTurnStopStrategy
         # can finalize a turn on its silence fallback without a new transcript; in
@@ -155,6 +157,9 @@ class ChannelLLMService(LLMService):
             return
         self._last_user_msg_count = user_count
 
+        on_turn_complete = (
+            self._turn_complete_factory() if self._turn_complete_factory else self._on_turn_complete
+        )
         await self.push_frame(LLMFullResponseStartFrame())
         await self.start_processing_metrics()
 
@@ -265,8 +270,8 @@ class ChannelLLMService(LLMService):
         if error:
             logger.error("ChannelLLM error for {}: {}", self._device_id, error)
             await self.push_error(ErrorFrame(error))
-            if self._on_turn_complete:
-                await self._maybe_await(self._on_turn_complete(False, ""))
+            if on_turn_complete:
+                await self._maybe_await(on_turn_complete(False, ""))
             return
 
         result = resolve_follow_up(accumulated, _follow_up_mode_for(self._device_id))
@@ -276,8 +281,8 @@ class ChannelLLMService(LLMService):
             result.follow_up,
             result.reply_text[:160],
         )
-        if self._on_turn_complete:
-            await self._maybe_await(self._on_turn_complete(result.follow_up, result.reply_text))
+        if on_turn_complete:
+            await self._maybe_await(on_turn_complete(result.follow_up, result.reply_text))
 
     async def _emit_empty_response(self) -> None:
         """Emit a balanced, empty LLM response for a skipped turn.

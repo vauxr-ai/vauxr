@@ -181,6 +181,11 @@ async def _dispatch_prompt(
     # can play without opening the mic or requiring a realtime wake.
     registry.set_state(device_id, "processing")
 
+    async def send_audio_end(follow_up: bool) -> None:
+        from realtime_session import get_manager
+
+        await get_manager().send_prompt_audio_end(device_id, follow_up)
+
     abort = asyncio.Event()
     entry.abort_event = abort
     try:
@@ -192,6 +197,7 @@ async def _dispatch_prompt(
             channel_server,
             abort,
             entry.output_sample_rate,
+            send_audio_end=send_audio_end,
         )
     except Exception as err:  # noqa: BLE001
         log.error("device.button prompt failed for %s: %s", device_id, err)
