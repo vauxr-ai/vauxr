@@ -34,13 +34,66 @@ cp .env.example .env
 DEVICE_TOKEN=your-device-shared-secret
 ```
 
-3. Start the stack:
+3. Prepare the persistent directory and start the stack:
 
 ```bash
+mkdir -p data
+docker compose build vauxr
+docker compose run --rm --no-deps --user 0 vauxr \
+  sh -c 'chown 100:101 /data && chmod 700 /data'
 docker compose up -d
 ```
 
+The initialization runs through the selected Docker daemon so ownership works
+with both rootful and rootless Docker. Vauxr runs as container UID 100/GID 101;
+do not use host `chown 100:101` for a rootless deployment.
+
 Use the web client or HTTP API at `http://your-server-ip:8080`. Voice devices connect to `ws://your-server-ip:8765`.
+
+## Persistent data
+
+Vauxr bind-mounts `./data` beside this Compose file into `/data`. This directory
+holds device settings (`devices.json`), webhooks (`webhooks.json`), channels
+(`channels.json`), routing (`config.json`), and the direct-connection identity
+(`vauxr-identity.json`) when those features are used. It is ignored by Git;
+back it up securely because it can contain credentials and private keys.
+Recordings and firmware retain their separate `./recordings` and `./firmware`
+mounts. Whisper and Piper retain their named model-cache volumes.
+
+### Existing installations
+
+Earlier versions used the Docker-managed `vauxr-data` volume. Switching to
+`./data` does not migrate its contents automatically. Before recreating Vauxr:
+
+1. Using the Docker daemon that owns the old container, stop only Vauxr:
+   `docker stop vauxr`.
+2. Copy its actual data into a new private staging directory on the Docker host:
+
+   ```bash
+   (umask 077; mkdir ./data-migration)
+   docker cp vauxr:/data/. ./data-migration/
+   ```
+
+3. Back up any existing repo `./data` folder, then move `./data-migration` to
+   `./data`. Keep the old named volume for rollback. Recordings and firmware
+   use separate mounts; leave their existing host directories intact.
+4. With the destination daemon selected, initialize ownership and start only
+   Vauxr (after building the image if necessary):
+
+   ```bash
+   docker compose run --rm --no-deps --user 0 vauxr \
+     sh -c 'chown -R 100:101 /data && chmod 700 /data'
+   docker compose up -d --no-deps vauxr
+   ```
+
+Verify saved settings, channel authentication, and voice before removing old
+storage. To roll back, stop the new container and restore the previous volume
+mount. Do not run `docker compose down -v` during migration.
+
+Bind paths refer to the Docker host, not a remote client's filesystem. For a
+rootful-to-rootless move, copy from the old daemon first and ensure the new
+account can access the destination repo. Keep staging copies and backups out
+of Git; they may contain secrets.
 
 ## Connecting to OpenClaw
 

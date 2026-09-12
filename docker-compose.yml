@@ -21,7 +21,7 @@ services:
     environment:
       WHISPER_URL: tcp://127.0.0.1:10300
       PIPER_URL: tcp://127.0.0.1:10200
-      OPENCLAW_URL: ${OPENCLAW_URL}
+      OPENCLAW_URL: ${OPENCLAW_URL:-}
       OPENCLAW_TOKEN: ${OPENCLAW_TOKEN:-}
       DEVICE_TOKEN: ${DEVICE_TOKEN}
       PIPER_VOICE: en_US-libritts_r-medium
@@ -43,7 +43,7 @@ services:
       # host bind-mount below.
       VAUXR_RECORD_DIR: ${VAUXR_RECORD_DIR:-}
     volumes:
-      - vauxr-data:/data
+      - ./data:/data
       - ./certs/root.crt:/certs/root.crt:ro
       - ./recordings:/data/recordings
       - ./firmware:/data/firmware
@@ -81,4 +81,3 @@ services:
 volumes:
   whisper-data:
   piper-data:
-  vauxr-data:

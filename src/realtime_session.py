@@ -57,13 +57,15 @@ _SAFETY_BACKSTOP_S = 600.0
 _SAFETY_BACKSTOP_POLL_S = 30.0
 
 
-async def _send_json(ws: Any, obj: dict[str, Any]) -> None:
+async def _send_json(ws: Any, obj: dict[str, Any]) -> bool:
+    """Report local send success; this is not a device acknowledgement."""
     if ws is None or getattr(ws, "closed", True):
-        return
+        return False
     try:
         await ws.send_str(json.dumps(obj, separators=(",", ":")))
     except (ConnectionResetError, RuntimeError):
-        pass
+        return False
+    return True
 
 
 def _device_ws(device_id: str) -> web.WebSocketResponse | None:
@@ -99,6 +101,7 @@ class RealtimeSession:
         self._runner: Any = None
         self._context: Any = None
         self._connection: Any = None
+        self._audio_input_generation = 0
         self._runner_task: asyncio.Task | None = None
         self._backstop_task: asyncio.Task | None = None
         # Monotonic timestamp of the last sign of life; drives the inactivity
@@ -210,6 +213,10 @@ class RealtimeSession:
         from realtime_wyoming import WyomingSTTService, WyomingTTSService
 
         self._connection = connection
+        if get_config().realtime.esp32_mode:
+            from realtime_transport import use_websocket_control
+
+            use_websocket_control(connection)
         transport = SmallWebRTCTransport(
             webrtc_connection=connection,
             params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
@@ -421,6 +428,10 @@ class RealtimeSession:
                 if isinstance(frame, InterruptionFrame):
                     session._on_interruption()
                 elif isinstance(frame, UserStartedSpeakingFrame):
+                    # Warm re-wake has no WS cue. A promoted speech turn restores
+                    # timeout diagnostics; late RTP tail frames after audio.end
+                    # must not undo the intentional Warm-quiet state.
+                    session._set_audio_input_expected(True)
                     # Server VAD detected speech onset. Tell the device a turn is
                     # underway so it holds off its active-idle taper — otherwise it
                     # can fall into warm-quiet mid-utterance (before STT/LLM emits
@@ -820,9 +831,19 @@ class RealtimeSession:
             await self._send_audio_end(follow_up)
 
     async def _send_audio_end(self, follow_up: bool) -> None:
-        await _send_json(
+        # Keep diagnostics active until control delivery succeeds, including if
+        # an earlier turn was quiet or this send is cancelled.
+        self._set_audio_input_expected(True)
+        generation = self._audio_input_generation
+        delivered = await _send_json(
             _device_ws(self.device_id), {"type": "audio.end", "follow_up": follow_up}
         )
+        if not delivered:
+            self._set_audio_input_expected(True)
+        elif not follow_up and generation == self._audio_input_generation:
+            # Speech/follow-up during the send must not be overwritten by this
+            # older turn's quiet transition.
+            self._set_audio_input_expected(False)
         # follow_up:false → Warm-quiet on the device; keep the Pipecat session alive.
         registry.set_state(self.device_id, "listening" if follow_up else "idle")
         if follow_up:
@@ -832,6 +853,23 @@ class RealtimeSession:
                 "realtime[%s]: follow_up=false — Warm-quiet (session stays alive)",
                 self.device_id,
             )
+
+    def _set_audio_input_expected(self, expected: bool) -> None:
+        """Match timeout diagnostics to the device's intentional mic pause.
+
+        In pinned Pipecat 1.9.0, set_enabled(False) only gates video reads;
+        audio recv continues normally. The audio timeout warning checks this
+        flag. Re-enable on speech onset or follow-up so active stalls are visible.
+        Never disable the RTP receiver or stop reading: warm wake has no WS cue.
+        """
+        if self._connection is None or not get_config().realtime.esp32_mode:
+            return
+        # Only ESP32/no-SCTP policy establishes that audio.end pauses the mic.
+        # Browser track status remains owned by Pipecat/the browser controls.
+        self._audio_input_generation += 1
+        track = self._connection.audio_input_track()
+        if track is not None:
+            track.set_enabled(expected)
 
     async def _notify_ended(self) -> None:
         """Relay a terminal audio.end{follow_up:false} for abnormal teardown."""
@@ -1099,6 +1137,9 @@ class RealtimeManager:
         )
 
         async def _on_connection(connection: Any) -> None:
+            from realtime_teardown import protect_handshake_teardown
+
+            protect_handshake_teardown(connection)
             existing = self._sessions.get(device_id)
             if existing is not None:
                 log.info("realtime[%s]: closing previous session before new offer", device_id)
