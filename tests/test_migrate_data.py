@@ -198,7 +198,11 @@ def test_cli_default_dry_run_never_runs_helper(monkeypatch, tmp_path, capsys, pl
     monkeypatch.setattr(sys, 'argv', ['migrate-data.py', '--root', str(tmp_path)]
                         + (['--plain'] if plain else []))
     monkeypatch.setattr(m, 'discover', lambda *args, **kwargs: {'sources': [], 'consumers': [], 'exclude': []})
-    monkeypatch.setattr(m, 'command', lambda args: pytest.fail('Dry-run must not run helper'))
+    def command(args):
+        assert args[3:5] == ['image', 'inspect']
+        return 'sha256:trusted'
+
+    monkeypatch.setattr(m, 'command', command)
     assert m.main() == 0
     out, err = capsys.readouterr()
     plan, end = json.JSONDecoder().raw_decode(out)
@@ -657,9 +661,9 @@ def test_automatic_consumer_shutdown(monkeypatch, tmp_path, capsys, scenario):
             m.main()
     else:
         assert m.main() == 0
-    out, err = capsys.readouterr()
+    _, err = capsys.readouterr()
     if scenario == 'dry':
-        assert events == [] and not list(tmp_path.iterdir())
+        assert events == ['image'] and not list(tmp_path.iterdir())
         assert 'Will gracefully stop outside-worker (outside-id)' in err
         assert all(c['State'] == 'running' for c in containers)
     if scenario == 'running':
@@ -770,3 +774,109 @@ def test_helper_holds_publication_for_consumer_check(monkeypatch, tmp_path, race
         assert 'Published ./data' in m.guarded_copy([], root, 'test', verify)
         assert (root / '.data-backup-test' / 'file0').exists()
         assert (root / 'data' / 'piper' / 'file1').exists()
+
+
+@pytest.mark.parametrize('apply', [False, True])
+@pytest.mark.parametrize('outcome,diagnostic', [
+    ('present', ''),
+    ('missing', ''),
+    ('pull_failure', 'registry credentials: PRIVATE'),
+    ('inspect_failure', 'permission denied: PRIVATE'),
+    ('inspect_failure', 'Cannot connect to the Docker daemon: PRIVATE'),
+    ('inspect_failure', 'unexpected PRIVATE error'),
+    ('inspect_failure', 'Error: No such object: helper:test'),
+    ('inspect_failure', 'Error: No such image: another:image'),
+    ('inspect_failure', 'Error: No such image: helper:test\npermission denied: PRIVATE'),
+    ('reinspect_failure', ''),
+    ('empty_id', ''),
+])
+def test_image_preparation_before_mutation(monkeypatch, tmp_path, capsys, apply, outcome, diagnostic):
+    """Exercise real command error classification and main ordering without Docker."""
+    monkeypatch.setenv('DOCKER_HOST', 'unix:///mock.sock')
+    monkeypatch.delenv('DOCKER_CONTEXT', raising=False)
+    monkeypatch.setattr(sys, 'argv', ['migrate-data.py', '--root', str(tmp_path),
+                                    '--helper-image', 'helper:test', '--plain']
+                        + (['--apply'] if apply else []))
+    real_command = m.command
+    containers, _ = inventory(monkeypatch, tmp_path, state='running')
+    discovery_command = m.command
+    monkeypatch.setattr(m, 'command', real_command)
+    events = []
+
+    def run(args, **kwargs):
+        assert args[:3] == ['docker', '--host', 'unix:///mock.sock']
+        operation = args[3:]
+        output, error = '', ''
+        if operation[:2] == ['image', 'inspect']:
+            assert operation == ['image', 'inspect', '--format', '{{.Id}}', 'helper:test']
+            assert not list(tmp_path.iterdir())  # Not even the path probe yet.
+            assert all(c['State'] == 'running' for c in containers)
+            events.append('inspect')
+            if outcome == 'inspect_failure':
+                error = diagnostic
+            elif outcome == 'empty_id':
+                pass
+            elif outcome == 'reinspect_failure' and 'pull' in events:
+                error = 'Cannot connect to the Docker daemon: PRIVATE'
+            elif outcome != 'present' and 'pull' not in events:
+                error = 'Error response from daemon: No such image: helper:test'
+            else:
+                output = 'sha256:trusted\n'
+        elif operation[0] == 'pull':
+            assert operation == ['pull', 'helper:test']
+            assert apply and events == ['inspect']
+            assert not list(tmp_path.iterdir())
+            assert all(c['State'] == 'running' for c in containers)
+            events.append('pull')
+            error = diagnostic if outcome == 'pull_failure' else ''
+        elif operation[0] == 'run':
+            assert apply
+            preparation = ['inspect'] if outcome == 'present' else ['inspect', 'pull', 'inspect']
+            assert events[:len(preparation)] == preparation
+            assert '--pull=never' in args and 'sha256:trusted' in args
+            events.append('preflight' if json.loads(args[-1]).get('preflight') else 'copy')
+        elif operation[0] == 'stop':
+            assert 'preflight' in events
+            events.append('stop')
+            next(c for c in containers if c['Id'] == operation[-1])['State'] = 'exited'
+        elif operation[:2] == ['container', 'inspect'] and operation[-2] == '{{.State.Status}}':
+            output = next(c for c in containers if c['Id'] == operation[-1])['State']
+        else:
+            output = discovery_command(operation)
+        return subprocess.CompletedProcess(args, 1 if error else 0, output, error)
+
+    monkeypatch.setattr(m.subprocess, 'run', run)
+    failure = outcome in ('inspect_failure', 'empty_id') or (
+        apply and outcome in ('pull_failure', 'reinspect_failure'))
+    if failure:
+        with pytest.raises(m.MigrationError) as exc:
+            m.main()
+        message = str(exc.value)
+        assert 'PRIVATE' not in message
+        if outcome in ('pull_failure', 'reinspect_failure'):
+            assert 'no consumers were stopped' in message and '--helper-image' in message
+        if outcome == 'inspect_failure':
+            assert not isinstance(exc.value, m.ImageMissing)
+            assert 'docker image inspect' in message
+    else:
+        assert m.main() == 0
+    _, err = capsys.readouterr()
+    if not apply or failure:
+        assert events == (['inspect', 'pull', 'inspect'] if apply and outcome == 'reinspect_failure'
+                          else ['inspect', 'pull'] if apply and outcome == 'pull_failure' else ['inspect'])
+        assert all(c['State'] == 'running' for c in containers)
+        assert 'SUCCESS' not in err
+    else:
+        assert events == (['inspect'] if outcome == 'present' else ['inspect', 'pull', 'inspect']) + [
+            'preflight', 'stop', 'stop', 'stop', 'copy']
+    if not apply and outcome in ('missing', 'pull_failure', 'reinspect_failure'):
+        assert 'Helper image is absent' in err and 'Dry-run will not pull' in err
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize('prefix', ['Error: ', 'Error response from daemon: '])
+def test_only_explicit_image_absence_is_classified(monkeypatch, prefix):
+    monkeypatch.setattr(m.subprocess, 'run', lambda args, **kwargs: subprocess.CompletedProcess(
+        args, 1, '', prefix + 'No such image: python:3.12-slim\n'))
+    with pytest.raises(m.ImageMissing):
+        m.command(['docker', 'image', 'inspect', '--format', '{{.Id}}', 'python:3.12-slim'])

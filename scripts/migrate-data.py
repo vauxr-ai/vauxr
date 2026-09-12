@@ -20,6 +20,10 @@ class MigrationError(RuntimeError):
     pass
 
 
+class ImageMissing(MigrationError):
+    """Docker explicitly reports the requested image absent on the selected daemon."""
+
+
 class Status:
     """Human progress on stderr; JSON, helper output and errors stay undecorated."""
 
@@ -61,11 +65,17 @@ def command(args: list[str]) -> str:
         # Identify the operation, not global flags; never dump helper arguments,
         # container output or arbitrary daemon text into diagnostics.
         operation = args[3:] if args[1:2] == ['--host'] else args[1:]
-        label = ' '.join([args[0], *operation[:2]])
+        label = ' '.join([args[0], *operation[:1 if operation[:1] == ['pull'] else 2]])
+        if operation[:2] == ['image', 'inspect'] and (result.stderr or '').strip() in (
+            f'Error: No such image: {operation[-1]}',
+            f'Error response from daemon: No such image: {operation[-1]}',
+        ):
+            raise ImageMissing('Configured helper image is absent on the selected Docker daemon.')
         if operation[:2] in (['container', 'inspect'], ['volume', 'inspect']):
             label += f" for {operation[-1]!a}"
         error = (result.stderr or '').lower()
-        if 'no such' in error and ('container' in error or 'object' in error or 'volume' in error):
+        if (operation[:2] in (['container', 'inspect'], ['volume', 'inspect'])
+                and 'no such' in error and any(kind in error for kind in ('container', 'object', 'volume'))):
             detail = ('Selected container or volume does not exist on this daemon. '
                       'Check docker container ls -a and select existing containers with '
                       '--vauxr, --piper and --whisper; recreated containers are supported. '
@@ -81,6 +91,29 @@ def command(args: list[str]) -> str:
                       'raw output is withheld because it may contain private data.')
         raise MigrationError(f"Command failed: {label} (exit {result.returncode}). {detail}")
     return result.stdout
+
+
+def helper_image(docker: list[str], reference: str, apply: bool, status: Status) -> str | None:
+    inspect = docker + ['image', 'inspect', '--format', '{{.Id}}', reference]
+    try:
+        image = command(inspect).strip()
+    except ImageMissing:
+        if not apply:
+            status.show('warning', 'Helper image is absent; --apply will pull it before any stops or writes. '
+                        'Dry-run will not pull; helper availability remains unverified.')
+            return None
+        status.show('plan', 'Pulling missing helper image before any consumer stops or data writes.')
+        try:
+            command(docker + ['pull', reference])
+            image = command(inspect).strip()
+        except (MigrationError, OSError) as exc:
+            raise MigrationError('Helper image preparation failed; no consumers were stopped and no migration '
+                                 'data was written. Check the configured --helper-image, registry access and '
+                                 'Docker connectivity, then retry. ' + str(exc)) from exc
+    if not image:
+        raise MigrationError('Helper image inspection returned no image ID; refusing migration.')
+    status.show('plan', 'Helper image inspected; apply uses its local image ID without further pulls.')
+    return image
 
 
 def overlap(a: str, b: str) -> bool:
@@ -380,7 +413,8 @@ def main() -> int:
                         help='read-only candidate and destination filenames/sizes/mtimes; no source selection')
     parser.add_argument('--inspect-volume', action='append', default=[], metavar='NAME',
                         help='include another exact volume in candidate inspection (repeatable)')
-    parser.add_argument('--helper-image', default='python:3.12-slim', help='already installed trusted helper image')
+    parser.add_argument('--helper-image', default='python:3.12-slim',
+                        help='trusted compatible helper image; apply pulls only if absent locally')
     parser.add_argument('--plain', action='store_true', help='disable colors and emojis')
     args = parser.parse_args()
     if args.apply and (args.inspect_candidates or args.inspect_volume):
@@ -415,11 +449,11 @@ def main() -> int:
     for consumer in plan['consumers']:
         action = 'Will gracefully stop' if consumer['state'] == 'running' else 'No stop planned for'
         status.show('plan', f"{action} {consumer_label(consumer)}: {consumer['state']}")
+    image = helper_image(docker, args.helper_image, args.apply, status)
     if not args.apply:
         print('DRY RUN: no writes. Apply automatically stops running consumers after preflight.')
         status.show('warning', 'Destination validation runs only with --apply; problematic states fail safely.')
         return 0
-    image = command(docker + ['image', 'inspect', '--format', '{{.Id}}', args.helper_image]).strip()
     nonce = uuid.uuid4().hex
     probe = root / ('.data-probe-' + nonce)
     with open(probe, 'x', opener=lambda path, flags: os.open(path, flags, 0o600)) as f:

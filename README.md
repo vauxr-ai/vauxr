@@ -152,7 +152,10 @@ not file-content or service verification; follow the post-publication checks bel
 Use `--vauxr NAME --piper NAME --whisper NAME` for different container names and
 `--root /absolute/path/to/vauxr` for another repository location. Dry-run lists
 sources and consumers by name and full ID, clearly identifying planned stops; it never
-stops containers, runs helpers, or writes files. On apply, selection, layout, flags,
+pulls images, stops containers, runs helpers, or writes files. It inspects the configured
+helper image: confirmed absence is reported as a warning that apply will need to pull;
+daemon, permission, and other inspection errors fail the dry-run without pulling.
+On apply, selection, layout, flags,
 helper image and read-only daemon-side destination/source validations complete first.
 Then every discovered running consumer (including outside this stack and overlapping
 bind mounts) is automatically stopped using `docker stop --time=-1`: graceful shutdown
@@ -174,10 +177,16 @@ manual recreation of all affected consumers with the intended mounts.
 
 Requirements and limitations:
 
-- Linux, Python 3, Docker CLI, a local Unix-socket daemon, and an already installed,
-  trusted `python:3.12-slim` helper image (Python, GNU coreutils, `renameat2` support).
-  `--helper-image` selects an alternative compatible image. Apply pins its inspected
-  image ID and runs it with no network, no pull, and a read-only container root.
+- Linux, Python 3, Docker CLI, a local Unix-socket daemon, and a trusted
+  `python:3.12-slim` helper image (Python, GNU coreutils, `renameat2` support).
+  `--helper-image` selects an alternative compatible image. Apply first inspects it
+  on the selected daemon. Only an explicit Docker "No such image" response permits
+  a pull, which must succeed before any consumer stop or migration write (including
+  the path probe). Other inspection errors abort without pulling. Pull failure
+  reports a safe diagnostic and leaves consumers running and migration data untouched;
+  registry access is required when the image is absent. After a pull, apply inspects
+  again, pins the local image ID, and runs helpers with no network, `--pull=never`,
+  and a read-only container root. An existing image is used without refreshing its tag.
 - Plain `local` named volumes without driver options only; no remote Docker,
   Docker Desktop path translation, external volume drivers, cross-daemon or
   rootful-to-rootless migration, per-container user-namespace overrides, or volume
