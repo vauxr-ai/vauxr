@@ -21,13 +21,14 @@ from loguru import logger
 from pipecat.frames.frames import (
     ErrorFrame,
     Frame,
+    LLMContextFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
-    LLMContextFrame,
     LLMTextFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.llm_service import LLMService
+from pipecat.services.settings import LLMSettings
 
 from channel_server import ChannelServer
 from device_settings import get_segmentation
@@ -97,7 +98,24 @@ class ChannelLLMService(LLMService):
         on_turn_skipped: TurnSkippedCb | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(**kwargs)
+        # The channel owns model/prompt/sampling configuration. None means
+        # unsupported here; NOT_GIVEN is only valid in sparse settings updates.
+        super().__init__(
+            settings=LLMSettings(
+                model=None,
+                system_instruction=None,
+                temperature=None,
+                max_tokens=None,
+                top_p=None,
+                top_k=None,
+                frequency_penalty=None,
+                presence_penalty=None,
+                seed=None,
+                filter_incomplete_user_turns=None,
+                user_turn_completion_config=None,
+            ),
+            **kwargs,
+        )
         self._device_id = device_id
         self._channel_server = channel_server
         self._on_turn_complete = on_turn_complete
