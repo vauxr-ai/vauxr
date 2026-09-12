@@ -1050,6 +1050,9 @@ class RealtimeManager:
         )
 
         async def _on_connection(connection: Any) -> None:
+            from realtime_teardown import protect_handshake_teardown
+
+            protect_handshake_teardown(connection)
             existing = self._sessions.get(device_id)
             if existing is not None:
                 log.info("realtime[%s]: closing previous session before new offer", device_id)
