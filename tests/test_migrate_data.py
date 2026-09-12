@@ -340,3 +340,32 @@ def test_cli_error_remains_plain_and_actionable(tmp_path, plain):
         'Migration refused/failed: Root must be an existing canonical directory without symlinks or commas.. '
         'Sources and recovery copies are retained.\n'
     )
+
+
+@pytest.mark.parametrize('stderr,expected', [
+    ('Error: No such container: piper', 'does not exist'),
+    ('permission denied while connecting', 'socket access denied'),
+    ('Cannot connect to the Docker daemon', 'Cannot connect'),
+    ('template parsing error: map has no entry', 'inspection template'),
+    ('unexpected private diagnostic', 'unrecognized error'),
+])
+def test_command_failure_reports_operation_safely(monkeypatch, stderr, expected):
+    def run(args, **kwargs):
+        return subprocess.CompletedProcess(args, 1, '', stderr)
+    monkeypatch.setattr(m.subprocess, 'run', run)
+    with pytest.raises(m.MigrationError) as error:
+        m.command(['docker', '--host', 'unix:///private/socket', 'container',
+                   'inspect', '--format', 'private-template', 'piper'])
+    message = str(error.value)
+    assert "docker container inspect for 'piper'" in message
+    assert expected in message
+    assert 'private' not in message.replace('private data', '')
+    assert 'docker --host' not in message
+
+
+def test_inspection_tolerates_optional_host_config_fields(monkeypatch, tmp_path):
+    _, calls = inventory(monkeypatch, tmp_path)
+    m.discover([], ['vauxr', 'piper', 'whisper'], tmp_path, False)
+    template = next(c[c.index('--format') + 1] for c in calls if c[:2] == ['container', 'inspect'])
+    assert 'index .HostConfig "Mounts"' in template
+    assert 'index .HostConfig "UsernsMode"' in template

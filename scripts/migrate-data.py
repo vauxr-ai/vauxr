@@ -50,8 +50,27 @@ def command(args: list[str]) -> str:
             env.pop(key, None)
     result = subprocess.run(args, text=True, capture_output=True, check=False, env=env)
     if result.returncode:
-        # Do not print arbitrary daemon/container output (it may contain private data).
-        raise MigrationError(f"Command failed: {args[0]} {args[1]} (exit {result.returncode})")
+        # Identify the operation, not global flags; never dump helper arguments,
+        # container output or arbitrary daemon text into diagnostics.
+        operation = args[3:] if args[1:2] == ['--host'] else args[1:]
+        label = ' '.join([args[0], *operation[:2]])
+        if operation[:2] in (['container', 'inspect'], ['volume', 'inspect']):
+            label += f" for {ascii(operation[-1])}"
+        error = (result.stderr or '').lower()
+        if 'no such' in error and ('container' in error or 'object' in error or 'volume' in error):
+            detail = ('Selected container or volume does not exist on this daemon. '
+                      'Check docker container ls -a and select existing containers with '
+                      '--vauxr, --piper and --whisper. Do not recreate them before migration.')
+        elif 'permission denied' in error:
+            detail = 'Docker socket access denied; use the same account/context that manages this stack.'
+        elif 'cannot connect' in error or 'connection refused' in error:
+            detail = 'Cannot connect to the selected Docker daemon; check its socket and running state.'
+        elif 'template' in error or 'map has no entry' in error:
+            detail = 'Docker could not render the container inspection template; check Docker version compatibility.'
+        else:
+            detail = ('Docker returned an unrecognized error. Check the indicated operation directly; '
+                      'raw output is withheld because it may contain private data.')
+        raise MigrationError(f"Command failed: {label} (exit {result.returncode}). {detail}")
     return result.stdout
 
 
@@ -63,7 +82,7 @@ def discover(docker: list[str], names: list[str], root: Path, apply: bool) -> di
     def inspect(name: str) -> dict:
         # Never request environment variables or other unrelated container configuration.
         fmt = ('{"Id":{{json .Id}},"State":{{json .State.Status}},"Mounts":{{json .Mounts}},'
-               '"AdvancedMounts":{{json .HostConfig.Mounts}},"Userns":{{json .HostConfig.UsernsMode}}}')
+               '"AdvancedMounts":{{json (index .HostConfig "Mounts")}},"Userns":{{json (index .HostConfig "UsernsMode")}}}')
         return json.loads(command(docker + ['container', 'inspect', '--format', fmt, name]))
 
     selected = [inspect(name) for name in names]
