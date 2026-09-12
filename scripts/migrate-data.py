@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Offline, same-daemon migration. No Compose mutations or source deletion."""
 import argparse
+import concurrent.futures
 import json
 import os
 import re
 import stat
 import subprocess
 import sys
+import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar
@@ -23,6 +26,7 @@ class Status:
     STYLES: ClassVar[dict[str, tuple[str, str]]] = {
         'plan': ('📋', '36'),
         'copying': ('📦', '34'),
+        'stopping': ('⏹', '33'),
         'verified': ('🔎', '32'),
         'success': ('✅', '32'),
         'warning': ('⚠️', '33'),
@@ -144,12 +148,13 @@ def inspect_candidates(docker: list[str], root: Path, requested: list[str]) -> d
 
 
 def discover(docker: list[str], names: list[str], root: Path, apply: bool,
-             explicit: list[str | None] | None = None) -> dict:
+             explicit: list[str | None] | None = None, *, allow_running: bool = False,
+             migration_helper: str | None = None) -> dict:
     explicit = explicit or [None, None, None]
 
     def inspect(name: str) -> dict:
         # Never request environment variables or other unrelated container configuration.
-        fmt = ('{"Id":{{json .Id}},"State":{{json .State.Status}},"Mounts":{{json .Mounts}},'
+        fmt = ('{"Name":{{json .Name}},"Id":{{json .Id}},"State":{{json .State.Status}},"Mounts":{{json .Mounts}},'
                '"AdvancedMounts":{{json (index .HostConfig "Mounts")}},"Userns":{{json (index .HostConfig "UsernsMode")}}}')
         return json.loads(command(docker + ['container', 'inspect', '--format', fmt, name]))
 
@@ -201,15 +206,18 @@ def discover(docker: list[str], names: list[str], root: Path, apply: bool,
     consumers = []
     for cid in ids:
         c = inspect(cid)
+        if migration_helper and c.get('Name') == '/' + migration_helper:
+            continue  # Only our nonce-named helper may hold these mounts during the publication check.
         relevant = c['Id'] in {s['Id'] for s in selected} or any(
             (m['Type'] == 'volume' and m.get('Name') in volumes)
             or (m['Type'] == 'bind' and any(overlap(m['Source'], p) for p in paths))
             for m in c['Mounts']
         )
         if relevant:
-            consumers.append({'id': c['Id'], 'state': c['State']})
-            if apply and c['State'] not in ('exited', 'created'):
-                raise MigrationError(f"Consumer {c['Id']} is {c['State']}; all consumers must be stopped.")
+            consumers.append({'id': c['Id'], 'name': c.get('Name', c['Id']).lstrip('/'), 'state': c['State']})
+            if apply and c['State'] not in (('exited', 'created', 'running') if allow_running else ('exited', 'created')):
+                raise MigrationError(f"Consumer {c.get('Name', c['Id'])} ({c['Id']}) is {c['State']}; "
+                                     "all consumers must be stopped. Resolve this state manually; no force is used.")
     if not {s['Id'] for s in selected}.issubset({c['id'] for c in consumers}):
         raise MigrationError('Container inventory changed; retry discovery.')
     return {'sources': sources, 'exclude': separate, 'consumers': consumers,
@@ -220,12 +228,13 @@ def discover(docker: list[str], names: list[str], root: Path, apply: bool,
 
 # Executed inside the selected daemon's UID namespace, never on live service containers.
 HELPER = r'''
-import ctypes, fcntl, json, os, pathlib, stat, subprocess, sys
+import ctypes, fcntl, json, os, pathlib, shutil, stat, subprocess, sys, time
 p = json.loads(sys.argv[1])
 root = pathlib.Path('/target')
 assert (root / p['probe']).read_text() == p['nonce'], 'Client/daemon path mismatch'
-lock = os.open(root / '.data-migration.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+if not p.get('preflight'):
+    lock = os.open(root / '.data-migration.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 libc = ctypes.CDLL(None, use_errno=True)
 def rename(a, b):
     if libc.renameat2(-100, os.fsencode(a), -100, os.fsencode(b), 1):
@@ -277,6 +286,17 @@ if existing:
                 empty(data / name)
 else:
     assert p['sources'][0]['type'] == 'volume', 'Existing bind disappeared'
+if p.get('preflight'):
+    assert shutil.which('cp'), 'Helper needs GNU coreutils cp'
+    assert getattr(libc, 'renameat2', None), 'Helper needs renameat2 support'
+    for i in range(3):
+        source = pathlib.Path('/source' + str(i))
+        directory(source)
+        validate_tree(source, set(p['exclude']) | {'piper', 'whisper'} if i == 0 else set())
+    if p['sources'][0]['type'] == 'volume':
+        for name in ('piper', 'whisper'):
+            assert not os.path.lexists(pathlib.Path('/source0') / name), 'Legacy data has cache name collision'
+    sys.exit(0)
 original = data.stat() if existing else None
 assert not os.path.lexists(stage) and not os.path.lexists(backup)
 # Verify kernel/filesystem support for no-replace renames before copying.
@@ -293,6 +313,13 @@ try:
         copy(pathlib.Path('/source' + str(i)), stage / 'payload' / name, set())
     metadata(pathlib.Path('/source0'), stage / 'payload')
     os.sync()
+    if p.get('guard'):
+        (root / ('.data-ready-' + p['nonce'])).touch(exist_ok=False)
+        deadline = time.monotonic() + 300
+        while not (root / ('.data-publish-' + p['nonce'])).exists():
+            assert not (root / ('.data-abort-' + p['nonce'])).exists(), 'Consumer guard failed; publication aborted'
+            assert time.monotonic() < deadline, 'Publication approval timed out; keep consumers stopped'
+            time.sleep(0.1)
     if existing:
         current = data.stat()
         assert (current.st_dev, current.st_ino) == (original.st_dev, original.st_ino), 'Destination changed'
@@ -311,9 +338,36 @@ finally:
 '''
 
 
+def consumer_label(consumer: dict) -> str:
+    return f"{consumer.get('name', consumer['id'])} ({consumer['id']})"
+
+
+def guarded_copy(args: list[str], root: Path, nonce: str, verify: Callable[[], None]) -> str:
+    """Keep the helper's filesystem lock held while the client checks publication."""
+    ready = root / ('.data-ready-' + nonce)
+    publish = root / ('.data-publish-' + nonce)
+    abort = root / ('.data-abort-' + nonce)
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(command, args)
+            try:
+                while not future.done():
+                    if ready.exists() and not publish.exists():
+                        verify()
+                        publish.touch(exist_ok=False)
+                    time.sleep(0.05)
+                return future.result()
+            except BaseException:
+                abort.touch(exist_ok=True)
+                raise
+    finally:
+        for path in (ready, publish, abort):
+            path.unlink(missing_ok=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--apply', action='store_true', help='copy and publish; default is read-only discovery')
+    parser.add_argument('--apply', action='store_true', help='validate, gracefully stop running consumers, copy and publish; default is read-only')
     parser.add_argument('--root', type=Path, default=Path.cwd(), help='repository directory on the Docker host')
     parser.add_argument('--vauxr', default='vauxr')
     parser.add_argument('--piper', default='piper')
@@ -350,7 +404,7 @@ def main() -> int:
                          indent=2), flush=True)
         return 0
     names = [args.vauxr, args.piper, args.whisper]
-    plan = discover(docker, names, root, args.apply, explicit)
+    plan = discover(docker, names, root, args.apply, explicit, allow_running=True)
     status.show('plan', 'Discovered sources and consumers; destination plan follows on stdout.')
     print(json.dumps({'destination': str(root / 'data'), 'backup_existing': args.backup_existing,
                       **plan}, indent=2), flush=True)
@@ -358,19 +412,20 @@ def main() -> int:
         status.show('warning', 'Already bound to ./data and caches; this does not mean old data was migrated.')
     if not args.backup_existing:
         status.show('warning', 'Populated recovery targets require --backup-existing; no merge is performed.')
+    for consumer in plan['consumers']:
+        action = 'Will gracefully stop' if consumer['state'] == 'running' else 'No stop planned for'
+        status.show('plan', f"{action} {consumer_label(consumer)}: {consumer['state']}")
     if not args.apply:
-        print('DRY RUN: no writes. Apply requires stopped consumers and validates destination in the daemon.')
-        status.show('warning', 'Destination validation runs only with --apply; stop all listed consumers first.')
+        print('DRY RUN: no writes. Apply automatically stops running consumers after preflight.')
+        status.show('warning', 'Destination validation runs only with --apply; problematic states fail safely.')
         return 0
     image = command(docker + ['image', 'inspect', '--format', '{{.Id}}', args.helper_image]).strip()
     nonce = uuid.uuid4().hex
     probe = root / ('.data-probe-' + nonce)
     with open(probe, 'x', opener=lambda path, flags: os.open(path, flags, 0o600)) as f:
         f.write(nonce)
+    stop_attempted = False
     try:
-        if discover(docker, names, root, True, explicit) != plan:
-            raise MigrationError('Mounts or consumers changed; retry.')
-        status.show('verified', 'Mounts and stopped consumers rechecked; inventory unchanged.')
         mounts = ['--mount', f'type=bind,source={root},target=/target']
         for i, source in enumerate(plan['sources']):
             spec = f"type={source['type']},source={source['source']},target=/source{i},readonly"
@@ -378,11 +433,54 @@ def main() -> int:
                 spec += ',volume-nocopy'
             mounts += ['--mount', spec]
         payload = {**plan, 'probe': probe.name, 'nonce': nonce, 'backup_existing': args.backup_existing}
+        helper_args = docker + ['run', '--rm', '--pull=never', '--network=none', '--read-only',
+                                '--user', '0:0', *mounts, '--entrypoint', 'python3', image, '-I', '-c', HELPER]
+        # Read-only daemon-side checks must succeed before disrupting consumers.
+        preflight_args = [arg.replace('target=/target', 'target=/target,readonly') for arg in helper_args]
+        command(preflight_args + [json.dumps({**payload, 'preflight': True})])
+        if discover(docker, names, root, True, explicit, allow_running=True) != plan:
+            raise MigrationError('Mounts or consumers changed during preflight; retry.')
+        expected = {**plan, 'consumers': [dict(c) for c in plan['consumers']]}
+        for consumer in expected['consumers']:
+            if consumer['state'] == 'running':
+                stop_attempted = True
+                status.show('stopping', f'Gracefully stopping {consumer_label(consumer)}.')
+                # -1 disables Docker's SIGKILL timeout escalation. Never force shutdown.
+                command(docker + ['stop', '--time=-1', consumer['id']])
+                state = command(docker + ['container', 'inspect', '--format', '{{.State.Status}}',
+                                          consumer['id']]).strip()
+                if state != 'exited':
+                    raise MigrationError(f"Consumer {consumer_label(consumer)} did not stop: {state!a}.")
+                consumer['state'] = 'exited'
+
+        helper_name = 'vauxr-data-migration-' + nonce
+
+        def verify(*, copying: bool = False) -> None:
+            if discover(docker, names, root, True, explicit,
+                        migration_helper=helper_name if copying else None) != expected:
+                raise MigrationError('Mounts or consumers changed; possible restart race. Keep writers stopped.')
+
+        verify()
+        status.show('verified', 'Mounts and stopped consumers rechecked; inventory unchanged.')
         print(f'Recovery paths: .data-migration-{nonce}, .data-backup-{nonce}', flush=True)
         status.show('copying', 'Starting helper validation, staged copy and publication; keep all writers stopped.')
-        print(command(docker + ['run', '--rm', '--pull=never', '--network=none', '--read-only',
-                               '--user', '0:0', *mounts, '--entrypoint', 'python3', image,
-                               '-I', '-c', HELPER, json.dumps(payload)]))
+        copy_args = helper_args[:4] + ['--name', helper_name] + helper_args[4:]
+        print(guarded_copy(copy_args + [json.dumps({**payload, 'guard': True})],
+                           root, nonce, lambda: verify(copying=True)))
+        verify()
+    except BaseException:
+        if stop_attempted:
+            status.show('warning', 'Stop was attempted; no consumers will be restarted. Keep all consumers stopped: '
+                        + ', '.join(consumer_label(c) for c in plan['consumers']))
+        print(f'Recovery: keep writers/restart automation disabled. Verify the migration helper has exited. '
+              f'Inspect {root / "data"}, {root / (".data-backup-" + nonce)} and '
+              f'{root / (".data-migration-" + nonce)}. Before publication, data is unchanged; '
+              'if data is missing, restore the whole backup after preserving any partial data separately. '
+              'Never publish incomplete staging. Resolve the error and rerun the same explicit source selections '
+              'and --backup-existing when required. To resume after migration or rollback, recreate all consumers '
+              'with the intended mounts (see current_layout for previous mounts); do not simply restart stale '
+              'bind inodes. Verify settings, caches and voice before enabling automation.', file=sys.stderr)
+        raise
     finally:
         probe.unlink()
     status.show('success', 'Published ./data; sources and recovery copies retained.')

@@ -66,7 +66,7 @@ def test_nested_mount_validation(monkeypatch, tmp_path):
         m.discover([], ['vauxr', 'piper', 'whisper'], tmp_path, True)
 
 
-def helper(tmp_path, bind=False, injected='', backup_existing=False):
+def helper(tmp_path, bind=False, injected='', backup_existing=False, preflight=False, guard=False):
     root = tmp_path / 'repo'
     root.mkdir(exist_ok=True)
     sources = []
@@ -86,7 +86,7 @@ def helper(tmp_path, bind=False, injected='', backup_existing=False):
     code = code.replace("    try:\n        rename(stage / 'payload', data)",
                         "    try:\n" + injected + "        rename(stage / 'payload', data)")
     plan = {'probe': 'probe', 'nonce': 'test', 'sources': [{'type': 'bind' if bind else 'volume'}],
-            'exclude': ['recordings'], 'backup_existing': backup_existing}
+            'exclude': ['recordings'], 'backup_existing': backup_existing, 'preflight': preflight, 'guard': guard}
     return root, sources, lambda: subprocess.run([sys.executable, '-c', code, json.dumps(plan)],
                                                 capture_output=True, text=True, check=False)
 
@@ -197,15 +197,14 @@ def test_cli_default_dry_run_never_runs_helper(monkeypatch, tmp_path, capsys, pl
     monkeypatch.delenv('DOCKER_CONTEXT', raising=False)
     monkeypatch.setattr(sys, 'argv', ['migrate-data.py', '--root', str(tmp_path)]
                         + (['--plain'] if plain else []))
-    monkeypatch.setattr(m, 'discover', lambda *args: {'sources': [], 'consumers': [], 'exclude': []})
+    monkeypatch.setattr(m, 'discover', lambda *args, **kwargs: {'sources': [], 'consumers': [], 'exclude': []})
     monkeypatch.setattr(m, 'command', lambda args: pytest.fail('Dry-run must not run helper'))
     assert m.main() == 0
     out, err = capsys.readouterr()
     plan, end = json.JSONDecoder().raw_decode(out)
     assert plan == {'destination': str(tmp_path / 'data'), 'backup_existing': False,
                     'sources': [], 'consumers': [], 'exclude': []}
-    assert out[end:] == ('\nDRY RUN: no writes. Apply requires stopped consumers and validates '
-                         'destination in the daemon.\n')
+    assert out[end:] == ('\nDRY RUN: no writes. Apply automatically stops running consumers after preflight.\n')
     assert err.startswith('PLAN: ')
     assert 'WARNING: Destination validation runs only with --apply' in err
     assert 'SUCCESS' not in err and 'VERIFIED' not in err
@@ -230,7 +229,7 @@ def test_apply_helper_uses_readonly_actual_volumes_and_daemon_uid(monkeypatch, t
     checks = []
     calls = []
 
-    def discover(*args):
+    def discover(*args, **kwargs):
         checks.append(args)
         if failure == 'inventory' and len(checks) == 2:
             return {**plan, 'exclude': ['recordings']}
@@ -248,6 +247,9 @@ def test_apply_helper_uses_readonly_actual_volumes_and_daemon_uid(monkeypatch, t
             assert f'type=volume,source=actual-{i},target=/source{i},readonly,volume-nocopy' in args
         payload = json.loads(args[-1])
         assert (tmp_path / payload['probe']).read_text() == payload['nonce']
+        if payload.get('preflight'):
+            assert 'type=bind,source=' + str(tmp_path) + ',target=/target,readonly' in args
+            return ''
         out, err = capsys.readouterr()
         assert 'VERIFIED: Mounts and stopped consumers rechecked; inventory unchanged.' in err
         assert 'COPYING: Starting helper validation, staged copy and publication' in err
@@ -273,8 +275,9 @@ def test_apply_helper_uses_readonly_actual_volumes_and_daemon_uid(monkeypatch, t
         assert 'SUCCESS: Published ./data; sources and recovery copies retained.' in err
         assert 'WARNING: Recreate services and verify settings, caches and voice' in err
         assert out == 'mock copy completed\n'
-    assert len(checks) == 2 and all(check[3] is True for check in checks)
-    assert [call[3] for call in calls] == (['image'] if failure == 'inventory' else ['image', 'run'])
+    assert len(checks) == (2 if failure == 'inventory' else 3 if failure else 4)
+    assert all(check[3] is True for check in checks)
+    assert [call[3] for call in calls] == (['image', 'run'] if failure == 'inventory' else ['image', 'run', 'run'])
     assert not list(tmp_path.iterdir())
 
 
@@ -536,7 +539,7 @@ def test_explicit_cli_apply_forwards_selection_and_backup(monkeypatch, tmp_path)
     monkeypatch.setattr(sys, 'argv', argv)
     checks = []
 
-    def discover(docker, names, root, apply, explicit):
+    def discover(docker, names, root, apply, explicit, **kwargs):
         assert apply and explicit == selected
         checks.append(explicit)
         return {'sources': [{'type': 'volume', 'source': s} for s in explicit], 'exclude': [],
@@ -554,7 +557,7 @@ def test_explicit_cli_apply_forwards_selection_and_backup(monkeypatch, tmp_path)
     monkeypatch.setattr(m, 'discover', discover)
     monkeypatch.setattr(m, 'command', command)
     assert m.main() == 0
-    assert len(checks) == 2
+    assert len(checks) == 4
 
 
 @pytest.mark.parametrize('role', ['piper', 'whisper'])
@@ -594,3 +597,176 @@ def test_listing_marks_inaccessible_subdirectories(monkeypatch, tmp_path):
     result = m.file_listing(tmp_path)
     assert result['status'].startswith('unavailable')
     assert 'private diagnostic' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('scenario', ['dry', 'running', 'stopped', 'stop_failure', 'restart',
+                                      'copy_failure', 'preflight_failure', 'paused', 'image_failure'])
+def test_automatic_consumer_shutdown(monkeypatch, tmp_path, capsys, scenario):
+    monkeypatch.setenv('DOCKER_HOST', 'unix:///mock.sock')
+    monkeypatch.delenv('DOCKER_CONTEXT', raising=False)
+    monkeypatch.setattr(sys, 'argv', ['migrate-data.py', '--root', str(tmp_path), '--plain']
+                        + ([] if scenario == 'dry' else ['--apply']))
+    containers, _ = inventory(monkeypatch, tmp_path,
+                              state='exited' if scenario == 'stopped' else 'running',
+                              extra={'Id': 'outside-id', 'Name': '/outside-worker', 'State': 'running',
+                                     'Mounts': [{'Type': 'volume', 'Name': 'unpredictable-1'}]})
+    if scenario == 'paused':
+        containers[-1]['State'] = 'paused'
+    if scenario == 'stopped':
+        containers[-1]['State'] = 'created'
+    discovery_command = m.command
+    events = []
+
+    def command(args):
+        operation = args[3:]
+        if operation[:2] == ['image', 'inspect']:
+            events.append('image')
+            if scenario == 'image_failure':
+                raise m.MigrationError('missing helper image')
+            return 'sha256:trusted'
+        if operation[0] == 'stop':
+            assert operation[1] == '--time=-1'
+            assert events[0:2] == ['image', 'preflight']
+            events.append('stop:' + operation[-1])
+            if scenario == 'stop_failure' and operation[-1] == 'piper':
+                raise m.MigrationError('stop failed')
+            next(c for c in containers if c['Id'] == operation[-1])['State'] = 'exited'
+            return operation[-1]
+        if operation[:2] == ['container', 'inspect'] and operation[-2] == '{{.State.Status}}':
+            return next(c for c in containers if c['Id'] == operation[-1])['State']
+        if operation[0] == 'run':
+            payload = json.loads(operation[-1])
+            if payload.get('preflight'):
+                events.append('preflight')
+                if scenario == 'preflight_failure':
+                    raise m.MigrationError('destination requires backup')
+                return ''
+            events.append('copy')
+            assert all(c['State'] in ('created', 'exited') for c in containers)
+            if scenario == 'copy_failure':
+                raise m.MigrationError('copy failed')
+            return 'published'
+        if scenario == 'restart' and operation[:2] == ['container', 'ls'] and 'stop:outside-id' in events:
+            containers[0]['State'] = 'running'
+        return discovery_command(operation)
+
+    monkeypatch.setattr(m, 'command', command)
+    failures = {'stop_failure', 'restart', 'copy_failure', 'preflight_failure', 'paused', 'image_failure'}
+    if scenario in failures:
+        with pytest.raises(m.MigrationError):
+            m.main()
+    else:
+        assert m.main() == 0
+    out, err = capsys.readouterr()
+    if scenario == 'dry':
+        assert events == [] and not list(tmp_path.iterdir())
+        assert 'Will gracefully stop outside-worker (outside-id)' in err
+        assert all(c['State'] == 'running' for c in containers)
+    if scenario == 'running':
+        assert events == ['image', 'preflight', 'stop:vauxr', 'stop:piper', 'stop:whisper',
+                          'stop:outside-id', 'copy']
+    if scenario == 'stopped':
+        assert events == ['image', 'preflight', 'copy']
+    if scenario in failures - {'copy_failure'}:
+        assert 'copy' not in events
+    if scenario in {'preflight_failure', 'paused', 'image_failure'}:
+        assert not any(e.startswith('stop:') for e in events)
+    if scenario in {'stop_failure', 'restart', 'copy_failure'}:
+        assert 'no consumers will be restarted' in err
+        assert 'outside-worker (outside-id)' in err
+        assert str(tmp_path / '.data-backup-') in err
+        assert 'rerun the same explicit source selections' in err
+        assert 'recreate all consumers' in err
+        assert 'SUCCESS' not in err
+    if scenario == 'copy_failure':
+        assert all(c['State'] == 'exited' for c in containers)
+
+
+@pytest.mark.parametrize('race', [False, True])
+def test_publication_guard_checks_before_authorizing(monkeypatch, tmp_path, race):
+    import time
+
+    events = []
+
+    def command(args):
+        (tmp_path / '.data-ready-test').touch()
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if (tmp_path / '.data-abort-test').exists():
+                events.append('aborted')
+                return ''
+            if (tmp_path / '.data-publish-test').exists():
+                events.append('published')
+                return 'done'
+            time.sleep(0.01)
+        pytest.fail('Guard never responded')
+
+    def verify():
+        events.append('verified')
+        if race:
+            raise m.MigrationError('restart race')
+
+    monkeypatch.setattr(m, 'command', command)
+    if race:
+        with pytest.raises(m.MigrationError, match='restart race'):
+            m.guarded_copy([], tmp_path, 'test', verify)
+    else:
+        assert m.guarded_copy([], tmp_path, 'test', verify) == 'done'
+    assert events == ['verified', 'aborted' if race else 'published']
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize('populated,backup', [(False, False), (True, False), (True, True)])
+def test_helper_preflight_checks_destination_without_mutation(tmp_path, populated, backup):
+    root, _, run = helper(tmp_path, backup_existing=backup, preflight=True)
+    if populated:
+        (root / 'data').mkdir()
+        (root / 'data' / 'retain').write_text('original')
+    before = sorted(str(path.relative_to(root)) for path in root.rglob('*'))
+    result = run()
+    assert (result.returncode == 0) is (not populated or backup)
+    assert sorted(str(path.relative_to(root)) for path in root.rglob('*')) == before
+    if populated:
+        assert (root / 'data' / 'retain').read_text() == 'original'
+
+
+
+def test_publication_discovery_excludes_only_own_helper(monkeypatch, tmp_path):
+    inventory(monkeypatch, tmp_path, extra={
+        'Id': 'helper-id', 'Name': '/vauxr-data-migration-nonce', 'State': 'running',
+        'Mounts': [{'Type': 'volume', 'Name': 'unpredictable-1'}],
+    })
+    assert len(m.discover([], ['vauxr', 'piper', 'whisper'], tmp_path, True,
+                          migration_helper='vauxr-data-migration-nonce')['consumers']) == 3
+    with pytest.raises(m.MigrationError, match='all consumers'):
+        m.discover([], ['vauxr', 'piper', 'whisper'], tmp_path, True,
+                   migration_helper='different-helper')
+
+
+@pytest.mark.parametrize('race', [False, True])
+def test_helper_holds_publication_for_consumer_check(monkeypatch, tmp_path, race):
+    root, _, run = helper(tmp_path, bind=True, guard=True)
+
+    def command(args):
+        result = run()
+        if result.returncode:
+            raise m.MigrationError('helper refused publication')
+        return result.stdout
+
+    def verify():
+        assert (root / 'data' / 'file0').read_text() == 'content0'
+        assert not (root / '.data-backup-test').exists()
+        assert (root / '.data-migration-test' / 'payload' / 'piper' / 'file1').exists()
+        if race:
+            raise m.MigrationError('restarted consumer')
+
+    monkeypatch.setattr(m, 'command', command)
+    if race:
+        with pytest.raises(m.MigrationError, match='restarted consumer'):
+            m.guarded_copy([], root, 'test', verify)
+        assert not (root / '.data-backup-test').exists()
+        assert not (root / 'data' / 'piper').exists()
+    else:
+        assert 'Published ./data' in m.guarded_copy([], root, 'test', verify)
+        assert (root / '.data-backup-test' / 'file0').exists()
+        assert (root / 'data' / 'piper' / 'file1').exists()

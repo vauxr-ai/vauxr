@@ -77,7 +77,7 @@ the current three containers and the old source volumes:
 
 ```bash
 python3 scripts/migrate-data.py                 # read-only discovery, even while running
-# Arrange a maintenance window and manually stop all listed storage consumers.
+# Arrange maintenance; disable restart automation and host writers. Apply stops running consumers.
 # With original named mounts still present, discovery can use their exact volumes.
 python3 scripts/migrate-data.py --apply
 # Plain status output for terminals or automation (also works with --apply):
@@ -120,8 +120,8 @@ WHISPER_SOURCE='REPLACE_WITH_SELECTED_WHISPER_VOLUME'
 python3 scripts/migrate-data.py --plain \
   --source-vauxr "$VAUXR_SOURCE" --source-piper "$PIPER_SOURCE" \
   --source-whisper "$WHISPER_SOURCE" --backup-existing
-# Review this plan, arrange maintenance, and manually stop EVERY listed consumer.
-# Keep all filesystem writers and restart automation stopped; only then:
+# Review planned stops and arrange maintenance.
+# Disable filesystem writers and restart automation; apply stops EVERY running consumer:
 python3 scripts/migrate-data.py --plain \
   --source-vauxr "$VAUXR_SOURCE" --source-piper "$PIPER_SOURCE" \
   --source-whisper "$WHISPER_SOURCE" --backup-existing --apply
@@ -151,13 +151,26 @@ not file-content or service verification; follow the post-publication checks bel
 
 Use `--vauxr NAME --piper NAME --whisper NAME` for different container names and
 `--root /absolute/path/to/vauxr` for another repository location. Dry-run lists
-sources and consumers; destination contents and daemon path visibility are checked
-only on apply. The script never stops, starts, or recreates services. Apply refuses
-running, paused, restarting, removing, or dead consumers, including containers
-outside this stack and containers with overlapping bind mounts. Keep services,
-automation, and other filesystem writers stopped throughout copying and verification;
-Docker has no atomic storage-consumer lock. Discovery is repeated before the helper
-starts, and a filesystem lock excludes simultaneous runs of this script.
+sources and consumers by name and full ID, clearly identifying planned stops; it never
+stops containers, runs helpers, or writes files. On apply, selection, layout, flags,
+helper image and read-only daemon-side destination/source validations complete first.
+Then every discovered running consumer (including outside this stack and overlapping
+bind mounts) is automatically stopped using `docker stop --time=-1`: graceful shutdown
+with no forced kill or timeout escalation. An unresponsive consumer can therefore
+wait indefinitely. Exited/created consumers need no stop. Paused, restarting,
+removing, dead or unknown states fail safely before any stop; resolve them manually.
+Stop failures abort before copying, and containers already stopped stay stopped.
+
+The script verifies each stopped container, rediscovers all consumers before copying,
+and checks again immediately before publication while the helper holds the filesystem
+lock, and after publication. A restart or changed inventory aborts; a race detected
+after publication requires inspection of the published data and recovery paths.
+Docker has no atomic storage-consumer lock: keep restart automation and all other
+filesystem writers disabled throughout maintenance. The final check-to-rename window
+cannot be eliminated. The helper retains private staging on failure and times out
+without publication if the client never authorizes publication. The script never
+starts or recreates services, even after success: directory inode swaps require
+manual recreation of all affected consumers with the intended mounts.
 
 Requirements and limitations:
 
@@ -205,8 +218,10 @@ be recreated before resuming service. Verify
 saved settings, channel authentication, cache contents, ownership, model-service
 health and a voice turn before considering the migration complete.
 
-If copying fails, `data` remains unchanged and staging is retained. If publication
-fails after moving the original, the script attempts to restore it without replacing
+If migration fails after stops, consumers remain stopped; the error lists their names/IDs
+and precise recovery paths. Stop failures can leave some consumers running: resolve
+those states before recovery. If copying fails, `data` remains unchanged and staging
+is retained. If publication fails after moving the original, the script attempts to restore it without replacing
 anything. An interruption or failed recovery can leave `data` missing: inspect the
 printed recovery paths with services still stopped. The complete original is in
 `.data-backup-<id>` if it was moved; otherwise it remains at `data`. Preserve any

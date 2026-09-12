@@ -37,3 +37,7 @@ data-backup*/
 .data-rename-*/
 .data-probe-*
 .data-migration.lock
+
+.data-ready-*
+.data-publish-*
+.data-abort-*
