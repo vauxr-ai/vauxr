@@ -37,7 +37,7 @@ DEVICE_TOKEN=your-device-shared-secret
 3. Prepare the persistent directory and start the stack:
 
 ```bash
-mkdir -p data
+mkdir -p data/piper data/whisper
 docker compose build vauxr
 docker compose run --rm --no-deps --user 0 vauxr \
   sh -c 'chown 100:101 /data && chmod 700 /data'
@@ -58,7 +58,29 @@ holds device settings (`devices.json`), webhooks (`webhooks.json`), channels
 (`vauxr-identity.json`) when those features are used. It is ignored by Git;
 back it up securely because it can contain credentials and private keys.
 Recordings and firmware retain their separate `./recordings` and `./firmware`
-mounts. Whisper and Piper retain their named model-cache volumes.
+mounts. Whisper and Piper bind-mount `./data/whisper` and `./data/piper`,
+respectively, into their own `/data` directories for model caches.
+
+### Existing Whisper and Piper model caches
+
+Changing the mounts does not copy existing named-volume contents. On the Docker
+host, from the directory containing this Compose file, stop only the model
+services and copy their caches before recreating them:
+
+```bash
+docker compose stop whisper piper
+mkdir -p data/whisper data/piper
+docker cp -a whisper:/data/. ./data/whisper/
+docker cp -a piper:/data/. ./data/piper/
+docker compose up -d --no-deps whisper piper
+docker compose ps whisper piper
+```
+
+These commands assume the destination directories are new or empty; back up any
+existing contents first. Copy from the actual old containers before recreating
+them, using the daemon that owns them. Preserve cache ownership for that daemon
+and verify both services are healthy and voice works. Keep the old named volumes
+for rollback; do not remove them during migration.
 
 ### Existing installations
 

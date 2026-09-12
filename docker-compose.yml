@@ -55,7 +55,7 @@ services:
     network_mode: host
     command: --model small-int8 --language en --uri tcp://0.0.0.0:10300
     volumes:
-      - whisper-data:/data
+      - ./data/whisper:/data
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.create_connection(('localhost',10300),1); s.close()\""]
       interval: 10s
@@ -70,14 +70,10 @@ services:
     network_mode: host
     command: --voice en_US-libritts_r-medium --uri tcp://0.0.0.0:10200
     volumes:
-      - piper-data:/data
+      - ./data/piper:/data
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.create_connection(('localhost',10200),1); s.close()\""]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 300s
-
-volumes:
-  whisper-data:
-  piper-data:
