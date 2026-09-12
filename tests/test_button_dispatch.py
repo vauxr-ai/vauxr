@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -126,6 +126,10 @@ async def test_prompt_uses_ws_turn_even_with_live_realtime_session(
         "dev1",
         {"button_actions": {"double_press": {"kind": "prompt", "text": "hi"}}},
     )
+    manager = Mock()
+    manager.has_live_session.return_value = True
+    manager.seed_text_turn = AsyncMock()
+    monkeypatch.setattr("realtime_session.get_manager", lambda: manager)
     fake = AsyncMock()
     monkeypatch.setattr(button_dispatch, "run_text_turn", fake)
     await button_dispatch.handle_device_button(
@@ -135,6 +139,7 @@ async def test_prompt_uses_ws_turn_even_with_live_realtime_session(
         openclaw_client=None,
         channel_server=ChannelServer(),
     )
+    manager.seed_text_turn.assert_not_awaited()
     fake.assert_awaited_once()
     assert fake.await_args.args[0] == "dev1"
     assert fake.await_args.args[1] == "hi"
@@ -305,3 +310,50 @@ async def test_webhook_posts_configured_body(monkeypatch: pytest.MonkeyPatch) ->
     )
     assert posted[0]["json"] == {"entity_id": "scene.lights_low"}
     assert posted[0]["url"] == "http://ha.example/api/services/scene/turn_on"
+
+
+async def test_warm_prompt_emits_ws_audio_and_records_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    from collections.abc import AsyncIterator, Callable
+    from types import SimpleNamespace
+
+    import pipeline
+    import realtime_session
+
+    ws = FakeWs()
+    registry.register("dev1", ws=ws)
+    registry.update_config("dev1", {
+        "button_actions": {"double_press": {"kind": "prompt", "text": "Say hello"}},
+    })
+    manager = realtime_session.RealtimeManager()
+    session = realtime_session.RealtimeSession("dev1", channel_server=object())
+    manager._sessions["dev1"] = session
+    monkeypatch.setattr(session, "is_peer_live", lambda: True)
+    monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
+    seed = AsyncMock()
+    monkeypatch.setattr(manager, "seed_text_turn", seed)
+    channel = ChannelServer()
+    monkeypatch.setattr(channel, "get_active_channel", lambda: SimpleNamespace(type="openclaw-direct"))
+
+    async def chat(_key: str, _text: str, on_delta: Callable[[str], None]) -> None:
+        on_delta("Hello.")
+
+    async def synthesize(_text: str, **_kwargs: object) -> AsyncIterator[bytes]:
+        yield b"\x01\x00" * 320
+
+    monkeypatch.setattr(pipeline, "synthesize", synthesize)
+    await button_dispatch.handle_device_button(
+        device_id="dev1", button="action", gesture="double_press",
+        openclaw_client=SimpleNamespace(chat=chat), channel_server=channel,
+    )
+    seed.assert_not_awaited()
+    assert ws.binary and all(frame[0] == 0x02 for frame in ws.binary)
+    assert any(json.loads(text)["type"] == "audio.end" for text in ws.text)
+    assert manager.context_messages("dev1") == [
+        {"role": "user", "content": "Say hello"},
+        {"role": "assistant", "content": "Hello."},
+    ]
+    assert registry.get("dev1").state == "idle"
+    assert not session.is_closed

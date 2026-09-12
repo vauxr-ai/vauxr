@@ -100,7 +100,7 @@ async def test_empty_timeout_completion_does_not_force_follow_up() -> None:
         assert ends
         assert ends[-1]["type"] == "audio.end"
         assert ends[-1]["follow_up"] is False
-        assert session._mic_paused is True
+        assert session._mic_paused is False
         entry = dev_reg.get("dev-empty")
         assert entry is not None
         assert entry.state == "idle"
@@ -193,23 +193,6 @@ def test_turns_suppressed_when_mic_paused() -> None:
     assert session._turns_suppressed() is True
     session.set_mic_paused(False)
     assert session._turns_suppressed() is False
-
-
-@pytest.mark.asyncio
-async def test_follow_up_false_pauses_mic() -> None:
-    from realtime_session import RealtimeSession
-
-    ws = _FakeWs()
-    dev_reg.register("dev-fu", ws=ws)
-    try:
-        session = RealtimeSession("dev-fu", channel_server=object())
-        await session._on_turn_complete(False, "bye")
-        assert session._mic_paused is True
-        await session._on_turn_complete(True, "and?")
-        assert session._mic_paused is False
-    finally:
-        session._cancel_drain_timer()
-        dev_reg.unregister("dev-fu")
 
 
 def test_context_messages_is_a_copy() -> None:
@@ -416,3 +399,101 @@ async def test_hello_ws_only_policy_has_no_extras(
         assert policy["enabled"] is False
         assert "taper" not in policy
         assert "vad" not in policy
+
+
+@pytest.mark.parametrize("follow_up", [False, True])
+@pytest.mark.parametrize("barge_at", [None, "before_text", "after_text", "drain"])
+async def test_text_completion_leaves_barge_in_open_until_late_tts_drain(
+    monkeypatch: pytest.MonkeyPatch, follow_up: bool, barge_at: str | None,
+) -> None:
+    import realtime_session
+
+    monkeypatch.setattr(realtime_session, "_BOT_IDLE_DEBOUNCE_S", 0)
+    monkeypatch.setattr(dev_reg, "get_config_for", lambda _id: {"barge_in": True})
+    ws = _FakeWs()
+    dev_reg.register("dev-drain", ws=ws)
+    session = realtime_session.RealtimeSession("dev-drain", channel_server=object())
+    try:
+        session._awaiting_reply = True
+        session._on_bot_started_speaking()
+        if barge_at == "before_text":
+            session._on_interruption()
+            session._turn_active = True
+            session._awaiting_reply = True
+        await session._on_turn_complete(follow_up, "A long spoken reply.")
+        assert _audio_ends(ws) == []
+        assert not session._mic_paused
+        if barge_at == "before_text":
+            # The old completion cannot discard the new user's transcript or
+            # reopen PROCESSING while that user's reply is pending.
+            assert session._turn_active
+            assert session._awaiting_reply
+        else:
+            assert not session._turns_suppressed()
+        if barge_at == "after_text":
+            session._on_interruption()
+        session._on_bot_stopped_speaking()
+        if barge_at == "drain":
+            assert not session._turns_suppressed()
+            session._on_interruption()
+        assert _audio_ends(ws) == []
+        await session._drain_timer
+        assert _audio_ends(ws) == [{
+            "type": "audio.end", "follow_up": follow_up or barge_at is not None,
+        }]
+        assert not session._mic_paused
+        assert not session._user_barged_in
+        # The interruption override is consumed only once.
+        await session._on_turn_complete(False, "")
+        assert _audio_ends(ws)[-1]["follow_up"] is False
+    finally:
+        session._cancel_drain_timer()
+        dev_reg.unregister("dev-drain")
+
+
+@pytest.mark.parametrize("paused", [False, True])
+async def test_late_completion_preserves_explicit_mic_state(paused: bool) -> None:
+    from realtime_session import RealtimeSession
+
+    session = RealtimeSession("dev-explicit", channel_server=object())
+    session.set_mic_paused(paused)
+    await session._on_turn_complete(not paused, "")
+    assert session._mic_paused is paused
+
+
+@pytest.mark.parametrize("terminal", ["_closed", "_ended_notified"])
+async def test_completion_after_teardown_does_not_queue_or_send(terminal: str) -> None:
+    from realtime_session import RealtimeSession
+
+    ws = _FakeWs()
+    dev_reg.register("dev-ended", ws=ws)
+    session = RealtimeSession("dev-ended", channel_server=object())
+    try:
+        setattr(session, terminal, True)
+        await session._on_turn_complete(False, "Late reply")
+        assert not session._pending_ends
+        assert session._drain_timer is None
+        assert not ws.text
+    finally:
+        dev_reg.unregister("dev-ended")
+
+
+async def test_explicit_pause_resume_routes_to_existing_session(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import realtime_session
+
+    manager = RealtimeManager()
+    session = realtime_session.RealtimeSession("dev1", channel_server=object())
+    manager._sessions["dev1"] = session
+    monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json({"type": "hello", "device_id": "dev1", "token": "ws-test-token"})
+        await _recv_json(ws)
+        for message, paused in [("realtime.pause", True), ("realtime.resume", False)]:
+            await ws.send_json({"type": message})
+            # An unknown sentinel round-trip proves the preceding control was
+            # handled without itself producing an UNKNOWN_MESSAGE error.
+            await ws.send_json({"type": "test.barrier"})
+            assert (await _recv_json(ws))["message"] == "Unknown type: test.barrier"
+            assert session._turns_suppressed() is paused

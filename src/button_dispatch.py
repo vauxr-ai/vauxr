@@ -176,9 +176,9 @@ async def _dispatch_prompt(
         log.info("device.button prompt dropped, device busy: %s", device_id)
         return
 
-    # Lock before any await so a second gesture cannot seed/run another turn
-    # on the same device. Live sessions restore idle/listening via audio.end;
-    # the WS path restores idle in the finally below.
+    # Lock before any await so a second gesture cannot run another turn.
+    # Warm-quiet peers have paused WebRTC playback: use WS TTS, which firmware
+    # can play without opening the mic or requiring a realtime wake.
     registry.set_state(device_id, "processing")
 
     abort = asyncio.Event()

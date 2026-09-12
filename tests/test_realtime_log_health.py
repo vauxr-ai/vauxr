@@ -157,6 +157,7 @@ async def test_warm_quiet_still_reads_audio_and_follow_up_reenables_track(
         assert isinstance(await track.recv(), AudioFrame)
         # Late RTP frames do not undo quiet; speech onset explicitly restores it.
         assert not track.is_enabled()
+        assert not session._turns_suppressed()  # RTP-only warm wake can start a turn.
         session._set_audio_input_expected(True)
         assert track.is_enabled()
         await session._send_audio_end(False)
@@ -181,6 +182,7 @@ async def test_browser_audio_policy_preserves_track_ownership(
     session._connection = SimpleNamespace(audio_input_track=lambda: track)
     await session._send_audio_end(False)
     assert track.is_enabled() is initially_enabled
+    assert not session._turns_suppressed()
     await session._send_audio_end(True)
     session._set_audio_input_expected(True)
     assert track.is_enabled() is initially_enabled
@@ -202,8 +204,13 @@ async def test_failed_audio_end_keeps_timeout_diagnostics(
         control_ws.closed = True
     else:
         control_ws.send_str.side_effect = ConnectionResetError() if failure == "reset" else RuntimeError()
+    device_registry.set_state("log-health-test", "processing")
     await session._send_audio_end(False)
     assert track.is_enabled()
+    assert not session._mic_paused
+    entry = device_registry.get("log-health-test")
+    if entry is not None:
+        assert entry.state == "processing"
     if failure in ("missing", "closed"):
         control_ws.send_str.assert_not_awaited()
     else:
@@ -211,7 +218,9 @@ async def test_failed_audio_end_keeps_timeout_diagnostics(
     await _assert_audio_diagnostics(track, True, messages)
 
 
-@pytest.mark.parametrize("intervening", ["speech", "follow_up", "cancel", "none"])
+@pytest.mark.parametrize(
+    "intervening", ["speech", "follow_up", "resume", "pause", "closed", "ended", "cancel", "none"],
+)
 async def test_pending_audio_end_does_not_hide_new_activity(
     control_ws: SimpleNamespace, intervening: str,
 ) -> None:
@@ -234,6 +243,11 @@ async def test_pending_audio_end_does_not_hide_new_activity(
             session._set_audio_input_expected(True)
         elif intervening == "follow_up":
             await session._send_audio_end(True)
+        elif intervening in ("closed", "ended"):
+            setattr(session, "_closed" if intervening == "closed" else "_ended_notified", True)
+            device_registry.set_state("log-health-test", "processing")
+        elif intervening in ("resume", "pause"):
+            session.set_mic_paused(intervening == "pause")
         elif intervening == "cancel":
             task.cancel()
         release.set()
@@ -242,7 +256,12 @@ async def test_pending_audio_end_does_not_hide_new_activity(
                 await task
         else:
             await asyncio.wait_for(task, timeout=1)
-        assert track.is_enabled() is (intervening != "none")
+        assert track.is_enabled() is (intervening not in ("none", "pause"))
+        assert session._mic_paused is (intervening == "pause")
+        if intervening == "follow_up":
+            assert device_registry.get("log-health-test").state == "listening"
+        if intervening in ("closed", "ended"):
+            assert device_registry.get("log-health-test").state == "processing"
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -283,4 +302,33 @@ async def _assert_audio_diagnostics(
         assert any("Media stream error" in message for message in messages)
     finally:
         await reader.aclose()
+        track.stop()
+
+
+async def test_rtp_only_warm_wake_can_promote_new_turn(control_ws: SimpleNamespace) -> None:
+    from pipecat.frames.frames import VADUserStartedSpeakingFrame
+
+    from realtime_turn import SuppressibleVADUserTurnStartStrategy
+
+    track = _audio_track()
+    session = RealtimeSession("log-health-test", channel_server=SimpleNamespace())
+    session._connection = SimpleNamespace(audio_input_track=lambda: track)
+    strategy = SuppressibleVADUserTurnStartStrategy(is_suppressed=session._turns_suppressed)
+    strategy.trigger_user_turn_started = AsyncMock()
+    try:
+        await session._send_audio_end(False)
+        assert not track.is_enabled()
+        # Current firmware sends only RTP on wake, no realtime.resume.
+        assert isinstance(await track.recv(), AudioFrame)
+        await strategy.process_frame(VADUserStartedSpeakingFrame())
+        strategy.trigger_user_turn_started.assert_awaited_once()
+        session.set_mic_paused(True)
+        strategy.trigger_user_turn_started.reset_mock()
+        await strategy.process_frame(VADUserStartedSpeakingFrame())
+        strategy.trigger_user_turn_started.assert_not_awaited()
+        session.set_mic_paused(False)
+        await strategy.process_frame(VADUserStartedSpeakingFrame())
+        strategy.trigger_user_turn_started.assert_awaited_once()
+        assert track.is_enabled()
+    finally:
         track.stop()
