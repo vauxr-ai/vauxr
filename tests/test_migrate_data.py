@@ -1,5 +1,6 @@
 """No Docker access: discovery mock and isolated helper filesystem tests."""
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -190,13 +191,24 @@ def test_cli_remote_daemon_refused_without_writes(monkeypatch, tmp_path):
     assert not list(tmp_path.iterdir())
 
 
-def test_cli_default_dry_run_never_runs_helper(monkeypatch, tmp_path):
+@pytest.mark.parametrize('plain', [False, True])
+def test_cli_default_dry_run_never_runs_helper(monkeypatch, tmp_path, capsys, plain):
     monkeypatch.setenv('DOCKER_HOST', 'unix:///mock.sock')
     monkeypatch.delenv('DOCKER_CONTEXT', raising=False)
-    monkeypatch.setattr(sys, 'argv', ['migrate-data.py', '--root', str(tmp_path)])
+    monkeypatch.setattr(sys, 'argv', ['migrate-data.py', '--root', str(tmp_path)]
+                        + (['--plain'] if plain else []))
     monkeypatch.setattr(m, 'discover', lambda *args: {'sources': [], 'consumers': [], 'exclude': []})
     monkeypatch.setattr(m, 'command', lambda args: pytest.fail('Dry-run must not run helper'))
     assert m.main() == 0
+    out, err = capsys.readouterr()
+    plan, end = json.JSONDecoder().raw_decode(out)
+    assert plan == {'destination': str(tmp_path / 'data'), 'sources': [], 'consumers': [], 'exclude': []}
+    assert out[end:] == ('\nDRY RUN: no writes. Apply requires stopped consumers and validates '
+                         'destination in the daemon.\n')
+    assert err.startswith('PLAN: ')
+    assert 'WARNING: Destination validation runs only with --apply' in err
+    assert 'SUCCESS' not in err and 'VERIFIED' not in err
+    assert err.isascii()
     assert not list(tmp_path.iterdir())
 
 
@@ -207,7 +219,8 @@ def test_advanced_volume_mount_refused(monkeypatch, tmp_path):
         m.discover([], ['vauxr', 'piper', 'whisper'], tmp_path, True)
 
 
-def test_apply_helper_uses_readonly_actual_volumes_and_daemon_uid(monkeypatch, tmp_path):
+@pytest.mark.parametrize('failure', [None, 'inventory', 'helper'])
+def test_apply_helper_uses_readonly_actual_volumes_and_daemon_uid(monkeypatch, tmp_path, capsys, failure):
     monkeypatch.setenv('DOCKER_HOST', 'unix:///mock.sock')
     monkeypatch.delenv('DOCKER_CONTEXT', raising=False)
     monkeypatch.setattr(sys, 'argv', ['migrate-data.py', '--root', str(tmp_path), '--apply'])
@@ -218,6 +231,8 @@ def test_apply_helper_uses_readonly_actual_volumes_and_daemon_uid(monkeypatch, t
 
     def discover(*args):
         checks.append(args)
+        if failure == 'inventory' and len(checks) == 2:
+            return {**plan, 'exclude': ['recordings']}
         return plan
 
     def command(args):
@@ -232,38 +247,96 @@ def test_apply_helper_uses_readonly_actual_volumes_and_daemon_uid(monkeypatch, t
             assert f'type=volume,source=actual-{i},target=/source{i},readonly,volume-nocopy' in args
         payload = json.loads(args[-1])
         assert (tmp_path / payload['probe']).read_text() == payload['nonce']
+        out, err = capsys.readouterr()
+        assert 'VERIFIED: Mounts and stopped consumers rechecked; inventory unchanged.' in err
+        assert 'COPYING: Starting helper validation, staged copy and publication' in err
+        assert 'Recovery paths: .data-migration-' in out and '\x1b' not in out
+        assert 'SUCCESS' not in err
+        if failure == 'helper':
+            raise m.MigrationError('Command failed: docker --host (exit 1)')
         return 'mock copy completed'
 
     monkeypatch.setattr(m, 'discover', discover)
     monkeypatch.setattr(m, 'command', command)
-    assert m.main() == 0
+    if failure:
+        with pytest.raises(m.MigrationError):
+            m.main()
+    else:
+        assert m.main() == 0
+    out, err = capsys.readouterr()
+    if failure:
+        assert 'SUCCESS' not in err
+        if failure == 'inventory':
+            assert 'VERIFIED' not in err and 'COPYING' not in err
+    else:
+        assert 'SUCCESS: Published ./data; sources and recovery copies retained.' in err
+        assert 'WARNING: Recreate services and verify settings, caches and voice' in err
+        assert out == 'mock copy completed\n'
     assert len(checks) == 2 and all(check[-1] is True for check in checks)
-    assert [call[3] for call in calls] == ['image', 'run']
+    assert [call[3] for call in calls] == (['image'] if failure == 'inventory' else ['image', 'run'])
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize('plain,tty,no_color,ansi,emoji', [
-    (False, True, False, True, True),
-    (True, True, False, False, False),
-    (False, False, False, False, True),
-    (False, True, True, False, True),
+class Terminal(io.StringIO):
+    def __init__(self, tty=True, encoding='utf-8'):
+        super().__init__()
+        self.tty = tty
+        self._encoding = encoding
+
+    @property
+    def encoding(self):
+        return self._encoding
+
+    def isatty(self):
+        return self.tty
+
+
+@pytest.mark.parametrize('stdout_tty,stderr_tty,plain,no_color,term,encoding,decorated', [
+    (True, True, False, None, 'xterm', 'utf-8', True),
+    (False, True, False, None, 'xterm', 'utf-8', False),
+    (True, False, False, None, 'xterm', 'utf-8', False),
+    (False, False, False, None, 'xterm', 'utf-8', False),
+    (True, True, True, None, 'xterm', 'utf-8', False),
+    (True, True, False, '', 'xterm', 'utf-8', False),
+    (True, True, False, '1', 'xterm', 'utf-8', False),
+    (True, True, False, None, 'dumb', 'utf-8', False),
+    (True, True, False, None, 'xterm', 'ascii', False),
 ])
-def test_status_output_modes(monkeypatch, plain, tty, no_color, ansi, emoji):
-    import io
-
-    class Terminal(io.StringIO):
-        encoding = 'utf-8'
-
-        def isatty(self):
-            return tty
-
-    monkeypatch.setenv('TERM', 'xterm')
+def test_status_output_modes(monkeypatch, stdout_tty, stderr_tty, plain, no_color, term,
+                             encoding, decorated):
+    stdout, stderr = Terminal(stdout_tty), Terminal(stderr_tty, encoding)
+    monkeypatch.setattr(sys, 'stdout', stdout)
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setenv('TERM', term)
     monkeypatch.delenv('NO_COLOR', raising=False)
-    if no_color:
-        monkeypatch.setenv('NO_COLOR', '')
-    stream = Terminal()
-    m.Status(plain, stream).show('Ready', '✅', '32')
-    output = stream.getvalue()
-    assert ('\033[' in output) == ansi
-    assert ('✅' in output) == emoji
-    assert 'Ready' in output
+    if no_color is not None:
+        monkeypatch.setenv('NO_COLOR', no_color)
+    status = m.Status(plain=plain)
+    for kind, message in [('plan', 'Sources discovered'), ('copying', 'Starting helper'),
+                          ('verified', 'Inventory unchanged'), ('success', 'Published ./data'),
+                          ('warning', 'Verify services')]:
+        status.show(kind, message)
+    output = stderr.getvalue()
+    assert stdout.getvalue() == ''
+    assert ('\x1b[' in output) is decorated
+    assert ('📋' in output) is decorated
+    for label in ('PLAN', 'COPYING', 'VERIFIED', 'SUCCESS', 'WARNING'):
+        assert label in output
+    assert 'Published ./data' in output
+    if not decorated:
+        assert output.isascii()
+
+
+@pytest.mark.parametrize('plain', [False, True])
+def test_cli_error_remains_plain_and_actionable(tmp_path, plain):
+    # Invalid root fails before any Docker invocation.
+    result = subprocess.run(
+        [sys.executable, str(SPEC.origin), '--root', str(tmp_path / 'missing')]
+        + (['--plain'] if plain else []), capture_output=True, text=True,
+    )
+    assert result.returncode == 1
+    assert result.stdout == ''
+    assert result.stderr == (
+        'Migration refused/failed: Root must be an existing canonical directory without symlinks or commas.. '
+        'Sources and recovery copies are retained.\n'
+    )

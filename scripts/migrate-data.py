@@ -14,22 +14,33 @@ class MigrationError(RuntimeError):
 
 
 class Status:
-    """Human-readable status; redirected/NO_COLOR output stays ANSI-free."""
-    def __init__(self, plain=False, stream=None):
-        self.stream = stream or sys.stdout
-        self.color = not plain and 'NO_COLOR' not in os.environ and self.stream.isatty() and os.environ.get('TERM') != 'dumb'
-        encoding = self.stream.encoding or 'ascii'
-        try:
-            '🚀 🔎 📦 ✅ ⚠️'.encode(encoding)
-            self.emoji = not plain
-        except (UnicodeEncodeError, LookupError):
-            self.emoji = False
+    """Human progress on stderr; JSON, helper output and errors stay undecorated."""
 
-    def show(self, text, icon='🔎', color='36'):
-        line = f'{icon} {text}' if self.emoji else text
-        if self.color:
-            line = f'\033[{color}m{line}\033[0m'
-        print(line, file=self.stream, flush=True)
+    STYLES = {
+        'plan': ('📋', '36'),
+        'copying': ('📦', '34'),
+        'verified': ('🔎', '32'),
+        'success': ('✅', '32'),
+        'warning': ('⚠️', '33'),
+    }
+
+    def __init__(self, plain: bool = False) -> None:
+        self.decorated = (
+            not plain and 'NO_COLOR' not in os.environ and os.environ.get('TERM') != 'dumb'
+            and sys.stdout.isatty() and sys.stderr.isatty()
+        )
+        if self.decorated:
+            try:
+                ''.join(icon for icon, _ in self.STYLES.values()).encode(sys.stderr.encoding or 'ascii')
+            except (UnicodeEncodeError, LookupError):
+                self.decorated = False
+
+    def show(self, kind: str, message: str) -> None:
+        label = kind.upper()
+        if self.decorated:
+            icon, color = self.STYLES[kind]
+            label = f'\033[{color}m{icon} {label}\033[0m'
+        print(f'{label}: {message}', file=sys.stderr, flush=True)
 
 
 def command(args: list[str]) -> str:
@@ -210,7 +221,6 @@ def main() -> int:
     parser.add_argument('--plain', action='store_true', help='disable colors and emojis')
     args = parser.parse_args()
     status = Status(args.plain)
-    status.show('Vauxr data migration', '🚀', '35')
     root = args.root.absolute()
     if root.resolve() != root or not root.is_dir() or ',' in str(root):
         raise MigrationError('Root must be an existing canonical directory without symlinks or commas.')
@@ -223,11 +233,12 @@ def main() -> int:
         raise MigrationError('Only a local Unix-socket daemon is supported; run on the Docker host.')
     docker = ['docker', '--host', endpoint]
     names = [args.vauxr, args.piper, args.whisper]
-    status.show('Inspecting mounts and checking consumers')
     plan = discover(docker, names, root, args.apply)
+    status.show('plan', 'Discovered sources and consumers; destination plan follows on stdout.')
     print(json.dumps({'destination': str(root / 'data'), **plan}, indent=2), flush=True)
     if not args.apply:
-        status.show('DRY RUN: no writes. Apply requires stopped consumers and validates destination in the daemon.', '✅', '32')
+        print('DRY RUN: no writes. Apply requires stopped consumers and validates destination in the daemon.')
+        status.show('warning', 'Destination validation runs only with --apply; stop all listed consumers first.')
         return 0
     image = command(docker + ['image', 'inspect', '--format', '{{.Id}}', args.helper_image]).strip()
     nonce = uuid.uuid4().hex
@@ -237,6 +248,7 @@ def main() -> int:
     try:
         if discover(docker, names, root, True) != plan:
             raise MigrationError('Mounts or consumers changed; retry.')
+        status.show('verified', 'Mounts and stopped consumers rechecked; inventory unchanged.')
         mounts = ['--mount', f'type=bind,source={root},target=/target']
         for i, source in enumerate(plan['sources']):
             spec = f"type={source['type']},source={source['source']},target=/source{i},readonly"
@@ -244,14 +256,15 @@ def main() -> int:
                 spec += ',volume-nocopy'
             mounts += ['--mount', spec]
         payload = {**plan, 'probe': probe.name, 'nonce': nonce}
-        status.show(f'Recovery paths: .data-migration-{nonce}, .data-backup-{nonce}', '📦', '33')
-        status.show('Copying into staging; original sources are retained', '📦')
+        print(f'Recovery paths: .data-migration-{nonce}, .data-backup-{nonce}', flush=True)
+        status.show('copying', 'Starting helper validation, staged copy and publication; keep all writers stopped.')
         print(command(docker + ['run', '--rm', '--pull=never', '--network=none', '--read-only',
                                '--user', '0:0', *mounts, '--entrypoint', 'python3', image,
                                '-I', '-c', HELPER, json.dumps(payload)]))
-        status.show('Migration complete. Original volumes retained; services have not been started.', '✅', '32')
     finally:
         probe.unlink()
+    status.show('success', 'Published ./data; sources and recovery copies retained.')
+    status.show('warning', 'Recreate services and verify settings, caches and voice before completing migration.')
     return 0
 
 
@@ -259,6 +272,5 @@ if __name__ == '__main__':
     try:
         raise SystemExit(main())
     except (MigrationError, OSError, ValueError, KeyError) as exc:
-        Status('--plain' in sys.argv, sys.stderr).show(
-            f'Migration refused/failed: {exc}. Sources and recovery copies are retained.', '⚠️', '31')
+        print(f'Migration refused/failed: {exc}. Sources and recovery copies are retained.', file=sys.stderr)
         raise SystemExit(1)

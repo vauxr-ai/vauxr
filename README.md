@@ -76,9 +76,18 @@ python3 scripts/migrate-data.py                 # read-only discovery, even whil
 # Arrange a maintenance window and manually stop all listed storage consumers.
 # Keep the old containers present for inspection; do not recreate them yet.
 python3 scripts/migrate-data.py --apply
+# Plain status output for terminals or automation (also works with --apply):
+python3 scripts/migrate-data.py --plain
 ```
 
-Migration output includes colorful terminal status and emojis. Use `--plain` for ASCII-only output; `NO_COLOR` or redirected output disables ANSI colors.
+Status messages go to stderr, with colors and emojis only when both stdout and
+stderr are TTYs and the terminal encoding supports the icons. `--plain` disables
+both; setting `NO_COLOR` (even to an empty value), `TERM=dumb`, or redirecting either
+stream also selects plain output. The JSON plan, recovery details and error messages
+remain undecorated, and exit codes are unchanged. Stdout retains the JSON plan
+followed by dry-run or helper/recovery text; it is not a standalone JSON document.
+The `VERIFIED` status confirms the repeated mount and stopped-consumer check,
+not file-content or service verification; follow the post-publication checks below.
 
 Use `--vauxr NAME --piper NAME --whisper NAME` for different container names and
 `--root /absolute/path/to/vauxr` for another repository location. Dry-run lists
