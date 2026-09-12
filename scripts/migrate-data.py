@@ -3,10 +3,14 @@
 import argparse
 import json
 import os
-from pathlib import Path
+import re
+import stat
 import subprocess
 import sys
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import ClassVar
 
 
 class MigrationError(RuntimeError):
@@ -16,7 +20,7 @@ class MigrationError(RuntimeError):
 class Status:
     """Human progress on stderr; JSON, helper output and errors stay undecorated."""
 
-    STYLES = {
+    STYLES: ClassVar[dict[str, tuple[str, str]]] = {
         'plan': ('📋', '36'),
         'copying': ('📦', '34'),
         'verified': ('🔎', '32'),
@@ -55,12 +59,13 @@ def command(args: list[str]) -> str:
         operation = args[3:] if args[1:2] == ['--host'] else args[1:]
         label = ' '.join([args[0], *operation[:2]])
         if operation[:2] in (['container', 'inspect'], ['volume', 'inspect']):
-            label += f" for {ascii(operation[-1])}"
+            label += f" for {operation[-1]!a}"
         error = (result.stderr or '').lower()
         if 'no such' in error and ('container' in error or 'object' in error or 'volume' in error):
             detail = ('Selected container or volume does not exist on this daemon. '
                       'Check docker container ls -a and select existing containers with '
-                      '--vauxr, --piper and --whisper. Do not recreate them before migration.')
+                      '--vauxr, --piper and --whisper; recreated containers are supported. '
+                      'Check explicit --source-vauxr/--source-piper/--source-whisper volume names.')
         elif 'permission denied' in error:
             detail = 'Docker socket access denied; use the same account/context that manages this stack.'
         elif 'cannot connect' in error or 'connection refused' in error:
@@ -78,7 +83,70 @@ def overlap(a: str, b: str) -> bool:
     return a == b or a.startswith(b.rstrip('/') + '/') or b.startswith(a.rstrip('/') + '/')
 
 
-def discover(docker: list[str], names: list[str], root: Path, apply: bool) -> dict:
+def volume_source(docker: list[str], name: str) -> dict:
+    if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]+', name):
+        raise MigrationError('Source must be an exact named volume, not a path or mount expression.')
+    volume = json.loads(command(docker + ['volume', 'inspect', name]))[0]
+    if volume['Driver'] != 'local' or volume.get('Options'):
+        raise MigrationError('Only plain local named volumes are supported.')
+    return {'type': 'volume', 'source': name, 'path': volume['Mountpoint'],
+            'created_at': volume.get('CreatedAt')}
+
+
+def file_listing(path: Path, limit: int = 200) -> dict:
+    """Advisory host metadata only; never open files or follow directory symlinks."""
+    entries = []
+
+    def failed(error: OSError) -> None:
+        raise error
+
+    try:
+        if path.resolve() != path or not path.is_absolute():
+            return {'status': 'unavailable: noncanonical host path'}
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            for base, dirs, files, directory_fd in os.fwalk(
+                '.', dir_fd=fd, follow_symlinks=False, onerror=failed,
+            ):
+                dirs.sort()
+                for name in sorted(dirs + files):
+                    if len(entries) == limit:
+                        return {'status': 'truncated', 'limit': limit, 'entries': entries}
+                    info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                    kind = ('directory' if stat.S_ISDIR(info.st_mode) else
+                            'file' if stat.S_ISREG(info.st_mode) else
+                            'symlink' if stat.S_ISLNK(info.st_mode) else 'special')
+                    entries.append({'name': str(Path(base) / name), 'type': kind, 'bytes': info.st_size,
+                                    'mtime_utc': datetime.fromtimestamp(info.st_mtime, UTC).isoformat()})
+        finally:
+            os.close(fd)
+    except OSError:
+        return {'status': 'unavailable or changed: host permissions/path visibility; no elevation attempted',
+                'entries': entries}
+    return {'status': 'listed', 'entries': entries}
+
+
+def inspect_candidates(docker: list[str], root: Path, requested: list[str]) -> dict:
+    """Listing a candidate is not selecting it; prefixes are not provenance."""
+    names = command(docker + ['volume', 'ls', '--format', '{{.Name}}']).splitlines()
+    candidates = sorted(set(requested) | {
+        name for name in names if re.search(r'(^|_)(vauxr|piper|whisper)-data$', name)
+    })
+    result = []
+    for name in candidates:
+        source = volume_source(docker, name)
+        result.append({'volume': name, 'driver': 'local', 'created_at': source['created_at'],
+                       'files': file_listing(Path(source['path']))})
+    return {'candidates': result, 'destination_files': file_listing(root / 'data'),
+            'notice': 'Host metadata only; daemon path visibility is unverified until apply. '
+                      'Listings may change while writers run; dates/names do not prove provenance or equality. '
+                      'No file contents, symlink targets, labels or credentials are read or printed.'}
+
+
+def discover(docker: list[str], names: list[str], root: Path, apply: bool,
+             explicit: list[str | None] | None = None) -> dict:
+    explicit = explicit or [None, None, None]
+
     def inspect(name: str) -> dict:
         # Never request environment variables or other unrelated container configuration.
         fmt = ('{"Id":{{json .Id}},"State":{{json .State.Status}},"Mounts":{{json .Mounts}},'
@@ -90,6 +158,8 @@ def discover(docker: list[str], names: list[str], root: Path, apply: bool) -> di
         raise MigrationError('Select three distinct existing containers.')
     sources = []
     separate = []
+    layout = []
+    required = []
     for index, container in enumerate(selected):
         if container.get('Userns') or any(
             (mount.get('VolumeOptions') or {}).get('Subpath')
@@ -107,15 +177,22 @@ def discover(docker: list[str], names: list[str], root: Path, apply: bool) -> di
                     or child['Type'] != 'bind' or overlap(child['Source'], str(root / 'data'))):
                 raise MigrationError('Unsupported nested mount; only separate recordings/firmware binds allowed.')
             separate.append(child['Destination'].split('/')[-1])
-        if mount['Type'] == 'bind' and index == 0 and mount['Source'] == str(root / 'data'):
-            sources.append({'type': 'bind', 'source': mount['Source']})
+        role = ('vauxr', 'piper', 'whisper')[index]
+        destination = root / 'data' if index == 0 else root / 'data' / role
+        if mount['Type'] == 'bind' and mount['Source'] == str(destination):
+            current = {'type': 'bind', 'source': mount['Source']}
+            if index > 0 and not explicit[index]:
+                required.append(role)
         elif mount['Type'] == 'volume' and mount.get('Name'):
-            volume = json.loads(command(docker + ['volume', 'inspect', mount['Name']]))[0]
-            if volume['Driver'] != 'local' or volume.get('Options'):
-                raise MigrationError('Only plain local named volumes are supported.')
-            sources.append({'type': 'volume', 'source': mount['Name'], 'path': volume['Mountpoint']})
+            current = volume_source(docker, mount['Name'])
         else:
-            raise MigrationError('Expected named caches and named /data or the exact existing ./data bind.')
+            raise MigrationError('Expected named /data volumes or the exact ./data, ./data/piper, ./data/whisper binds.')
+        layout.append({'role': role, **current})
+        sources.append(volume_source(docker, explicit[index]) if explicit[index] else current)
+    if apply and required:
+        raise MigrationError('Already-bound caches do not identify old sources. Select exact named volumes with '
+                             + ' '.join('--source-' + role + ' NAME' for role in required)
+                             + '; use --inspect-candidates first. Migration completeness is unknown.')
     volumes = [s['source'] for s in sources if s['type'] == 'volume']
     if len(set(volumes)) != len(volumes):
         raise MigrationError('Source volumes must be distinct.')
@@ -135,7 +212,10 @@ def discover(docker: list[str], names: list[str], root: Path, apply: bool) -> di
                 raise MigrationError(f"Consumer {c['Id']} is {c['State']}; all consumers must be stopped.")
     if not {s['Id'] for s in selected}.issubset({c['id'] for c in consumers}):
         raise MigrationError('Container inventory changed; retry discovery.')
-    return {'sources': sources, 'exclude': separate, 'consumers': consumers}
+    return {'sources': sources, 'exclude': separate, 'consumers': consumers,
+            'current_layout': layout, 'source_selection_required': required,
+            'layout_status': 'already-bound' if all(s['type'] == 'bind' for s in layout) else 'legacy-or-mixed',
+            'migration_status': 'unverified: mount layout does not establish data provenance or completeness'}
 
 
 # Executed inside the selected daemon's UID namespace, never on live service containers.
@@ -155,7 +235,7 @@ def directory(path):
     assert not path.is_symlink() and path.is_dir(), 'Expected real directory'
 def empty(path):
     directory(path)
-    assert not any(path.iterdir()), 'Destination contains data; move it aside manually'
+    assert not any(path.iterdir()), 'Destination contains data; explicit --backup-existing is required'
 def validate_tree(path, excluded):
     for base, dirs, files in os.walk(path, followlinks=False):
         if pathlib.Path(base) == path:
@@ -187,7 +267,9 @@ existing = os.path.lexists(data)
 if existing:
     directory(data)
     assert not os.path.ismount(data), 'Destination must not be a mount point'
-    if p['sources'][0]['type'] == 'volume':
+    if p.get('backup_existing'):
+        pass  # The complete destination is renamed to backup, never merged or removed.
+    elif p['sources'][0]['type'] == 'volume':
         empty(data)
     else:
         for name in ('piper', 'whisper'):
@@ -236,9 +318,19 @@ def main() -> int:
     parser.add_argument('--vauxr', default='vauxr')
     parser.add_argument('--piper', default='piper')
     parser.add_argument('--whisper', default='whisper')
+    for role in ('vauxr', 'piper', 'whisper'):
+        parser.add_argument('--source-' + role, help='exact old named volume; overrides current container mount')
+    parser.add_argument('--backup-existing', action='store_true',
+                        help='allow populated destination; retain ALL existing ./data in an atomic rename backup')
+    parser.add_argument('--inspect-candidates', action='store_true',
+                        help='read-only candidate and destination filenames/sizes/mtimes; no source selection')
+    parser.add_argument('--inspect-volume', action='append', default=[], metavar='NAME',
+                        help='include another exact volume in candidate inspection (repeatable)')
     parser.add_argument('--helper-image', default='python:3.12-slim', help='already installed trusted helper image')
     parser.add_argument('--plain', action='store_true', help='disable colors and emojis')
     args = parser.parse_args()
+    if args.apply and (args.inspect_candidates or args.inspect_volume):
+        parser.error('candidate inspection is read-only; run --apply separately')
     status = Status(args.plain)
     root = args.root.absolute()
     if root.resolve() != root or not root.is_dir() or ',' in str(root):
@@ -251,10 +343,21 @@ def main() -> int:
     if not endpoint.startswith('unix:///'):
         raise MigrationError('Only a local Unix-socket daemon is supported; run on the Docker host.')
     docker = ['docker', '--host', endpoint]
+    explicit = [args.source_vauxr, args.source_piper, args.source_whisper]
+    if args.inspect_candidates or args.inspect_volume:
+        status.show('plan', 'Read-only candidate inspection; no source selected and no migration performed.')
+        print(json.dumps(inspect_candidates(docker, root, args.inspect_volume + [s for s in explicit if s]),
+                         indent=2), flush=True)
+        return 0
     names = [args.vauxr, args.piper, args.whisper]
-    plan = discover(docker, names, root, args.apply)
+    plan = discover(docker, names, root, args.apply, explicit)
     status.show('plan', 'Discovered sources and consumers; destination plan follows on stdout.')
-    print(json.dumps({'destination': str(root / 'data'), **plan}, indent=2), flush=True)
+    print(json.dumps({'destination': str(root / 'data'), 'backup_existing': args.backup_existing,
+                      **plan}, indent=2), flush=True)
+    if plan.get('layout_status') == 'already-bound':
+        status.show('warning', 'Already bound to ./data and caches; this does not mean old data was migrated.')
+    if not args.backup_existing:
+        status.show('warning', 'Populated recovery targets require --backup-existing; no merge is performed.')
     if not args.apply:
         print('DRY RUN: no writes. Apply requires stopped consumers and validates destination in the daemon.')
         status.show('warning', 'Destination validation runs only with --apply; stop all listed consumers first.')
@@ -265,7 +368,7 @@ def main() -> int:
     with open(probe, 'x', opener=lambda path, flags: os.open(path, flags, 0o600)) as f:
         f.write(nonce)
     try:
-        if discover(docker, names, root, True) != plan:
+        if discover(docker, names, root, True, explicit) != plan:
             raise MigrationError('Mounts or consumers changed; retry.')
         status.show('verified', 'Mounts and stopped consumers rechecked; inventory unchanged.')
         mounts = ['--mount', f'type=bind,source={root},target=/target']
@@ -274,7 +377,7 @@ def main() -> int:
             if source['type'] == 'volume':
                 spec += ',volume-nocopy'
             mounts += ['--mount', spec]
-        payload = {**plan, 'probe': probe.name, 'nonce': nonce}
+        payload = {**plan, 'probe': probe.name, 'nonce': nonce, 'backup_existing': args.backup_existing}
         print(f'Recovery paths: .data-migration-{nonce}, .data-backup-{nonce}', flush=True)
         status.show('copying', 'Starting helper validation, staged copy and publication; keep all writers stopped.')
         print(command(docker + ['run', '--rm', '--pull=never', '--network=none', '--read-only',

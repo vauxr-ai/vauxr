@@ -63,22 +63,82 @@ respectively, into their own `/data` directories for model caches.
 
 ### Migrating existing installations
 
-Use `scripts/migrate-data.py` **before recreating the old containers**. It inspects
-those containers' actual `/data` mounts; it does not infer Compose volume prefixes.
-It supports either legacy named Vauxr data plus named Piper/Whisper caches, or
-Vauxr already bound to this repository's `./data` with both caches still named.
+Use `scripts/migrate-data.py` to inspect the current layout and, during maintenance,
+copy selected old data into the repository's binds. It supports legacy named volumes,
+Vauxr already bound with named caches, and **already recreated containers** bound to
+`./data`, `./data/piper`, and `./data/whisper`. The original containers need not exist;
+use the current three containers for mount and consumer checks. An `already-bound`
+status describes mounts only: it does **not** establish that old data was migrated.
+Older identity timestamps alongside recently downloaded model caches do not establish
+provenance or completeness either.
 
 Run on the Docker host, from this repository, with the daemon/context that owns
-all three old containers:
+the current three containers and the old source volumes:
 
 ```bash
 python3 scripts/migrate-data.py                 # read-only discovery, even while running
 # Arrange a maintenance window and manually stop all listed storage consumers.
-# Keep the old containers present for inspection; do not recreate them yet.
+# With original named mounts still present, discovery can use their exact volumes.
 python3 scripts/migrate-data.py --apply
 # Plain status output for terminals or automation (also works with --apply):
 python3 scripts/migrate-data.py --plain
 ```
+
+If containers were already recreated, first inspect the surviving volumes and the
+destination without stopping anything:
+
+```bash
+cd /path/to/vauxr
+python3 scripts/migrate-data.py --inspect-candidates --plain
+python3 scripts/migrate-data.py --plain
+```
+
+Candidate inspection uses only Docker volume listing/inspection and host filesystem
+metadata reads; it creates no helper container or files. It lists both
+`vauxr_{vauxr,piper,whisper}-data` and `vauxr-local_{vauxr,piper,whisper}-data` if present,
+plus other prefixes with these service suffixes. It **never chooses between sets**,
+even if only one set exists. `--inspect-volume EXACT_NAME` adds another candidate
+(repeatable). Inspection also works when no service containers remain; apply still
+requires the current three containers so nested mounts can be validated.
+
+The report includes volume creation times and at most 200 entries per tree with
+filenames, types, sizes, and UTC modification times. It never opens file contents,
+prints symlink targets, or dumps container environments/volume labels. Keep filenames
+private as needed. Truncated, inaccessible, or changing listings are explicitly marked.
+Host listings are advisory: path visibility is not verified until apply, and rootless
+namespaces or host permissions may prevent listings. No automatic elevation or daemon
+switch occurs. An unavailable listing or matching metadata is not proof of empty or
+identical data; establish the intended source before applying.
+
+After reviewing the evidence, set each exact volume name yourself. These placeholders
+are deliberately not a recommendation for either surviving prefix:
+
+```bash
+VAUXR_SOURCE='REPLACE_WITH_SELECTED_VAUXR_VOLUME'
+PIPER_SOURCE='REPLACE_WITH_SELECTED_PIPER_VOLUME'
+WHISPER_SOURCE='REPLACE_WITH_SELECTED_WHISPER_VOLUME'
+python3 scripts/migrate-data.py --plain \
+  --source-vauxr "$VAUXR_SOURCE" --source-piper "$PIPER_SOURCE" \
+  --source-whisper "$WHISPER_SOURCE" --backup-existing
+# Review this plan, arrange maintenance, and manually stop EVERY listed consumer.
+# Keep all filesystem writers and restart automation stopped; only then:
+python3 scripts/migrate-data.py --plain \
+  --source-vauxr "$VAUXR_SOURCE" --source-piper "$PIPER_SOURCE" \
+  --source-whisper "$WHISPER_SOURCE" --backup-existing --apply
+```
+
+Each `--source-*` overrides that service's current mount with an existing, exact
+named volume. Bound caches require explicit `--source-piper` and `--source-whisper`
+for apply; discovery never assumes the newly populated caches are the old source.
+Omitting `--source-vauxr` intentionally preserves the current Vauxr bind as the
+source; specify it to recover an old Vauxr identity/settings volume as well.
+`--backup-existing` permits recovery into a populated target by retaining the **whole
+existing `./data` directory**, including current identity, both caches, and hidden
+underlying recordings/firmware entries, at `.data-backup-<id>`. The new directory
+contains the selected sources, with the exclusions below; this is a replacement
+with a full backup, never an implicit merge. Current-only files remain in the backup.
+The separate `./firmware` and `./recordings` host directories are not changed.
+Inspection flags cannot be combined with `--apply`.
 
 Status messages go to stderr, with colors and emojis only when both stdout and
 stderr are TTYs and the terminal encoding supports the icons. `--plain` disables
@@ -115,11 +175,12 @@ Requirements and limitations:
   be a real directory, not a symlink or mount point. Allow disk space for a complete
   staged copy plus the retained original. Regular files, directories and symlinks
   are supported; special files fail closed. No concurrent host writers are supported.
-- For legacy named Vauxr data, `./data` must be absent or empty. For existing bound
-  Vauxr data, `data/piper` and `data/whisper` must be absent or empty real directories.
-  Existing nonempty destinations are never merged or overwritten: move them to a
-  separately named secure backup yourself and rerun. Legacy `/data` containing
-  `piper` or `whisper` entries is refused as ambiguous.
+- Without `--backup-existing`, for legacy named Vauxr data, `./data` must be absent
+  or empty. For existing bound Vauxr data, `data/piper` and `data/whisper` must be
+  absent or empty real directories.
+  Populated targets are refused unless the explicit backup flag is supplied;
+  it does not bypass the lock, mount, ownership, or stopped-consumer checks. Legacy
+  `/data` containing `piper` or `whisper` entries is refused as ambiguous.
 - Only separate bind mounts at `/data/recordings` and `/data/firmware` are supported
   below Vauxr `/data`; their host paths must be outside `./data`. Those entries are
   excluded from the copy, including any hidden underlying contents. Other nested
@@ -138,8 +199,9 @@ Source volumes are mounted read-only and remain untouched. Treat staged copies a
 backups as sensitive data; all migration paths are ignored by Git.
 
 After successful publication, manually recreate the three services using the new
-Compose binds during the same maintenance window. An old Vauxr bind container may
-still reference the original directory inode, so it too must be recreated. Verify
+Compose binds during the same maintenance window. Even already-bound containers may
+still reference the original directory inodes after publication, so all three must
+be recreated before resuming service. Verify
 saved settings, channel authentication, cache contents, ownership, model-service
 health and a voice turn before considering the migration complete.
 
@@ -154,10 +216,14 @@ from the intact source volumes/original bind. The persistent lock file is harmle
 the kernel releases its lock when the helper exits. If the client was interrupted,
 verify the migration helper has exited before recovery.
 
-For rollback after service verification fails, manually stop affected services,
-retain the new `data` under a separate backup name, restore the original bind backup
-(if applicable), and restore the old Compose mounts using the **exact volume names
-printed by discovery**. Recreate with those old mounts. Never run `docker compose down -v`, prune volumes, or delete source volumes as part of this procedure.
+For rollback after service verification fails, manually stop all consumers and retain
+the new `data` under a separate backup name before restoring `.data-backup-<id>` to
+`data`. For the already-bound layout, keep the current Compose binds and recreate
+all three services against the restored directory. For a legacy named-volume layout,
+restore the previous Compose mounts using the **exact names in `current_layout`**
+and recreate with those mounts; explicit recovery sources may differ from those
+previous mounts. Never run `docker compose down -v`, prune volumes, or delete source
+volumes as part of this procedure.
 
 ## Connecting to OpenClaw
 

@@ -3,9 +3,9 @@ import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -66,7 +66,7 @@ def test_nested_mount_validation(monkeypatch, tmp_path):
         m.discover([], ['vauxr', 'piper', 'whisper'], tmp_path, True)
 
 
-def helper(tmp_path, bind=False, injected=''):
+def helper(tmp_path, bind=False, injected='', backup_existing=False):
     root = tmp_path / 'repo'
     root.mkdir(exist_ok=True)
     sources = []
@@ -86,9 +86,9 @@ def helper(tmp_path, bind=False, injected=''):
     code = code.replace("    try:\n        rename(stage / 'payload', data)",
                         "    try:\n" + injected + "        rename(stage / 'payload', data)")
     plan = {'probe': 'probe', 'nonce': 'test', 'sources': [{'type': 'bind' if bind else 'volume'}],
-            'exclude': ['recordings']}
+            'exclude': ['recordings'], 'backup_existing': backup_existing}
     return root, sources, lambda: subprocess.run([sys.executable, '-c', code, json.dumps(plan)],
-                                                capture_output=True, text=True)
+                                                capture_output=True, text=True, check=False)
 
 
 @pytest.mark.parametrize('bind', [False, True])
@@ -202,7 +202,8 @@ def test_cli_default_dry_run_never_runs_helper(monkeypatch, tmp_path, capsys, pl
     assert m.main() == 0
     out, err = capsys.readouterr()
     plan, end = json.JSONDecoder().raw_decode(out)
-    assert plan == {'destination': str(tmp_path / 'data'), 'sources': [], 'consumers': [], 'exclude': []}
+    assert plan == {'destination': str(tmp_path / 'data'), 'backup_existing': False,
+                    'sources': [], 'consumers': [], 'exclude': []}
     assert out[end:] == ('\nDRY RUN: no writes. Apply requires stopped consumers and validates '
                          'destination in the daemon.\n')
     assert err.startswith('PLAN: ')
@@ -272,7 +273,7 @@ def test_apply_helper_uses_readonly_actual_volumes_and_daemon_uid(monkeypatch, t
         assert 'SUCCESS: Published ./data; sources and recovery copies retained.' in err
         assert 'WARNING: Recreate services and verify settings, caches and voice' in err
         assert out == 'mock copy completed\n'
-    assert len(checks) == 2 and all(check[-1] is True for check in checks)
+    assert len(checks) == 2 and all(check[3] is True for check in checks)
     assert [call[3] for call in calls] == (['image'] if failure == 'inventory' else ['image', 'run'])
     assert not list(tmp_path.iterdir())
 
@@ -332,7 +333,7 @@ def test_cli_error_remains_plain_and_actionable(tmp_path, plain):
     # Invalid root fails before any Docker invocation.
     result = subprocess.run(
         [sys.executable, str(SPEC.origin), '--root', str(tmp_path / 'missing')]
-        + (['--plain'] if plain else []), capture_output=True, text=True,
+        + (['--plain'] if plain else []), capture_output=True, text=True, check=False,
     )
     assert result.returncode == 1
     assert result.stdout == ''
@@ -369,3 +370,227 @@ def test_inspection_tolerates_optional_host_config_fields(monkeypatch, tmp_path)
     template = next(c[c.index('--format') + 1] for c in calls if c[:2] == ['container', 'inspect'])
     assert 'index .HostConfig "Mounts"' in template
     assert 'index .HostConfig "UsernsMode"' in template
+
+
+def recreated_inventory(monkeypatch, tmp_path, state='exited', extra=None):
+    containers, calls = inventory(monkeypatch, tmp_path, state=state, extra=extra)
+    for container, role in zip(containers, ('vauxr', 'piper', 'whisper')):
+        path = tmp_path / 'data' if role == 'vauxr' else tmp_path / 'data' / role
+        container['Mounts'] = [{'Type': 'bind', 'Source': str(path), 'Destination': '/data'}]
+    containers[0]['Mounts'] += [
+        {'Type': 'bind', 'Source': str(tmp_path / name), 'Destination': '/data/' + name}
+        for name in ('firmware', 'recordings')
+    ]
+    return containers, calls
+
+
+@pytest.mark.parametrize('prefix', ['vauxr', 'vauxr-local'])
+def test_recreated_containers_explicit_sources_do_not_require_originals(monkeypatch, tmp_path, prefix):
+    _, calls = recreated_inventory(monkeypatch, tmp_path)
+    selected = [f'{prefix}_{role}-data' for role in ('vauxr', 'piper', 'whisper')]
+    plan = m.discover([], ['vauxr', 'piper', 'whisper'], tmp_path, True, selected)
+    assert [s['source'] for s in plan['sources']] == selected
+    assert plan['layout_status'] == 'already-bound'
+    assert plan['migration_status'].startswith('unverified:')
+    assert plan['source_selection_required'] == []
+    assert plan['exclude'] == ['firmware', 'recordings']
+    assert {c[-1] for c in calls if c[:2] == ['container', 'inspect']} == {'vauxr', 'piper', 'whisper'}
+
+
+def test_already_bound_is_not_migration_complete_or_automatic_source_selection(monkeypatch, tmp_path):
+    _, calls = recreated_inventory(monkeypatch, tmp_path, state='running')
+    plan = m.discover([], ['vauxr', 'piper', 'whisper'], tmp_path, False)
+    assert plan['layout_status'] == 'already-bound'
+    assert plan['source_selection_required'] == ['piper', 'whisper']
+    assert not any(c[:2] == ['volume', 'inspect'] for c in calls)
+    with pytest.raises(m.MigrationError, match='--source-piper NAME --source-whisper NAME'):
+        m.discover([], ['vauxr', 'piper', 'whisper'], tmp_path, True)
+
+
+@pytest.mark.parametrize('mount', [
+    {'Type': 'volume', 'Name': 'vauxr-local_piper-data'},
+    {'Type': 'bind', 'Source': '/vol/vauxr-local_piper-data/sub'},
+    {'Type': 'bind', 'Source': 'DESTINATION'},
+])
+def test_recovery_checks_all_source_and_destination_consumers(monkeypatch, tmp_path, mount):
+    mount = dict(mount)
+    if mount.get('Source') == 'DESTINATION':
+        mount['Source'] = str(tmp_path / 'data' / 'whisper')
+    recreated_inventory(monkeypatch, tmp_path,
+                        extra={'Id': 'other', 'State': 'running', 'Mounts': [mount]})
+    with pytest.raises(m.MigrationError, match='all consumers'):
+        m.discover([], ['vauxr', 'piper', 'whisper'], tmp_path, True,
+                   [f'vauxr-local_{role}-data' for role in ('vauxr', 'piper', 'whisper')])
+
+
+def test_duplicate_explicit_sources_refused(monkeypatch, tmp_path):
+    recreated_inventory(monkeypatch, tmp_path)
+    with pytest.raises(m.MigrationError, match='distinct'):
+        m.discover([], ['vauxr', 'piper', 'whisper'], tmp_path, True, ['same'] * 3)
+
+
+@pytest.mark.parametrize('source', ['/tmp/source', 'volume,readonly', '../volume'])
+def test_invalid_explicit_volume_never_reaches_docker(monkeypatch, source):
+    monkeypatch.setattr(m, 'command', lambda args: pytest.fail('Invalid source must not reach Docker'))
+    with pytest.raises(m.MigrationError, match='exact named volume'):
+        m.volume_source([], source)
+
+
+@pytest.mark.parametrize('bind', [False, True])
+@pytest.mark.parametrize('failure', ['', 'copy', 'publish'])
+def test_populated_recovery_preserves_whole_destination_and_rolls_back(tmp_path, bind, failure):
+    injected = "        raise OSError('publication failure')\n" if failure == 'publish' else ''
+    root, sources, run = helper(tmp_path, bind, injected, backup_existing=True)
+    if failure == 'copy':
+        os.mkfifo(sources[2] / 'unsupported')
+    data = root / 'data'
+    data.mkdir(exist_ok=True)
+    (data / 'vauxr-identity.json').write_text('existing identity')
+    os.utime(data / 'vauxr-identity.json', (1775952000, 1775952000))
+    for role in ('piper', 'whisper', 'firmware'):
+        (data / role).mkdir()
+        (data / role / 'existing').write_text('existing ' + role)
+    if not bind:
+        (data / 'recordings').mkdir()
+        (data / 'recordings' / 'existing').write_text('hidden recording')
+    (data / 'piper' / 'link').symlink_to('existing')
+    before = m.file_listing(data)
+    result = run()
+    assert (result.returncode != 0) is bool(failure), result.stderr
+    retained = data if failure else root / '.data-backup-test'
+    assert m.file_listing(retained) == before
+    assert (retained / 'vauxr-identity.json').read_text() == 'existing identity'
+    assert (retained / 'piper' / 'link').is_symlink()
+    payload = root / '.data-migration-test' / 'payload' if failure else data
+    assert (payload / 'piper' / 'file1').read_text() == 'content1'
+    assert not (payload / 'piper' / 'existing').exists()
+    assert (payload / 'vauxr-identity.json').exists() is bind
+    assert (sources[2] / 'file2').read_text() == 'content2'
+
+
+def test_backup_flag_still_refuses_symlink_destination(tmp_path):
+    root, sources, run = helper(tmp_path, backup_existing=True)
+    (root / 'data').symlink_to(sources[0], target_is_directory=True)
+    assert run().returncode != 0
+    assert not (root / '.data-backup-test').exists()
+
+
+def test_helper_lock_prevents_second_apply(tmp_path):
+    import fcntl
+    root, _, run = helper(tmp_path, backup_existing=True)
+    with open(root / '.data-migration.lock', 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert run().returncode != 0
+        assert not (root / '.data-migration-test').exists()
+
+
+def test_candidate_inspection_both_sets_no_containers_no_contents(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv('DOCKER_HOST', 'unix:///mock.sock')
+    monkeypatch.delenv('DOCKER_CONTEXT', raising=False)
+    monkeypatch.setattr(sys, 'argv', ['migrate-data.py', '--root', str(tmp_path), '--inspect-candidates'])
+    names = [f'{prefix}_{role}-data' for prefix in ('vauxr', 'vauxr-local')
+             for role in ('vauxr', 'piper', 'whisper')]
+    for name in names:
+        path = tmp_path / name
+        path.mkdir()
+        (path / 'vauxr-identity.json').write_text('PRIVATE KEY NEVER PRINT')
+        (path / 'link').symlink_to('/unrelated/private/path')
+    calls = []
+
+    def command(args):
+        calls.append(args)
+        if args[3:5] == ['volume', 'ls']:
+            return '\n'.join(names + ['unrelated'])
+        assert args[3:5] == ['volume', 'inspect']
+        return json.dumps([{'Driver': 'local', 'Options': None, 'Mountpoint': str(tmp_path / args[-1])}])
+
+    monkeypatch.setattr(m, 'command', command)
+    assert m.main() == 0
+    out, err = capsys.readouterr()
+    report = json.loads(out)
+    assert {c['volume'] for c in report['candidates']} == set(names)
+    assert all(c['files']['entries'][1]['name'] == 'vauxr-identity.json' for c in report['candidates'])
+    assert 'PRIVATE KEY' not in out and '/unrelated/private/path' not in out
+    assert 'no source selected' in err and 'SUCCESS' not in err
+    assert len(calls) == 7
+    assert not list(tmp_path.glob('.data-*'))
+
+
+def test_listing_is_bounded_and_does_not_follow_symlinks(tmp_path):
+    (tmp_path / 'file').write_text('secret')
+    (tmp_path / 'sub').mkdir()
+    (tmp_path / 'sub' / 'back').symlink_to(tmp_path, target_is_directory=True)
+    assert m.file_listing(tmp_path, limit=1)['status'] == 'truncated'
+    assert len(m.file_listing(tmp_path)['entries']) == 3
+    assert m.file_listing(tmp_path / 'sub' / 'back')['status'].startswith('unavailable')
+    assert m.file_listing(tmp_path / 'missing')['status'].startswith('unavailable')
+
+
+def test_explicit_cli_apply_forwards_selection_and_backup(monkeypatch, tmp_path):
+    monkeypatch.setenv('DOCKER_HOST', 'unix:///mock.sock')
+    monkeypatch.delenv('DOCKER_CONTEXT', raising=False)
+    selected = [f'vauxr-local_{role}-data' for role in ('vauxr', 'piper', 'whisper')]
+    argv = ['migrate-data.py', '--root', str(tmp_path), '--apply', '--backup-existing']
+    for role, name in zip(('vauxr', 'piper', 'whisper'), selected):
+        argv += ['--source-' + role, name]
+    monkeypatch.setattr(sys, 'argv', argv)
+    checks = []
+
+    def discover(docker, names, root, apply, explicit):
+        assert apply and explicit == selected
+        checks.append(explicit)
+        return {'sources': [{'type': 'volume', 'source': s} for s in explicit], 'exclude': [],
+                'consumers': [], 'layout_status': 'already-bound'}
+
+    def command(args):
+        if args[3:5] == ['image', 'inspect']:
+            return 'sha256:trusted'
+        assert args[3] == 'run'
+        assert json.loads(args[-1])['backup_existing'] is True
+        for i, name in enumerate(selected):
+            assert f'type=volume,source={name},target=/source{i},readonly,volume-nocopy' in args
+        return 'mock publication'
+
+    monkeypatch.setattr(m, 'discover', discover)
+    monkeypatch.setattr(m, 'command', command)
+    assert m.main() == 0
+    assert len(checks) == 2
+
+
+@pytest.mark.parametrize('role', ['piper', 'whisper'])
+def test_populated_cache_requires_backup_flag(tmp_path, role):
+    root, _, run = helper(tmp_path, bind=True)
+    (root / 'data' / role).mkdir()
+    (root / 'data' / role / 'existing').write_text('retain')
+    assert run().returncode != 0
+    assert (root / 'data' / role / 'existing').read_text() == 'retain'
+    assert not (root / '.data-backup-test').exists()
+
+
+@pytest.mark.parametrize('role', ['piper', 'whisper'])
+def test_backup_flag_does_not_bypass_source_cache_collision(tmp_path, role):
+    root, sources, run = helper(tmp_path, backup_existing=True)
+    (sources[0] / role).mkdir()
+    (root / 'data').mkdir()
+    (root / 'data' / 'original').write_text('keep')
+    assert run().returncode != 0
+    assert (root / 'data' / 'original').read_text() == 'keep'
+
+
+def test_inspection_cannot_apply(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, 'argv', ['migrate-data.py', '--root', str(tmp_path),
+                                    '--inspect-candidates', '--apply'])
+    monkeypatch.setattr(m, 'command', lambda args: pytest.fail('Must fail before Docker'))
+    with pytest.raises(SystemExit) as error:
+        m.main()
+    assert error.value.code == 2
+    assert not list(tmp_path.iterdir())
+
+
+def test_listing_marks_inaccessible_subdirectories(monkeypatch, tmp_path):
+    def fwalk(*args, **kwargs):
+        kwargs['onerror'](PermissionError('private diagnostic'))
+    monkeypatch.setattr(m.os, 'fwalk', fwalk)
+    result = m.file_listing(tmp_path)
+    assert result['status'].startswith('unavailable')
+    assert 'private diagnostic' not in json.dumps(result)
