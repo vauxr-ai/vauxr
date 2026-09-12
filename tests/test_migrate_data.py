@@ -240,3 +240,30 @@ def test_apply_helper_uses_readonly_actual_volumes_and_daemon_uid(monkeypatch, t
     assert len(checks) == 2 and all(check[-1] is True for check in checks)
     assert [call[3] for call in calls] == ['image', 'run']
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize('plain,tty,no_color,ansi,emoji', [
+    (False, True, False, True, True),
+    (True, True, False, False, False),
+    (False, False, False, False, True),
+    (False, True, True, False, True),
+])
+def test_status_output_modes(monkeypatch, plain, tty, no_color, ansi, emoji):
+    import io
+
+    class Terminal(io.StringIO):
+        encoding = 'utf-8'
+
+        def isatty(self):
+            return tty
+
+    monkeypatch.setenv('TERM', 'xterm')
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    if no_color:
+        monkeypatch.setenv('NO_COLOR', '')
+    stream = Terminal()
+    m.Status(plain, stream).show('Ready', '✅', '32')
+    output = stream.getvalue()
+    assert ('\033[' in output) == ansi
+    assert ('✅' in output) == emoji
+    assert 'Ready' in output

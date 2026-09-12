@@ -78,6 +78,8 @@ python3 scripts/migrate-data.py                 # read-only discovery, even whil
 python3 scripts/migrate-data.py --apply
 ```
 
+Migration output includes colorful terminal status and emojis. Use `--plain` for ASCII-only output; `NO_COLOR` or redirected output disables ANSI colors.
+
 Use `--vauxr NAME --piper NAME --whisper NAME` for different container names and
 `--root /absolute/path/to/vauxr` for another repository location. Dry-run lists
 sources and consumers; destination contents and daemon path visibility are checked
