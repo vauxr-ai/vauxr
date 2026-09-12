@@ -184,6 +184,10 @@ async def _dispatch_prompt(
     async def send_audio_end(follow_up: bool) -> None:
         from realtime_session import get_manager
 
+        # Playback can outlive its connection or be superseded by another turn.
+        # Its completion must not resume that new owner's realtime mic.
+        if registry.get(device_id) is not entry or entry.abort_event is not abort or abort.is_set():
+            return
         await get_manager().send_prompt_audio_end(device_id, follow_up)
 
     abort = asyncio.Event()
@@ -203,7 +207,7 @@ async def _dispatch_prompt(
         log.error("device.button prompt failed for %s: %s", device_id, err)
     finally:
         e = registry.get(device_id)
-        if e is not None:
+        if e is entry and e.abort_event is abort:
             e.abort_event = None
             if e.state == "processing":
                 registry.set_state(device_id, "idle")
