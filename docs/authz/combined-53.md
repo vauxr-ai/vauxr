@@ -56,11 +56,13 @@ lane. Automated work is independent of that block. Before release, #53 still nee
 - Existing-install migration rehearsal following #52, with settings/identity
   preservation limits, explicit re-pair/reconnection and secret-free evidence.
 
-#52 still owns the operator-ready cross-repository clean install, breaking upgrade,
-compatible version matrix, backup/restore, recovery and troubleshooting walkthrough.
+#52 supplies the [operator-ready migration guide and disposable rehearsal](migration-52.md)
+for cross-repository clean install, breaking upgrade, compatible source pins,
+backup/restore, recovery and troubleshooting. Its offline service-level rehearsal
+does not close the real-client or physical acceptance gaps above.
 Owner setup needs no auth environment variable; optional OPERATOR_TOKEN generation,
 authoritative override/change/removal and session invalidation are described in
-[owner v1](owner-v1.md) and covered by backend tests. This is not a migration rehearsal.
+[owner v1](owner-v1.md) and covered by backend tests. This combined #53 package itself is not a migration rehearsal.
 Legacy arbitrary device IDs cannot silently become Ed25519-derived identities;
 same-key recovery does not transfer an unrelated legacy identity's configuration.
 A reviewed migration procedure must state where explicit settings transfer is needed.

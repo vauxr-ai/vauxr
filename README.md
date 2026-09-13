@@ -18,6 +18,11 @@ for precedence, examples, and protocol limitations.
 
 ## How it works
 
+**Breaking auth upgrade:** follow the [clean install and migration guide](docs/authz/migration-52.md)
+for exact compatible source pins, owner setup, private backup/rollback, device re-pairing
+and OpenClaw reconnect. Shared device/channel tokens grant no access. The pinned
+auth stack remains under review; firmware build and physical acceptance are still required.
+
 ```
 Device (mic) → vauxr → Whisper (STT) → LLM backend → Piper (TTS) → Device (speaker)
 ```

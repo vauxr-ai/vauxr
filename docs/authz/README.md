@@ -5,6 +5,11 @@
 
 # Authorization foundation (#46)
 
+For current operator instructions, start with [install and migrate scoped authentication (#52)](migration-52.md).
+It covers the combined schema-5 stack, source pins and release gaps, generated owner
+login/override recovery, backup/rollback, re-pairing and integration reconnection.
+Package-scoped implementation status below is historical, not a shared-token setup recipe.
+
 Current lifecycle extension: [credential lifecycle v1](lifecycle-v1.md) defines
 schema 4 preservation, durable revocation tombstones, bounded rotation/save ACK,
 and explicit same-key/kind enrollment recovery. Earlier package-scoped statements
