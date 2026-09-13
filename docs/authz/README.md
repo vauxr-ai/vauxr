@@ -1,5 +1,12 @@
 # Authorization foundation (#46)
 
+Current lifecycle extension: [credential lifecycle v1](lifecycle-v1.md) defines
+schema 4 preservation, durable revocation tombstones, bounded rotation/save ACK,
+and explicit same-key/kind enrollment recovery. Earlier package-scoped statements
+below about lifecycle being unimplemented or schema 3 being latest are historical;
+this versioned extension supersedes those statements without changing owner auth
+or ordinary enrollment v1 response fields.
+
 **Enrollment update (#48):** [enrollment-v1.md](enrollment-v1.md) freezes the
 server physical/browser enrollment API, Ed25519 transcript, human matching-code
 boundary and schema 3. It supersedes the reserved pairing descriptions below;

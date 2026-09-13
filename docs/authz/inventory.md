@@ -11,6 +11,7 @@ and explicit local-console proof; see [owner-v1.md](owner-v1.md).
 | POST /api/auth/claim, /api/auth/save, /api/auth/login | owner contract v1 | HTTPS + exact Origin + JSON + durable rate limits; console claim/save proof or operator verifier |
 | POST /api/auth/logout | owner contract v1 | owner session + HTTPS + Origin + CSRF |
 | POST /api/enrollment/v1/{action} | enrollment v1 | configured HTTPS; signed client proof or fresh owner/integration control; [exact actions and roles](enrollment-v1.md) |
+| POST /api/lifecycle/v1/{action} | lifecycle v1 | trusted HTTPS; owner controls, subject-only delivery/ACK; [exact fields and roles](lifecycle-v1.md) |
 | GET /api/devices | devices.list | owner/integration |
 | PATCH /api/devices/{device_id} | device.configure | owner, including button mapping |
 | POST /api/devices/{device_id}/announce | device.announce | owner/integration |
@@ -66,6 +67,7 @@ permitted to owner/integration, not to device credentials.
 Realtime ICE/DTLS-SRTP and media callbacks originate from the identity-authorized
 new offer. The peer's device identity comes from the manager's server-side session
 binding. The standalone manager method is an internal API, not another HTTP route.
-Direct media-plane revocation and secure server trust are dependencies (#49/#45).
+Lifecycle v1 now closes retained media/socket authority on revocation; secure server
+trust and real media acceptance remain dependencies (#45/#53).
 There is no permissive bearer fallback on the socket, body-token signaling, firmware,
 or inactive-channel response path.

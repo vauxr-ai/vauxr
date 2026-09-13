@@ -100,7 +100,7 @@ def test_route_inventory_complete():
         for method, path, _, _ in ROUTES
     }
     expected |= {("GET", "/api/auth/{action}"), ("POST", "/api/auth/{action}"),
-                 ("POST", "/api/enrollment/v1/{action}")}
+                 ("POST", "/api/enrollment/v1/{action}"), ("POST", "/api/lifecycle/v1/{action}")}
     assert actual == expected
     assert len(HTTP_OPERATIONS) == len(ROUTES)
 
@@ -431,3 +431,145 @@ async def test_reissued_channel_rejects_existing_connection_in_both_directions(r
             await fresh.send_json({"type": "unknown"})
             assert (await fresh.receive_json(timeout=2))["code"] == "FORBIDDEN"
             assert delivered == [("run",)]
+
+
+@pytest.mark.parametrize("role", ["device", "integration"])
+async def test_lifecycle_revoke_closes_idle_socket_before_owner_response(role):
+    from lifecycle_http import LIFECYCLE
+
+    subject = "speaker"
+    token = "device-secret"
+    path = "/ws"
+    frame = {"type": "hello", "device_id": subject, "token": token}
+    if role == "integration":
+        channel, _ = await channel_registry.create("Lifecycle test")
+        channel_registry.activate(channel.id)
+        subject = channel.id
+        token = "lifecycle-integration-secret"
+        seed(token, Role.INTEGRATION, subject)
+        path = "/channel"
+        frame = {"type": "channel.auth", "token": token}
+    app = make_app()
+    async with TestClient(TestServer(app)) as client, client.ws_connect(path) as ws:
+        await ws.send_json(frame)
+        await ws.receive_json(timeout=2)
+        response = await client.post(
+            "/api/lifecycle/v1/revoke", headers=owner_headers(client),
+            json={"operation_id": "1" * 32, "role": role, "subject": subject},
+        )
+        assert response.status == 200
+        assert (await response.json())["state"] == "revoked"
+        assert (await ws.receive(timeout=2)).type == WSMsgType.CLOSE
+        assert not app[LIFECYCLE].store.authenticate(token)
+
+
+async def test_realtime_offer_revoked_during_await_is_closed(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    import realtime_session
+    from lifecycle_http import LIFECYCLE
+    from owner_http import OWNER
+
+    app = make_http_app()
+    app.router.add_post("/api/offer", _offer_handler)
+    stop = AsyncMock()
+
+    class Manager:
+        def can_accept_offer(self, identity):
+            return True
+
+        async def handle_offer(self, identity, body):
+            owner = app[OWNER]
+            from auth_policy import Principal
+
+            app[LIFECYCLE].execute(
+                "revoke", {"operation_id": "1" * 32, "role": "device", "subject": identity},
+                lambda: Principal(Role.OWNER, "owner", owner.store.owner["generation"]),
+            )
+            return {"type": "answer", "sdp": "synthetic"}
+
+        async def stop(self, identity):
+            await stop(identity)
+
+    monkeypatch.setattr(realtime_session, "get_manager", lambda: Manager())
+    async with TestClient(TestServer(app)) as client:
+        owner_headers(client)
+        response = await client.post("/api/offer", json={
+            "type": "offer", "sdp": "synthetic", "device_id": "speaker", "token": "device-secret",
+        })
+        assert response.status == 401
+        stop.assert_awaited_once_with("speaker")
+
+
+async def test_integration_revocation_stops_media_without_plugin_socket(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import realtime_session
+
+    channel, _ = await channel_registry.create("Orphaned media")
+    channel_registry.activate(channel.id)
+    seed("media-integration-secret", Role.INTEGRATION, channel.id)
+    app = make_http_app()
+    stop_all = AsyncMock()
+    monkeypatch.setattr(realtime_session, "get_manager", lambda: SimpleNamespace(stop_all=stop_all))
+    async with TestClient(TestServer(app)) as client:
+        headers = owner_headers(client)
+        entry = device_registry.register("speaker", FakeWs())
+        abort = asyncio.Event()
+        entry.abort_event = abort
+        cfg = config.get_config()
+        realtime_cfg = replace(cfg, realtime=replace(cfg.realtime, enabled=True))
+        monkeypatch.setattr(config, "get_config", lambda: realtime_cfg)
+        response = await client.post(
+            "/api/lifecycle/v1/revoke", headers=headers,
+            json={"operation_id": "1" * 32, "role": "integration", "subject": channel.id},
+        )
+        assert response.status == 200
+        assert abort.is_set()
+        stop_all.assert_awaited()
+        assert auth.authenticate("device-secret")
+
+
+async def test_realtime_media_retains_integration_generation(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    import auth_connections
+    import realtime_session
+    from lifecycle_http import LIFECYCLE
+    from owner_http import OWNER
+
+    channel, _ = await channel_registry.create("Media dependency")
+    channel_registry.activate(channel.id)
+    seed("media-integration-secret", Role.INTEGRATION, channel.id)
+    app = make_http_app()
+    app.router.add_post("/api/offer", _offer_handler)
+    stop = AsyncMock()
+
+    class Manager:
+        def can_accept_offer(self, identity):
+            return True
+
+        async def handle_offer(self, identity, body):
+            return {"type": "answer", "sdp": "synthetic"}
+
+        async def stop(self, identity):
+            await stop(identity)
+
+    monkeypatch.setattr(realtime_session, "get_manager", lambda: Manager())
+    async with TestClient(TestServer(app)) as client:
+        owner_headers(client)
+        response = await client.post("/api/offer", json={
+            "type": "offer", "sdp": "synthetic", "device_id": "speaker", "token": "device-secret",
+        })
+        assert response.status == 200
+        from auth_policy import Principal
+
+        app[LIFECYCLE].execute(
+            "revoke", {"operation_id": "1" * 32, "role": "integration", "subject": channel.id},
+            lambda: Principal(Role.OWNER, "owner", app[OWNER].store.owner["generation"]),
+        )
+        await auth_connections.disconnect_stale(app[LIFECYCLE].store)
+        stop.assert_awaited_once_with("speaker")
+        assert auth.authenticate("device-secret")
