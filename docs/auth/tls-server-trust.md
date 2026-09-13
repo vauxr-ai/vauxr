@@ -70,20 +70,24 @@ browser/phone trust and avoids making the certificate key a fleet-shared Vauxr
 secret. It is distinct from a tunnel: API/control traffic remains LAN-local.
 
 Proposed **web-first** setup, subject to validation: (1) connect the gateway to
-the LAN; (2) use the gateway's local console to display a short-lived,
-single-use claim code; (3) in the Vauxr web UI, enter that code to claim the
-install and complete owner authentication; (4) after claim, generate and use
-the eventual operator-token login defined by the shared auth contract; (5)
-open the install's HTTPS name on the same LAN; and (6) pair a speaker only
-during a physical pairing window while matching its spoken code, with approval
-by the owner or an authorized OpenClaw integration.
+the LAN; (2) use the gateway's local console only for discovery/navigation to
+the install's HTTPS name; (3) establish that HTTPS name's trusted reachability
+on the same LAN before entering any credential; (4) use the HTTPS web UI to
+enter the local-console's short-lived, single-use claim code and complete owner
+authentication; (5) use the default generated-and-persisted operator-token
+login defined by the shared auth contract, unless an authorized deployment has
+configured an authoritative `OPERATOR_TOKEN` environment override; and (6) pair
+a speaker only during a physical pairing window while matching its spoken code,
+with approval by the owner or an authorized OpenClaw integration.
 
-The local-console claim proves temporary access to the gateway's setup surface;
-it is neither owner authentication nor TLS server authentication. Conversely,
-the HTTPS reachability bootstrap (public certificate, install name, and local
-DNS resolution) establishes a trusted path to the local gateway but does not
-authenticate an owner. These two bootstraps must remain independently designed
-and tested. This flow assumes a web UI, not a native Vauxr app.
+The local console only provides navigation/discovery and must never accept HTTP
+credential submission or invite certificate-warning bypass. The HTTPS
+reachability bootstrap (public certificate, install name, and local DNS
+resolution) establishes a trusted path to the local gateway but does not
+authenticate an owner. The claim code proves temporary access to the setup
+surface; it is neither owner authentication nor TLS server authentication.
+These three concerns must remain independently designed and tested. This flow
+assumes a web UI, not a native Vauxr app.
 
 The implementation must prove that the install name resolves locally, real
 browsers retain stock trust, and the chosen local-console exposure cannot be
