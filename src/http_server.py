@@ -23,6 +23,7 @@ from auth import authenticate
 from auth_policy import HTTP_OPERATIONS, UNSHIPPED, Operation, Principal, Role, allowed, audit_denial
 from config import get_config
 from device_config import VALID_FOLLOW_UP_MODES, parse_button_actions
+from enrollment_http import attach_enrollment
 from owner_http import attach_owner, owner_middleware, session_principal
 from protocol import encode_text_message
 
@@ -103,7 +104,8 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
     else:
         resp = await handler(request)
     # Same-origin owner API never enables credentialed cross-origin access.
-    if not request.path.startswith("/api/auth/") and "__Host-vauxr_owner" not in request.cookies:
+    if (not request.path.startswith(("/api/auth/", "/api/enrollment/"))
+            and "__Host-vauxr_owner" not in request.cookies):
         resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
@@ -467,6 +469,7 @@ async def serve_firmware(request: web.Request) -> web.StreamResponse:
 
 def attach_http_routes(app: web.Application) -> None:
     attach_owner(app)
+    attach_enrollment(app)
     async def _options(_r: web.Request) -> web.Response:
         return web.Response(status=204)
 

@@ -101,7 +101,8 @@ def test_route_inventory_complete():
         )
         for method, path, _, _ in ROUTES
     }
-    expected |= {("GET", "/api/auth/{action}"), ("POST", "/api/auth/{action}")}
+    expected |= {("GET", "/api/auth/{action}"), ("POST", "/api/auth/{action}"),
+                 ("POST", "/api/enrollment/v1/{action}")}
     assert actual == expected
     assert len(HTTP_OPERATIONS) == len(ROUTES)
 
