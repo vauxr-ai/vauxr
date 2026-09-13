@@ -285,11 +285,13 @@ async def test_http_transport_csrf_roles_subject_delivery_and_no_cors(
         tmp_path, monkeypatch, scheme, role, subject):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.delenv("OWNER_HTTPS_ORIGIN", raising=False)
-    monkeypatch.setenv("OWNER_ORIGIN", f"{scheme}://owner.example")
+    monkeypatch.delenv("OWNER_TRUSTED_PROXIES", raising=False)
+    monkeypatch.setenv("OWNER_HTTPS_ORIGIN" if scheme == "https" else "OWNER_HTTP_ORIGIN",
+                       f"{scheme}://owner.example")
     base_headers = {"Host": "owner.example", "Origin": f"{scheme}://owner.example"}
     if scheme == "https":
         base_headers["X-Forwarded-Proto"] = "https"
-    monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
+        monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
     config._config = None
     auth._store = None
     app = make_http_app()

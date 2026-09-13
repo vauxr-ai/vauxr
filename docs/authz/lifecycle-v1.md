@@ -17,7 +17,7 @@ retained by the owner UI before the first POST. `role` is exactly `device` or
 There is no credential-ID/role selection in client polling, delivery or ACK.
 
 TLS is optional. Default self-hosted home-network lifecycle uses HTTP/WS with an
-exact `OWNER_ORIGIN` (for example `http://192.168.1.20:8080`), without a domain,
+exact `OWNER_HTTP_ORIGIN` (for example `http://192.168.1.20:8080`), without a domain,
 certificates, reverse proxy or managed service. HTTPS/WSS is an optional explicit
 choice and retains strict certificate chain, hostname/IP SAN and validity checks
 against pretrusted roots with trustworthy time before any credentials are sent.
@@ -25,7 +25,10 @@ Never disable verification or fall back to HTTP/WS after TLS failure.
 
 The [owner transport contract](owner-v1.md) defines exact Host, same-origin Origin,
 CSRF, mode-specific cookies and the optional direct-TLS/trusted-proxy boundary.
-`OWNER_HTTPS_ORIGIN` remains an HTTPS-only compatibility alias. HTTP/WS is
+`OWNER_HTTPS_ORIGIN` selects HTTPS and takes precedence over the HTTP setting.
+Presence of either HTTPS or proxy configuration requires valid TLS configuration;
+empty or malformed settings fail closed. With neither TLS setting present, HTTP
+defaults to the fixed `http://localhost:8080` origin. HTTP/WS is
 unencrypted and cannot authenticate the server against an on-path LAN attacker;
 physical participation and signed enrollment do not conceal bearer credentials.
 Auth, explicit pairing confirmation/physical participation, scopes, rotation,
@@ -140,7 +143,14 @@ per-client service guarantee. Repeated unauthorized traffic can exhaust it.
 Authentication checks deadlines directly, even before the periodic sweep. A
 one-second maintenance pass persists expiry and closes idle expired transports;
 restart performs the same reconciliation. Owner epoch or configured origin changes
-expire unfinished lifecycle operations without extending deadlines. There is one
+expire unfinished lifecycle operations without extending deadlines. The selected
+canonical origin includes the transport scheme, so it binds HTTP/HTTPS mode as
+well as host/port. Generated/environment/recovery owner-mode transitions change
+the durable owner generation even at the same origin. Startup persists stale
+pending enrollment and expired lifecycle work before accepting requests; returning
+to an earlier origin cannot revive it. The signed enrollment v1 transcript and
+schema-4 operation fields are unchanged. Restart after configuration changes, as
+required by the exact owner contract; live environment mutation is unsupported. There is one
 supported server process; console and server writers share the existing flock and
 thread lock. Do not await network operations while holding the persistence lock.
 In-flight external effects already performed cannot be undone. Device WS authority,

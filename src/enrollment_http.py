@@ -7,7 +7,7 @@ from aiohttp import web
 
 from auth_policy import Principal, Role
 from enrollment import Enrollment, EnrollmentError
-from owner_http import ORIGIN, OWNER, cookie_name, secure_request
+from owner_http import ORIGIN, OWNER, cookie_name, secure_request, session_principal
 
 ENROLLMENT = web.AppKey("enrollment", Enrollment)
 CLIENT_ACTIONS = {"request", "prove", "redeem", "cancel", "status"}
@@ -53,8 +53,7 @@ async def enrollment_endpoint(request: web.Request) -> web.Response:
         def resolve() -> Principal | None:
             # execute() holds the shared transaction throughout this check and write.
             if cookie:
-                result = request.app[OWNER].session(cookie)
-                return result[0] if result else None
+                return session_principal(request)
             principal = service.store.authenticate(header[7:] if header.startswith("Bearer ") else None)
             return principal if principal is not None and principal.role != Role.OWNER else None
 
