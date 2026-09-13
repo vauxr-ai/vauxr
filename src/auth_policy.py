@@ -1,7 +1,7 @@
 """Transport-independent authorization. Unlisted operations are never allowed."""
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 log = logging.getLogger("vauxr.authz")
@@ -47,6 +47,9 @@ class Principal:
     role: Role
     subject: str
     credential_id: str
+    # Opaque verifier-derived identity, not a bearer credential or session epoch.
+    # Policy-only principals may omit it; the store then rejects current().
+    credential_generation: str = field(default="", repr=False)
 
 
 _DEVICE = frozenset(

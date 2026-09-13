@@ -14,7 +14,11 @@ instead of leaving an administrative fallback while the dependent packages ship.
 ## Principal and policy contract
 
 `auth.authenticate(token)` resolves a persisted verifier to immutable
-`Principal(role, subject, credential_id)`. It returns no secret or verifier.
+`Principal(role, subject, credential_id, credential_generation)`. It returns no
+bearer secret or authentication verifier. Generation participates in principal
+equality and is omitted from its repr. A policy-only principal may omit generation
+(default empty); `current()` rejects it. `allowed()` checks grants only; retained
+principals must also pass `auth.current()` before an operation.
 `auth_policy.allowed(principal, operation, resource=..., physical_verified=...)`
 is the common decision function. All grants, including owner grants, are explicit.
 Unknown operations and anonymous callers are denied. Roles are not interchangeable:
@@ -59,11 +63,34 @@ random tokens, **not human passwords**. Fixtures seed test records explicitly.
 A device subject is its stable device ID, never a client-selected identity at login.
 An integration subject references its routing-channel ID. Owner records share one
 owner subject. IDs use 1–128 ASCII letters/digits/`_.:-`, starting with an alphanumeric.
-A credential ID cannot be rebound to another subject, role or verifier through the
-store replacement boundary. Rotation must allocate a new credential ID. Multiple
+While a credential ID remains in the current store, replacement cannot change its
+subject, role or verifier. Rotation should allocate a new credential ID. The store
+does not retain deleted-ID tombstones: removing then reissuing an ID is possible. Multiple
 records may bind one subject for a future bounded overlap, but this package does not
 create or enforce lifecycle transitions. Duplicate credential IDs/verifiers and
 cross-role subject collisions are rejected.
+
+`credential_generation` is the lowercase SHA-256 hex digest of
+`b"vauxr:credential-generation:v1\0" + verifier.encode("ascii")`, where the verifier
+is the persisted lowercase SHA-256 hex token digest. This domain-separated derived
+identity is not accepted as a bearer token and does not expose the authentication
+verifier. It is derived, not a new JSON field: existing version-1 files need no
+migration. `current()` requires an enabled record matching **ID, role, subject and
+generation**. Unchanged credentials retain their identity across reload/restart.
+Removing then reissuing the same ID/role/subject with a different verifier never
+makes the old principal current, including when deletion or reissue spans restart.
+A bound device socket also cannot substitute the new token because principal
+equality includes generation; it must establish a fresh connection.
+
+This is a verifier identity, **not a monotonic issuance/session epoch**. Re-enabling
+or restoring the exact same ID/role/subject/verifier restores the same identity;
+there is no durable revocation history or protection against restoring an old store
+backup. #47 must retain the authenticated generation in trusted session state and
+check `current()`; reconstructing a session principal from today's record by ID
+would reintroduce the vulnerability. Session expiry/logout/recovery, authoritative
+environment transitions (including switching back to a previous token), and permanent
+revocation require downstream session invalidation/epoch or lifecycle state. Do not
+use this generation alone to claim those semantics.
 
 The store writes a mode-0600 same-directory temporary file, flushes and fsyncs it,
 atomically replaces the destination, then fsyncs the directory. It only publishes
@@ -162,6 +189,9 @@ Tests: `python3 -m pytest -q tests/test_auth.py tests/test_authz_transports.py
 operation, concrete HTTP endpoints, all device message classes, raw binary rejection,
 channel response injection, signaling peer-handle bypass, secret projections/logging,
 malformed credentials, persistence permissions, restart and atomic-write failure.
+Remove/reissue regressions retain old principals for all three roles across store
+restart, exercise established device text/binary sockets and channel traffic in
+both directions, and verify that fresh connections accept the replacement token.
 Optional real-media tests skip when pipecat/aiortc is absent; mocked signaling tests
 exercise authorization without those heavy dependencies. No UI/hardware/TLS success
 is inferred from backend tests.

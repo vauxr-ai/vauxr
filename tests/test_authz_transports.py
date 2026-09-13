@@ -349,3 +349,84 @@ async def test_realtime_conflicting_header_cannot_fall_back_to_body(header):
             json={"type": "offer", "sdp": "test", "device_id": "speaker", "token": "device-secret"},
         )
         assert response.status in {401, 403}
+
+
+def reissue_credential(subject: str, restart: bool) -> None:
+    from auth_store import CredentialStore, verifier
+
+    store = auth.get_store()
+    original = next(r for r in store.records if r.subject == subject)
+    store.replace(tuple(r for r in store.records if r.id != original.id))
+    if restart:
+        store = CredentialStore(store.path)
+    store.replace((*store.records, replace(original, verifier=verifier("replacement-secret"))))
+    if restart:
+        auth._store = CredentialStore(store.path)
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("frame", ["text", "binary", "replacement-token"])
+async def test_reissued_device_rejects_already_authenticated_socket(restart: bool, frame: str) -> None:
+    async with TestClient(TestServer(make_app())) as client, client.ws_connect("/ws") as ws:
+        await ws.send_json({"type": "hello", "device_id": "speaker", "token": "device-secret"})
+        assert (await ws.receive_json(timeout=2))["type"] == "hello"
+        reissue_credential("speaker", restart)
+        if frame == "binary":
+            await ws.send_bytes(b"\x01\x00\x00audio")
+        else:
+            message = {"type": "hello"}
+            if frame == "replacement-token":
+                message["token"] = "replacement-secret"
+            await ws.send_json(message)
+            assert (await ws.receive_json(timeout=2))["code"] == (
+                "FORBIDDEN" if frame == "replacement-token" else "UNAUTHORIZED"
+            )
+        assert (await ws.receive(timeout=2)).type == WSMsgType.CLOSE
+        async with client.ws_connect("/ws") as fresh:
+            await fresh.send_json({"type": "hello", "device_id": "speaker", "token": "replacement-secret"})
+            assert (await fresh.receive_json(timeout=2))["type"] == "hello"
+
+
+@pytest.mark.parametrize("restart", [False, True])
+async def test_reissued_channel_rejects_existing_connection_in_both_directions(restart: bool) -> None:
+    from channel_server import ChannelServer
+    from server import APP_STATE
+
+    channel, _ = await channel_registry.create("Active")
+    channel_registry.activate(channel.id)
+    seed("channel-secret", Role.INTEGRATION, channel.id)
+    cs = ChannelServer()
+    delivered = []
+    cs.add_response_listener(
+        "speaker",
+        {
+            "on_delta": lambda *args: delivered.append(args),
+            "on_end": lambda *args: delivered.append(args),
+            "on_error": lambda *args: delivered.append(args),
+        },
+    )
+    app = make_app()
+    app[APP_STATE].channel_server = cs
+    async with TestClient(TestServer(app)) as client, client.ws_connect("/channel") as ws:
+        await ws.send_json({"type": "channel.auth", "token": "channel-secret"})
+        assert (await ws.receive_json(timeout=2))["type"] == "channel.ready"
+        assert cs.is_active_connected()
+        reissue_credential(channel.id, restart)
+        assert not cs.is_active_connected()
+        assert not cs.send_transcript("speaker", "must not leak")
+        response = {"type": "channel.response.end", "deviceId": "speaker", "runId": "run"}
+        await ws.send_json(response)
+        assert (await ws.receive_json(timeout=2))["code"] == "UNAUTHORIZED"
+        assert (await ws.receive(timeout=2)).type == WSMsgType.CLOSE
+        assert delivered == []
+        async with client.ws_connect("/channel") as fresh:
+            await fresh.send_json({"type": "channel.auth", "token": "replacement-secret"})
+            assert (await fresh.receive_json(timeout=2))["type"] == "channel.ready"
+            assert cs.is_active_connected()
+            assert cs.send_transcript("speaker", "fresh transcript")
+            assert (await fresh.receive_json(timeout=2))["text"] == "fresh transcript"
+            await fresh.send_json(response)
+            # A subsequent rejected frame provides an ordered server processing barrier.
+            await fresh.send_json({"type": "unknown"})
+            assert (await fresh.receive_json(timeout=2))["code"] == "FORBIDDEN"
+            assert delivered == [("run",)]
