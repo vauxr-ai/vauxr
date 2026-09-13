@@ -1,5 +1,11 @@
 # Authorization foundation (#46)
 
+**Enrollment update (#48):** [enrollment-v1.md](enrollment-v1.md) freezes the
+server physical/browser enrollment API, Ed25519 transcript, human matching-code
+boundary and schema 3. It supersedes the reserved pairing descriptions below;
+physical proof is not hardware attestation. TLS deployment/provider choice remains
+unresolved. Other lifecycle/integration credential operations remain unshipped.
+
 **Stacked owner update (#47):** [owner-v1.md](owner-v1.md) supersedes this
 foundation snapshot for owner setup, sessions, startup configuration and persistence
 schema 2. Owner HTTP bearer admission is removed; paired-client policy is unchanged.
