@@ -19,9 +19,8 @@ from enrollment import EnrollmentError
 from http_server import make_http_app
 from lifecycle import Lifecycle
 from lifecycle_http import LIFECYCLE
-from owner_http import COOKIE, OWNER
+from owner_http import COOKIE, LAN_COOKIE, OWNER
 from tests.test_enrollment import (
-    HEADERS,
     ORIGIN,
     approve,
     owner_resolver,
@@ -280,9 +279,16 @@ def test_corruption_clears_grants(env, mutation):
     assert not service.store.authenticate("synthetic-device")
 
 
-async def test_http_https_csrf_roles_subject_delivery_and_no_cors(tmp_path, monkeypatch):
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "channel")])
+async def test_http_transport_csrf_roles_subject_delivery_and_no_cors(
+        tmp_path, monkeypatch, scheme, role, subject):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("OWNER_HTTPS_ORIGIN", ORIGIN)
+    monkeypatch.delenv("OWNER_HTTPS_ORIGIN", raising=False)
+    monkeypatch.setenv("OWNER_ORIGIN", f"{scheme}://owner.example")
+    base_headers = {"Host": "owner.example", "Origin": f"{scheme}://owner.example"}
+    if scheme == "https":
+        base_headers["X-Forwarded-Proto"] = "https"
     monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
     config._config = None
     auth._store = None
@@ -294,9 +300,10 @@ async def test_http_https_csrf_roles_subject_delivery_and_no_cors(tmp_path, monk
         cookie, session = owner.login(claim["operator_token"])
         store = app[LIFECYCLE].store
         with store.transaction():
-            store.replace((Credential("d", Role.DEVICE, "speaker", verifier("synthetic-device")),))
-        headers = {**HEADERS, "Cookie": COOKIE + "=" + cookie, "X-CSRF-Token": session.csrf}
-        body = {"operation_id": "1" * 32, "role": "device", "subject": "speaker"}
+            store.replace((Credential("d", Role(role), subject, verifier("synthetic-device")),))
+        cookie_key = COOKIE if scheme == "https" else LAN_COOKIE
+        headers = {**base_headers, "Cookie": cookie_key + "=" + cookie, "X-CSRF-Token": session.csrf}
+        body = {"operation_id": "1" * 32, "role": role, "subject": subject}
         path = "/api/lifecycle/v1/"
         for changes in ({"X-Forwarded-Proto": "http"}, {"Origin": "https://evil.invalid"},
                         {"X-CSRF-Token": "wrong"}):
@@ -306,14 +313,14 @@ async def test_http_https_csrf_roles_subject_delivery_and_no_cors(tmp_path, monk
         assert response.status == 200
         assert "credential" not in await response.json()
         assert "Access-Control-Allow-Origin" not in response.headers
-        subject_headers = {**HEADERS, "Authorization": "Bearer synthetic-device"}
+        subject_headers = {**base_headers, "Authorization": "Bearer synthetic-device"}
         assert (await http.post(path + "rotate", headers=subject_headers, json=body)).status == 403
         assert (await http.post(path + "poll", headers=subject_headers, json={})).status == 200
         response = await http.post(path + "deliver", headers=subject_headers,
                                    json={"operation_id": "1" * 32})
         result = await response.json()
         assert response.status == 200 and result["save_required"]
-        new_headers = {**HEADERS, "Authorization": "Bearer " + result["credential"]}
+        new_headers = {**base_headers, "Authorization": "Bearer " + result["credential"]}
         response = await http.post(path + "ack", headers=new_headers,
                                    json={"operation_id": "1" * 32, "saved": True})
         assert response.status == 200

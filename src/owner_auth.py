@@ -29,12 +29,26 @@ def environment_token() -> str | None:
 
 def trusted_origin(value: str) -> str:
     parsed = urlsplit(value)
-    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
-            or parsed.path or parsed.query or parsed.fragment or value != f"https://{parsed.netloc}"):
-        raise ValueError("OWNER_HTTPS_ORIGIN must be an exact HTTPS origin without path or userinfo")
+    if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path or parsed.query or parsed.fragment or value != f"{parsed.scheme}://{parsed.netloc}"):
+        raise ValueError("OWNER_ORIGIN must be an exact HTTP or HTTPS origin without path or userinfo")
     # Force validation of malformed port syntax.
     _ = parsed.port
     return value
+
+
+def configured_origin() -> str:
+    """Keep the legacy HTTPS-only setting fail-closed, including conflicting settings."""
+    legacy = os.environ.get("OWNER_HTTPS_ORIGIN", "")
+    origin = os.environ.get("OWNER_ORIGIN", "")
+    if legacy:
+        trusted_origin(legacy)
+        if not legacy.startswith("https://"):
+            raise ValueError("OWNER_HTTPS_ORIGIN requires HTTPS")
+        if origin and origin != legacy:
+            raise ValueError("OWNER_ORIGIN conflicts with OWNER_HTTPS_ORIGIN")
+    value = origin or legacy
+    return trusted_origin(value) if value else ""
 
 
 class OwnerError(Exception):

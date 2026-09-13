@@ -259,7 +259,7 @@ def test_durable_claim_failure_does_not_disclose_or_grant(tmp_path, after_rename
     owner.console_claim(recover=True)
 
 
-@pytest.mark.parametrize("origin", ["http://owner.example", "https://owner.example/", "https://x@y",
+@pytest.mark.parametrize("origin", ["ws://owner.example", "https://owner.example/", "https://x@y",
                                     "https://owner.example?q=x", "https://owner.example#x", "https://x:bad"])
 def test_origin_configuration_rejected(origin):
     with pytest.raises(ValueError):
