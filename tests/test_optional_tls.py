@@ -218,6 +218,55 @@ def test_lifecycle_fixture_transport_policy():
         "trusted_chain", "hostname_or_ip_san", "validity", "trusted_time"}
 
 
+@pytest.mark.parametrize("scheme,port", [("http", 80), ("https", 443)])
+@pytest.mark.parametrize("alternate", ["127.0.0.1:{port}", "127.1", "2130706433", "0x7f000001"])
+async def test_owner_canonical_boundary_preserves_enrollment_and_lifecycle(monkeypatch, scheme, port, alternate):
+    import copy
+
+    from auth_policy import Role
+    from auth_store import Credential, verifier
+    from enrollment_http import ENROLLMENT
+    from lifecycle_http import LIFECYCLE
+
+    origin = f"{scheme}://127.0.0.1"
+    monkeypatch.setenv(f"OWNER_{scheme.upper()}_ORIGIN", origin)
+    headers = {"Host": "127.0.0.1", "Origin": origin}
+    if scheme == "https":
+        monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
+        headers["X-Forwarded-Proto"] = "https"
+    async with TestClient(TestServer(make_http_app())) as http:
+        owner = http.app[OWNER]
+        assert owner.store is http.app[ENROLLMENT].store is http.app[LIFECYCLE].store is auth.get_store()
+        claim = owner.claim(owner.console_claim())
+        owner.acknowledge(claim["save_acknowledgement"], True)
+        cookie, session = owner.login(claim["operator_token"])
+        headers.update({"Cookie": f"{COOKIE if scheme == 'https' else LAN_COOKIE}={cookie}",
+                        "X-CSRF-Token": session.csrf})
+        with owner.store.transaction():
+            owner.store.replace((Credential("d", Role.DEVICE, "speaker", verifier("old-device")),))
+        requests = [
+            ("enrollment", "request", {"kind": "browser", "display_name": "Browser",
+             "public_key": ed25519.Ed25519PrivateKey.generate().public_key().public_bytes_raw().hex()}),
+            ("lifecycle", "rotate", {"operation_id": "1" * 32, "role": "device", "subject": "speaker"}),
+        ]
+        alternate = alternate.format(port=port)
+        for api, action, body in requests:
+            with owner.store.transaction():
+                before = copy.deepcopy((owner.store.owner, owner.store.enrollment, owner.store.lifecycle))
+            for changes in ({"Host": alternate}, {"Origin": f"{scheme}://{alternate}"}):
+                response = await http.post(f"/api/{api}/v1/{action}", headers={**headers, **changes}, json=body)
+                assert response.status == 403
+                with owner.store.transaction():
+                    assert (owner.store.owner, owner.store.enrollment, owner.store.lifecycle) == before
+            response = await http.post(f"/api/{api}/v1/{action}", headers=headers, json=body)
+            assert response.status == 200
+        with owner.store.transaction():
+            row = next(iter(owner.store.enrollment["requests"].values()))
+            operation = owner.store.lifecycle["operations"]["1" * 32]
+            assert row["origin"] == operation["origin"] == origin
+            assert row["owner_generation"] == operation["owner_generation"] == owner.store.owner["generation"]
+
+
 @pytest.mark.parametrize("scheme", ["http", "https"])
 @pytest.mark.parametrize("transition", ["origin", "scheme", "owner_mode"])
 @pytest.mark.parametrize("phase", ["queued", "pending", "delivered", "recovery"])
