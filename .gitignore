@@ -31,3 +31,6 @@ uv.lock
 data-migration/
 data.backup*/
 data-backup*/
+
+# Local review evidence and working notes
+.codex-logs/
