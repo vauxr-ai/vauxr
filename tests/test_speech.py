@@ -4,7 +4,7 @@ import asyncio
 import json
 from dataclasses import asdict, replace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -391,3 +391,75 @@ def test_neutral_env_migration_preserves_persisted_legacy_selection(tmp_path, mo
         assert speech.get_store().path.read_bytes() == persisted
     finally:
         config.reset_config()
+
+
+@pytest.mark.parametrize("failure", [KeyError, ValueError])
+async def test_realtime_rejected_turn_cannot_retry_resolution(store, monkeypatch, failure):
+    pytest.importorskip("pipecat")
+    import pipecat.pipeline.pipeline as pipeline_module
+    from pipecat.frames.frames import ErrorFrame, StartFrame, TranscriptionFrame
+    from pipecat.services.ai_service import AIService
+    from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+
+    import realtime_session
+    import realtime_wyoming
+
+    # Capture the actual session wiring before any transport tasks start.
+    processors = []
+
+    class PipelineCaptured(Exception):
+        pass
+
+    def capture_pipeline(items):
+        processors.extend(items)
+        raise PipelineCaptured
+
+    monkeypatch.setattr(pipeline_module, "Pipeline", capture_pipeline)
+    session = realtime_session.RealtimeSession("a", channel_server=object())
+    connection = SmallWebRTCConnection()
+    try:
+        with pytest.raises(PipelineCaptured):
+            await session.start(connection)
+    finally:
+        await connection._pc.close()
+    stt = next(p for p in processors if isinstance(p, realtime_wyoming.WyomingSTTService))
+    tts = next(p for p in processors if isinstance(p, realtime_wyoming.WyomingTTSService))
+    session._send_audio_end = AsyncMock()
+    session._speech_selection = store.resolve("a")  # previous successful turn
+    session._turn_active = True
+
+    def reject(device_id):
+        raise failure("removed provider")
+
+    monkeypatch.setattr(realtime_session, "resolve", reject)
+    assert not await session._snapshot_speech_selection()
+    assert not session._turn_active
+    session._send_audio_end.assert_awaited_once_with(False)
+
+    # Configuration is repaired before the rejected segment finishes. It must
+    # still produce no provider call or transcript for the LLM/TTS pipeline.
+    resolver = Mock(side_effect=store.resolve)
+    monkeypatch.setattr(realtime_session, "resolve", resolver)
+    transcribe = AsyncMock(return_value="normal turn")
+    monkeypatch.setattr(realtime_wyoming, "transcribe", transcribe)
+    await AIService.start(stt, StartFrame())
+    audio = b"\x01\x00" * 16000
+    frames = [frame async for frame in stt.run_stt(audio)]
+    assert len(frames) == 1 and isinstance(frames[0], ErrorFrame)
+    transcribe.assert_not_awaited()
+    resolver.assert_not_called()
+    with pytest.raises(ValueError, match="no selection snapshot"):
+        await tts.on_turn_context_created("rejected")
+    assert not tts._selections
+
+    # Only a new accepted onset can recover. Both adapters retain its snapshot
+    # even if defaults change before inference/reply creation.
+    assert await session._snapshot_speech_selection()
+    selected = session._require_speech_selection()
+    store.update({"stt_backend": "parakeet", "tts_backend": "kokoro"})
+    frames = [frame async for frame in stt.run_stt(audio)]
+    assert len(frames) == 1 and isinstance(frames[0], TranscriptionFrame)
+    transcribe.assert_awaited_once_with([audio], sample_rate=stt.sample_rate, backend=selected.stt)
+    await tts.on_turn_context_created("accepted")
+    assert tts._selections["accepted"] == selected
+    resolver.assert_called_once_with("a")

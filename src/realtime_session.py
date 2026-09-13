@@ -229,13 +229,13 @@ class RealtimeSession:
             params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
         )
 
-        stt = WyomingSTTService(selection=lambda: self._speech_selection or resolve(self.device_id))
+        stt = WyomingSTTService(selection=self._require_speech_selection)
         # Per-device segmentation: sentence mode lets pipecat's TTS aggregator cut
         # on sentence boundaries; otherwise TOKEN mode and the upstream
         # IdleSegmenter (in ChannelLLMService) owns segmentation.
         seg = get_segmentation(self.device_id)
         tts = WyomingTTSService(
-            selection=lambda: self._speech_selection or resolve(self.device_id),
+            selection=self._require_speech_selection,
             text_aggregation_mode=(
                 TextAggregationMode.SENTENCE if seg.sentence else TextAggregationMode.TOKEN
             )
@@ -452,16 +452,7 @@ class RealtimeSession:
                         log.info("realtime[%s]: VAD speech START", session.device_id)
                         # A real turn-level start opened a turn — its transcript
                         # may now be relayed to the device.
-                        session._speech_selection = None
-                        try:
-                            session._speech_selection = resolve(session.device_id)
-                        except (KeyError, ValueError):
-                            session._turn_active = False
-                            await _send_json(_device_ws(session.device_id), {
-                                "type": "error", "code": "SPEECH_UNAVAILABLE",
-                                "message": "Selected speech provider is not configured",
-                            })
-                            await session._send_audio_end(False)
+                        if not await session._snapshot_speech_selection():
                             return
                         session._turn_generation += 1
                         session._turn_active = True
@@ -543,6 +534,26 @@ class RealtimeSession:
         self._runner_task = asyncio.create_task(self._runner.run(self._task))
         self._touch_activity()
         self._backstop_task = asyncio.create_task(self._safety_backstop())
+
+    def _require_speech_selection(self) -> Selection:
+        """Never re-resolve a rejected turn when its buffered audio reaches STT."""
+        if self._speech_selection is None:
+            raise ValueError("Speech turn has no selection snapshot")
+        return self._speech_selection
+
+    async def _snapshot_speech_selection(self) -> bool:
+        self._speech_selection = None
+        try:
+            self._speech_selection = resolve(self.device_id)
+        except (KeyError, ValueError):
+            self._turn_active = False
+            await _send_json(_device_ws(self.device_id), {
+                "type": "error", "code": "SPEECH_UNAVAILABLE",
+                "message": "Selected speech provider is not configured",
+            })
+            await self._send_audio_end(False)
+            return False
+        return True
 
     def _touch_activity(self) -> None:
         """Mark a sign of life so the inactivity backstop holds off."""
