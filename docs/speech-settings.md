@@ -143,33 +143,17 @@ HTTP projection. Announcement synthesis failures return HTTP 503 and emit a
 device TTS error plus audio.end. An unavailable but configured backend can be selected for later
 use; runtime failures produce errors, not automatic rerouting or downloads.
 
-`http_server._authorize_speech_management` is the explicit compatibility seam
-injected into `speech_http.attach_speech_routes`. On this base it delegates to the
-existing shared `DEVICE_TOKEN` **or channel-token** management check. Legacy auth
-cannot distinguish a shared-token device holder from management; this change
-neither fixes nor broadens that existing trust model. WS/offer JSON cannot alter
-speech settings. Announcement/button permissions remain at their existing entry
-points and do not grant speech configuration permissions.
+`http_server._authorize_speech_management` enforces owner-session policy through
+an explicitly declared HTTP boundary. Global settings/readiness use `server.manage`;
+device settings use `device.configure` with the device ID as resource. These shipped
+speech handlers do not enable other unshipped server-management operations.
+Anonymous and legacy tokens receive 401; scoped device/integration credentials
+receive 403. Owner transport, Origin and mutation CSRF checks apply to both routes.
+WS/offer JSON cannot alter speech settings. Announcement/button permissions do not
+grant speech configuration permissions.
 
-Read-only inspection of the #45/#49 workstreams (`vauxr-auth-scopes`,
-`vauxr-auth-owner`, `vauxr-auth-enrollment`) found deny-by-default `Operation`
-policy, owner sessions and scoped device/integration roles. No auth files or
-branches were copied, changed, merged or rebased. Integration should:
-
-- Map global speech read/write and registry readiness to owner `server.manage`
-  (or explicitly agreed narrower speech operations). That operation is currently
-  marked unshipped in the scopes branch; do not blindly inherit its 501 guard.
-- Map device speech read/write to owner `device.configure`, passing the device ID
-  as resource. `devices.list` alone must not grant configuration/readiness access.
-- Replace the injected legacy authorization callback with owner/session policy;
-  preserve its 401/403 distinction, transport boundary and session CSRF checks.
-  The callback may raise the appropriate aiohttp HTTP exception for denial.
-- Extend the upcoming route/operation allowlist explicitly: these routes use a
-  shared handler and must be classified by path and method. Deny device and
-  integration credentials access to speech settings. Do not keep the legacy
-  channel-token fallback after scoped auth lands.
-- Adapt the web component's fetch transport to the owner session/CSRF client at
-  integration time; this branch intentionally retains current bearer UI behavior.
+The web components still use their existing bearer transport. Owner-session/CSRF
+UI integration remains separate; this backend reconciliation does not modify UI files.
 
 ## Turn consistency and readiness limits
 

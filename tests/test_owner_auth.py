@@ -79,7 +79,8 @@ def test_claim_save_restart_and_redaction(tmp_path, caplog):
         restarted.acknowledge(ack, True)
     cookie, session = restarted.login(token)
     assert restarted.session(cookie)
-    assert not service(tmp_path).session(cookie)  # process-local sessions intentionally do not survive restart
+    # Process-local sessions intentionally do not survive restart.
+    assert not service(tmp_path).session(cookie)
     assert service(tmp_path).login(token)
     for secret in (token, code, ack, cookie, session.csrf):
         assert secret not in owner.store.path.read_text()
@@ -465,7 +466,8 @@ async def test_foundation_owner_bearer_never_bypasses_recovery():
     async with TestClient(TestServer(make_http_app())) as client:
         for recover in (False, True):
             client.app[OWNER].console_claim(recover=recover)
-            response = await client.get("/api/devices", headers={"Authorization": "Bearer synthetic-old-owner"})
+            response = await client.get(
+                "/api/devices", headers={"Authorization": "Bearer synthetic-old-owner"})
             assert response.status == 401
 
 
@@ -598,8 +600,8 @@ async def test_fragmented_json_and_head_status():
             await asyncio.sleep(0.01)
             yield json.dumps(code).encode() + b'}'
 
-        response = await client.post("/api/auth/claim", headers={**HEADERS, "Content-Type": "application/json"},
-                                     data=fragments())
+        response = await client.post(
+            "/api/auth/claim", headers={**HEADERS, "Content-Type": "application/json"}, data=fragments())
         assert response.status == 200
         before = dict(client.app[OWNER].store.owner)
         assert (await client.head("/api/auth/status", headers=HEADERS)).status == 200

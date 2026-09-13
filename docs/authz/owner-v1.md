@@ -11,7 +11,9 @@ or ordinary enrollment v1 response fields.
 
 # Owner authentication contract v1 (#47)
 
-This package is stacked on authorization foundation **8451b39 / unmerged PR55**.
+This package is stacked on authorization foundation **7e7fba02f36dac6194c830ffcb9e1f861b50cdac / unmerged PR55**.
+The reviewed stale-principal repair is merged into the owner branch; original
+8451b39 remains an ancestor. Review owner-only changes with `7e7fba0..HEAD`.
 It implements backend owner authentication and a local-console CLI. Browser UI
 belongs to #50; device/integration enrollment and credential lifecycle remain
 #48/#49/#51. This is not a deployable end-to-end auth release by itself.
@@ -229,7 +231,8 @@ a lost ACK response may fail; login with the saved token distinguishes completio
 Device settings and routing config files are never changed by owner recovery.
 
 For downstream #48/#49/#51, `owner_http.session_principal(request)` resolves the
-session to `Principal(Role.OWNER, "owner", generation)`; use the same middleware and
+session to `Principal(Role.OWNER, "owner", session.generation)` with an empty
+`credential_generation`; use the same middleware and
 foundation operation policy for new HTTP handlers. `owner_middleware` enforces the
 selected-mode transport/Host/Origin/CSRF boundary for requests carrying either
 owner cookie, including new routes. New handlers still need the foundation declared authorization boundary and

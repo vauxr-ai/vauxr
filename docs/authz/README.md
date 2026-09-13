@@ -36,7 +36,9 @@ instead of leaving an administrative fallback while the dependent packages ship.
 bearer secret or authentication verifier. Generation participates in principal
 equality and is omitted from its repr. A policy-only principal may omit generation
 (default empty); `current()` rejects it. `allowed()` checks grants only; retained
-principals must also pass `auth.current()` before an operation.
+bearer principals must also pass `auth.current()` before an operation. Owner
+cookie sessions use the independent epoch check in `OwnerAuth.session()`, as
+specified in [owner-v1.md](owner-v1.md); they are not paired-client records.
 `auth_policy.allowed(principal, operation, resource=..., physical_verified=...)`
 is the common decision function. All grants, including owner grants, are explicit.
 Unknown operations and anonymous callers are denied. Roles are not interchangeable:
@@ -103,9 +105,12 @@ equality includes generation; it must establish a fresh connection.
 This is a verifier identity, **not a monotonic issuance/session epoch**. Re-enabling
 or restoring the exact same ID/role/subject/verifier restores the same identity;
 there is no durable revocation history or protection against restoring an old store
-backup. #47 must retain the authenticated generation in trusted session state and
-check `current()`; reconstructing a session principal from today's record by ID
-would reintroduce the vulnerability. Session expiry/logout/recovery, authoritative
+backup. Any session derived from a paired-client bearer must retain the
+authenticated generation in trusted state and check `current()`; reconstructing
+its principal from today's record by ID would reintroduce the vulnerability.
+#47 owner cookie sessions are independently authenticated and use a separate
+durable random epoch, not this verifier identity or the paired-client collection.
+Session expiry/logout/recovery, authoritative
 environment transitions (including switching back to a previous token), and permanent
 revocation require downstream session invalidation/epoch or lifecycle state. Do not
 use this generation alone to claim those semantics.

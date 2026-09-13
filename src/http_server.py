@@ -475,14 +475,22 @@ async def serve_firmware(request: web.Request) -> web.StreamResponse:
 
 
 async def _authorize_speech_management(request: web.Request) -> bool:
-    """Legacy management boundary; replace with owner/scoped policy during #45/#49 integration."""
-    return await _bearer_token_valid(request)
+    """Owner-only speech management; device selection input is never authority."""
+    principal = _http_principal(request)
+    operation = (Operation.DEVICE_CONFIG if request.match_info.get("device_id")
+                 else Operation.SERVER_MANAGE)
+    if not allowed(principal, operation, resource=request.match_info.get("device_id")):
+        audit_denial(principal is not None)
+        if principal is None:
+            raise web.HTTPUnauthorized()
+        raise web.HTTPForbidden()
+    return True
 
 
 def attach_http_routes(app: web.Application) -> None:
     from speech_http import attach_speech_routes
 
-    attach_speech_routes(app, _authorize_speech_management)
+    attach_speech_routes(app, _authorize_speech_management, transport_boundary)
     attach_owner(app)
     attach_enrollment(app)
     attach_lifecycle(app)

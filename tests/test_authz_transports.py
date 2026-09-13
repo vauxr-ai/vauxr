@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import replace
+from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp import WSMsgType, web
@@ -21,6 +22,8 @@ from tests.test_announce import FakeWs
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
+    import speech_http
+    monkeypatch.setattr(speech_http, "readiness", AsyncMock(return_value="unavailable"))
     config.reset_config()
     monkeypatch.setenv("OWNER_HTTPS_ORIGIN", "https://owner.example")
     monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
@@ -43,6 +46,10 @@ def isolated(monkeypatch, tmp_path):
 
 # Expected authorization and concrete endpoint outcome, including owner-only and unshipped routes.
 ROUTES = [
+    ("GET", "/api/speech", "o", 200),
+    ("PATCH", "/api/speech", "o", 200),
+    ("GET", "/api/devices/missing/speech", "o", 200),
+    ("PATCH", "/api/devices/missing/speech", "o", 200),
     ("GET", "/api/devices", "oi", 200),
     ("PATCH", "/api/devices/missing", "o", 404),
     ("POST", "/api/devices/missing/announce", "oi", 404),
@@ -105,7 +112,8 @@ def test_route_inventory_complete():
                  ("POST", "/api/enrollment/v1/{action}"), ("POST", "/api/lifecycle/v1/{action}"),
                  ("POST", "/api/integrations/v1/{action}")}
     assert actual == expected
-    assert len(HTTP_OPERATIONS) == len(ROUTES)
+    # Speech uses one injected boundary for four path/method combinations.
+    assert len(HTTP_OPERATIONS) + 4 == len(ROUTES)
 
 
 async def test_unknown_handler_and_api_fallback_deny():

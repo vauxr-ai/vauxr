@@ -113,7 +113,7 @@ async def test_transport_paths_resolve_device_selection_once(neutral_store, monk
     monkeypatch.setattr(pipeline, "_route_via_openclaw_direct", route)
     if path == "ws":
         state = AppState(openclaw_client=object(), channel_server=channels)
-        ctx = ConnectionCtx()
+        ctx = ConnectionCtx(device_id="device")
         await _voice_start(state, ws, ctx, {"device_id": "device", "token": "neutral-test"})
         await _voice_end(state, ws, ctx)
         await asyncio.wait_for(done.wait(), 1)
