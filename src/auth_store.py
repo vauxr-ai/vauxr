@@ -46,6 +46,11 @@ class Credential:
     verifier: str = field(repr=False)
     enabled: bool = True
 
+    @property
+    def generation(self) -> str:
+        """Stable across reloads; never expose the authentication verifier itself."""
+        return hashlib.sha256(b"vauxr:credential-generation:v1\0" + self.verifier.encode("ascii")).hexdigest()
+
     def __post_init__(self) -> None:
         if (
             not isinstance(self.role, Role)
@@ -133,12 +138,13 @@ class CredentialStore:
             return None
         for record in self.records:
             if hmac.compare_digest(digest, record.verifier) and record.enabled:
-                return Principal(record.role, record.subject, record.id)
+                return Principal(record.role, record.subject, record.id, record.generation)
         return None
 
     def current(self, principal: Principal | None) -> bool:
         return principal is not None and any(
             r.enabled
             and (r.id, r.role, r.subject) == (principal.credential_id, principal.role, principal.subject)
+            and r.generation == principal.credential_generation
             for r in self.records
         )
