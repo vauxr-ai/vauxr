@@ -25,7 +25,10 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     cfg_mod.reset_config()
     monkeypatch.setenv("DEVICE_TOKEN", "tok-E")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from tests.auth_helpers import seed
+    from auth_policy import Role
     monkeypatch.setenv("OPENCLAW_URL", "wss://stub.invalid/")
+    seed("tok-E", Role.DEVICE, "dev1")
     registry.reset()
     channel_registry._reset_for_tests()
     channel_registry._openclaw_direct_active = True  # type: ignore[attr-defined]
