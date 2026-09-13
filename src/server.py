@@ -34,7 +34,8 @@ from openclaw_client import OpenClawClient
 from owner_http import owner_middleware
 from pipeline import run_voice_turn
 from protocol import encode_text_message, parse_text_message
-from speech import Selection, get_store as get_speech_store, resolve
+from speech import Selection, resolve
+from speech import get_store as get_speech_store
 
 log = logging.getLogger("vauxr.server")
 
@@ -160,8 +161,16 @@ async def _authorize_message(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg:
             return False
         live = registry.get(resource)
         if live is not None and live.ws is not ws and not getattr(live.ws, "closed", False):
-            # A live identity cannot be taken over; retry after the old connection closes.
-            audit_denial(True)
+            # A reconnect can arrive while the peer's old TCP socket still looks open
+            # (for example after a device reboot). Retire that registry owner, but
+            # reject this connection too: the device's next retry must authenticate
+            # again and no socket gets to take a live identity over directly.
+            try:
+                await asyncio.wait_for(live.ws.close(), timeout=1.0)
+            except (TimeoutError, RuntimeError):
+                pass
+            registry.unregister(resource, live.ws)
+            audit_denial(True, "duplicate_device_connection")
             await send_json(ws, {"type": "error", "code": "FORBIDDEN", "message": "Access denied"})
             await ws.close()
             return False

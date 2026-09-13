@@ -333,7 +333,7 @@ async def test_new_unprotected_route_is_denied_by_middleware():
         assert response.status == 401
 
 
-async def test_simultaneous_device_identity_cannot_take_over():
+async def test_duplicate_device_identity_retires_old_socket_and_requires_retry():
     async with (
         TestClient(TestServer(make_app())) as client,
         client.ws_connect("/ws") as first,
@@ -345,9 +345,38 @@ async def test_simultaneous_device_identity_cannot_take_over():
         original = device_registry.get("speaker").ws
         await second.send_json(hello)
         assert (await second.receive_json(timeout=2))["code"] == "FORBIDDEN"
-        assert device_registry.get("speaker").ws is original
-        await first.send_json(hello)
-        assert (await first.receive_json(timeout=2))["type"] == "hello"
+        assert (await first.receive(timeout=2)).type in {
+            WSMsgType.CLOSE,
+            WSMsgType.CLOSED,
+            WSMsgType.CLOSING,
+        }
+        assert device_registry.get("speaker") is None
+
+        async with client.ws_connect("/ws") as retry:
+            await retry.send_json(hello)
+            assert (await retry.receive_json(timeout=2))["type"] == "hello"
+            assert device_registry.get("speaker").ws is not original
+
+
+async def test_duplicate_device_denial_logs_only_internal_reason(caplog):
+    caplog.set_level(logging.INFO)
+    async with (
+        TestClient(TestServer(make_app())) as client,
+        client.ws_connect("/ws") as first,
+        client.ws_connect("/ws") as second,
+    ):
+        await first.send_json(
+            {"type": "hello", "device_id": "speaker", "token": "device-secret"}
+        )
+        await first.receive_json(timeout=2)
+        await second.send_json(
+            {"type": "hello", "device_id": "speaker", "token": "device-secret"}
+        )
+        assert (await second.receive_json(timeout=2))["code"] == "FORBIDDEN"
+
+    logs = "\n".join(r.getMessage() for r in caplog.records if r.name == "vauxr.authz")
+    assert "authorization denied: forbidden (duplicate_device_connection)" in logs
+    assert "speaker" not in logs and "device-secret" not in logs
 
 
 @pytest.mark.parametrize("header", ["Basic ignored", "Bearer owner-secret", "Bearer other-device-secret"])
