@@ -15,7 +15,7 @@ separate packages. No integration credential is issued by these endpoints.
 ## Trust and physical participation
 
 TLS is optional: the default home-network enrollment/lifecycle path uses HTTP/WS
-with an exact `OWNER_ORIGIN` such as `http://192.168.1.20:8080`, without a domain,
+with an exact `OWNER_HTTP_ORIGIN` such as `http://192.168.1.20:8080`, without a domain,
 certificates, reverse proxy or managed service. Apply the mode-specific Host,
 Origin, cookie and proxy rules in [owner-v1.md](owner-v1.md). Discovery/manual URLs
 only identify candidates; choosing the installation still requires explicit setup.
