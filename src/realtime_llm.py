@@ -93,11 +93,15 @@ class OutputDrainTap(FrameProcessor):
     Interrupted/dropped markers deliberately retain authority until teardown.
     """
 
+    def __init__(self, consumed: Callable[[], Awaitable[bool]], **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._consumed = consumed
+
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if direction == FrameDirection.DOWNSTREAM and isinstance(frame, LLMFullResponseEndFrame):
             drained = frame.metadata.pop("vauxr_output_drained", None)
-            if drained is not None:
+            if drained is not None and await self._consumed():
                 await drained()
         await self.push_frame(frame, direction)
 

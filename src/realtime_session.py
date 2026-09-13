@@ -251,6 +251,9 @@ class RealtimeSession:
             params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
         )
 
+        from realtime_transport import AudioConsumption
+
+        consumption = AudioConsumption(transport.output())
         stt = WyomingSTTService(selection=self._require_speech_selection)
         # Per-device segmentation: sentence mode lets pipecat's TTS aggregator cut
         # on sentence boundaries; otherwise TOKEN mode and the upstream
@@ -479,9 +482,7 @@ class RealtimeSession:
                         session._turn_generation += 1
                         session._turn_active = True
                         session._touch_activity()
-                        await _send_json(
-                            _device_ws(session.device_id), {"type": "speech.start"}
-                        )
+                        await session._send_control({"type": "speech.start"})
                 elif isinstance(frame, UserStoppedSpeakingFrame):
                     log.info("realtime[%s]: VAD speech STOP", session.device_id)
                 elif isinstance(frame, TranscriptionFrame) and frame.text and frame.text.strip():
@@ -506,15 +507,10 @@ class RealtimeSession:
                         # user-turn starts so a residual-echo blip can't trip an
                         # interruption that cancels this pending reply.
                         session._awaiting_reply = True
-                        await _send_json(
-                            _device_ws(session.device_id),
-                            {"type": "transcript", "text": text},
-                        )
+                        await session._send_control({"type": "transcript", "text": text})
                 elif isinstance(frame, BotStartedSpeakingFrame):
                     session._on_bot_started_speaking()
-                    await _send_json(
-                        _device_ws(session.device_id), {"type": "audio.start"}
-                    )
+                    await session._send_control({"type": "audio.start"})
                 elif isinstance(frame, BotStoppedSpeakingFrame):
                     session._on_bot_stopped_speaking()
                 await self.push_frame(frame, direction)
@@ -530,7 +526,7 @@ class RealtimeSession:
                 llm,
                 tts,
                 transport.output(),
-                OutputDrainTap(),
+                OutputDrainTap(consumption.drained),
                 assistant_aggregator,
             ]
         )
@@ -570,7 +566,7 @@ class RealtimeSession:
             self._speech_selection = resolve(self.device_id)
         except (KeyError, ValueError):
             self._turn_active = False
-            await _send_json(_device_ws(self.device_id), {
+            await self._send_control({
                 "type": "error", "code": "SPEECH_UNAVAILABLE",
                 "message": "Selected speech provider is not configured",
             })
@@ -705,7 +701,7 @@ class RealtimeSession:
         # echo can't cancel it.
         self._turn_generation += 1
         self._awaiting_reply = True
-        await _send_json(_device_ws(self.device_id), {"type": "transcript", "text": text})
+        await self._send_control({"type": "transcript", "text": text})
         self._context.add_message({"role": "user", "content": text})
         if self._task is not None:
             await self._task.queue_frames([LLMRunFrame()])
@@ -784,7 +780,8 @@ class RealtimeSession:
             return
         self._touch_activity()
         user_text = _latest_user_text(self._context)
-        get_manager().record_turn(self.device_id, user_text, reply)
+        if self._owns_control():
+            get_manager().record_turn(self.device_id, user_text, reply)
 
         has_audio = bool(reply and reply.strip())
         # Keep the resolver's follow_up. Channel timeout/error completes with
@@ -908,6 +905,9 @@ class RealtimeSession:
                 self._bot_stop_credits -= 1
             self._pending_ends.popleft()
             self._release_channel_media(media_abort)
+            if not self._owns_control():
+                # A may release its own consumed media, but cannot complete B.
+                continue
             # A barge-in cut a turn short: this end (the FIFO front) is the
             # interrupted turn's, so its bot-stop was the interruption, not a
             # natural reply end, and a new user turn is already underway. Emitting
@@ -926,20 +926,29 @@ class RealtimeSession:
                     follow_up = True
             await self._send_audio_end(follow_up)
 
+    def _owns_control(self) -> bool:
+        """Only the exact active peer may change shared device control state."""
+        return get_manager()._sessions.get(self.device_id) is self
+
+    async def _send_control(self, message: dict[str, Any]) -> bool:
+        if self._closed or self._ended_notified or not self._owns_control():
+            return False
+        return await _send_json(_device_ws(self.device_id), message)
+
     async def _send_audio_end(self, follow_up: bool, *, resume_mic: bool = False) -> None:
-        if self._closed or self._ended_notified:
+        if self._closed or self._ended_notified or not self._owns_control():
             return
         # Keep diagnostics active until control delivery succeeds, including if
         # an earlier turn was quiet or this send is cancelled.
         self._set_audio_input_expected(True)
         generation = self._audio_input_generation
         activity_generation = self._audio_activity_generation
-        delivered = await _send_json(
-            _device_ws(self.device_id), {"type": "audio.end", "follow_up": follow_up}
-        )
+        ws = _device_ws(self.device_id)
+        delivered = await _send_json(ws, {"type": "audio.end", "follow_up": follow_up})
         if (
             not delivered or activity_generation != self._audio_activity_generation
-            or self._closed or self._ended_notified
+            or self._closed or self._ended_notified or not self._owns_control()
+            or _device_ws(self.device_id) is not ws
         ):
             return
         if resume_mic and follow_up and generation == self._audio_input_generation:
@@ -985,10 +994,12 @@ class RealtimeSession:
         self._pending_ends.clear()
         self._bot_stop_credits = 0
         self._cancel_drain_timer()
-        await _send_json(
-            _device_ws(self.device_id), {"type": "audio.end", "follow_up": False}
-        )
-        registry.set_state(self.device_id, "idle")
+        if not self._owns_control():
+            return
+        ws = _device_ws(self.device_id)
+        await _send_json(ws, {"type": "audio.end", "follow_up": False})
+        if self._owns_control() and _device_ws(self.device_id) is ws:
+            registry.set_state(self.device_id, "idle")
 
     async def close(self) -> None:
         if self._close_attempts is None:
@@ -1005,6 +1016,7 @@ class RealtimeSession:
         await auth_connections.run_teardowns(self._close_attempts)
         for abort in list(self._channel_media):
             self._release_channel_media(abort)
+        self._pending_ends.clear()
         manager = get_manager()
         if manager._sessions.get(self.device_id) is self:
             manager.forget(self.device_id)
@@ -1021,6 +1033,7 @@ class RealtimeManager:
         self._speech_preroll: dict[str, Selection] = {}
         self._conversation_log: dict[str, list[dict[str, str]]] = {}
         self._offer_locks: dict[str, asyncio.Lock] = {}
+        self._wake_generations: dict[str, object] = {}
         self._handler: Any = None
         self._max_preroll_bytes = 16000 * 2 * 10  # 10s @ 16kHz mono
         # Sanity: server backstop must outlive the device taper drop timer.
@@ -1068,6 +1081,7 @@ class RealtimeManager:
     # --- pre-roll buffering (cold wake: WS audio until voice.end) ---
 
     def begin_preroll(self, device_id: str, selection: Selection | None = None) -> None:
+        self._wake_generations[device_id] = object()
         self._speech_preroll[device_id] = selection or resolve(device_id)
         self._preroll[device_id] = bytearray()
         self._cold_wait.add(device_id)
@@ -1098,8 +1112,13 @@ class RealtimeManager:
         session = self._sessions.get(device_id)
         if session is not None:
             await session._send_audio_end(follow_up, resume_mic=True)
-        elif await _send_json(_device_ws(device_id), {"type": "audio.end", "follow_up": follow_up}):
-            registry.set_state(device_id, "listening" if follow_up else "idle")
+        else:
+            ws = _device_ws(device_id)
+            wake = self._wake_generations.get(device_id)
+            delivered = await _send_json(ws, {"type": "audio.end", "follow_up": follow_up})
+            if (delivered and self._sessions.get(device_id) is None
+                    and self._wake_generations.get(device_id) is wake and _device_ws(device_id) is ws):
+                registry.set_state(device_id, "listening" if follow_up else "idle")
 
     def set_mic_paused(self, device_id: str, paused: bool) -> None:
         """Hold or release inbound WebRTC mic audio for a live session."""
@@ -1203,17 +1222,26 @@ class RealtimeManager:
         self._sessions.pop(device_id, None)
 
     async def abort_wake(self, device_id: str) -> None:
-        """Clean up a wake whose /api/offer never produced a usable session."""
+        """Clean up only the wake/peer captured before teardown yields."""
+        await self._stop_wake(device_id, notify=True)
+
+    async def _stop_wake(self, device_id: str, *, notify: bool) -> None:
         session = self._sessions.get(device_id)
+        wake = self._wake_generations.get(device_id)
+        ws = _device_ws(device_id)
         if session is not None:
             await session.close()
+        if (self._sessions.get(device_id) not in (None, session)
+                or self._wake_generations.get(device_id) is not wake or _device_ws(device_id) is not ws):
+            return
         self._preroll.pop(device_id, None)
         self._speech_preroll.pop(device_id, None)
         self._cold_wait.discard(device_id)
-        ws = _device_ws(device_id)
-        if ws is not None:
+        if notify:
             await _send_json(ws, {"type": "audio.end", "follow_up": False})
-        registry.set_state(device_id, "idle")
+        if (self._sessions.get(device_id) in (None, session)
+                and self._wake_generations.get(device_id) is wake and _device_ws(device_id) is ws):
+            registry.set_state(device_id, "idle")
 
     async def stop_all(self) -> None:
         """Retire media and armed wakes when their active integration is revoked."""
@@ -1224,13 +1252,7 @@ class RealtimeManager:
             raise RuntimeError("transport_teardown_unavailable")
 
     async def stop(self, device_id: str) -> None:
-        session = self._sessions.get(device_id)
-        if session is not None:
-            await session.close()
-        self._preroll.pop(device_id, None)
-        self._speech_preroll.pop(device_id, None)
-        self._cold_wait.discard(device_id)
-        registry.set_state(device_id, "idle")
+        await self._stop_wake(device_id, notify=False)
 
     def can_accept_offer(self, device_id: str) -> bool:
         """Whether an /api/offer for this device_id is tied to a real wake."""

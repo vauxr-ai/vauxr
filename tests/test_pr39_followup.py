@@ -21,6 +21,7 @@ def isolated(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("DEVICE_TOKEN", "test")
     config.reset_config()
     registry.reset()
+    monkeypatch.setattr(realtime_session, "_manager", realtime_session.RealtimeManager())
     yield
     registry.reset()
     config.reset_config()
@@ -30,6 +31,7 @@ async def test_empty_completion_behind_interrupted_audio_end() -> None:
     ws = SimpleNamespace(closed=False, send_str=AsyncMock())
     registry.register("review", ws=ws)
     session = RealtimeSession("review", channel_server=object())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     session._on_bot_started_speaking()
     await session._on_turn_complete(False, "Interrupted answer.")
     session._on_interruption()
@@ -48,6 +50,7 @@ async def test_empty_completion_behind_interrupted_audio_end() -> None:
 
 async def test_delivered_quiet_end_with_intervening_explicit_pause() -> None:
     session = RealtimeSession("review", channel_server=object())
+    realtime_session.get_manager()._sessions[session.device_id] = session
 
     async def send(_data: str) -> None:
         session.set_mic_paused(True)

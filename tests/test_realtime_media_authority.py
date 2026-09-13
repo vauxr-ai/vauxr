@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from importlib.metadata import version
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -17,21 +18,40 @@ from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.transports.base_transport import TransportParams
+from pipecat.transports.smallwebrtc.transport import RawAudioTrack
 
 import auth_connections
 import channel_registry
+import device_registry
 import realtime_llm
 import realtime_session
 import realtime_wyoming
 from channel_server import ChannelServer, _Connection
 from lifecycle import Lifecycle
 from realtime_llm import ChannelLLMService, OutputDrainTap
+from realtime_transport import AudioConsumption
 from tests.test_integration import ORIGIN, ack_body, deliver, env, setup
 
 assert env and setup  # imported enrollment fixtures
 
 
-@pytest.mark.parametrize("response", ["slow", "partial_error", "playing_error", "empty"])
+async def test_raw_audio_future_requires_last_recv():
+    track = RawAudioTrack(24000, auto_silence=False)
+    try:
+        consumed = track.add_audio_bytes(b"\0\0" * 480)
+        assert isinstance(consumed, asyncio.Future)
+        await asyncio.sleep(0)
+        assert not consumed.done()
+        await track.recv()
+        assert not consumed.done()  # The first 10 ms cannot acknowledge 20 ms.
+        await track.recv()
+        assert consumed.done()
+        assert consumed.result() is True
+    finally:
+        track.stop()
+
+
+@pytest.mark.parametrize("response", ["slow", "partial_error", "playing", "playing_error", "empty"])
 @pytest.mark.parametrize("finish", ["revoke", "drain", "retry"])
 async def test_disconnected_media_authority(env, monkeypatch, response, finish):
     service, owner = env
@@ -71,12 +91,16 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
     assert channel_registry.activate(a.channel.id)
     old = realtime_session.RealtimeSession("speaker", server)
     replacement = realtime_session.RealtimeSession("speaker", server)
-    old._send_audio_end = AsyncMock()
+    manager._sessions["speaker"] = old
+    ws = SimpleNamespace(closed=False, send_str=AsyncMock())
+    device_registry.register("speaker", ws=ws)
     old._connection = SimpleNamespace(disconnect=AsyncMock(), audio_input_track=lambda: None)
     replacement._connection = SimpleNamespace(disconnect=AsyncMock(), audio_input_track=lambda: None)
     ready, synthesis, release_tts = asyncio.Event(), asyncio.Event(), asyncio.Event()
     playing, release_output, completed = asyncio.Event(), asyncio.Event(), asyncio.Event()
-    ends = []
+    ends, output_completions = [], []
+    track = RawAudioTrack(24000, auto_silence=False)
+    assert version("pipecat-ai") == "1.9.0"
     original_add = server.add_response_listener
 
     def add(device, listener):
@@ -100,9 +124,9 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
         async def write_audio_frame(self, frame):
             old._on_bot_started_speaking()
             playing.set()
-            await release_output.wait()
+            result = await consumption.write_audio_frame(frame)
             old._on_bot_stopped_speaking()
-            return True
+            return result
 
     llm = ChannelLLMService(device_id="speaker", channel_server=server,
                             turn_complete_factory=old._channel_turn_complete_callback)
@@ -111,6 +135,7 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
     async def push(frame, *args):
         if isinstance(frame, LLMFullResponseEndFrame):
             ends.append(frame)
+            output_completions.append(frame.metadata["vauxr_output_drained"])
         await original_push(frame, *args)
 
     monkeypatch.setattr(llm, "push_frame", push)
@@ -121,9 +146,20 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
         completed.set()
 
     monkeypatch.setattr(old, "_on_turn_complete", complete)
+    output = Output(TransportParams(audio_out_enabled=True, audio_out_sample_rate=24000))
+    # Keep the actual Pipecat serialized output and RawAudioTrack; only omit RTP.
+    adapter = SimpleNamespace(_client=SimpleNamespace(_audio_output_track=track, _can_send=lambda: True))
+    consumption = AudioConsumption(adapter)
+
+    async def receive():
+        await release_output.wait()
+        while True:
+            await track.recv()
+
+    receiver = asyncio.create_task(receive())
     task = PipelineTask(Pipeline([
         llm, realtime_wyoming.WyomingTTSService(),
-        Output(TransportParams(audio_out_enabled=True, audio_out_sample_rate=24000)), OutputDrainTap(),
+        output, OutputDrainTap(consumption.drained),
     ]), params=PipelineParams(audio_out_sample_rate=24000))
     old._task = task
     runner = asyncio.create_task(PipelineRunner(handle_sigint=False).run(task))
@@ -140,7 +176,7 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
         if response != "empty":
             await dispatch("delta", text="Partial A speech. ")
             await asyncio.wait_for(synthesis.wait(), 2)
-        if response == "playing_error":
+        if response in ("playing", "playing_error"):
             release_tts.set()
             await asyncio.wait_for(playing.wait(), 2)
         await dispatch("error" if "error" in response else "end", message="backend failed")
@@ -158,9 +194,24 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
             assert abort in old._channel_media
             assert not abort.is_set()
             assert len(old._pending_ends) == 1
-            old._send_audio_end.assert_not_awaited()
+            ws.send_str.assert_not_awaited()
+            if response in ("playing", "playing_error"):
+                future, = consumption._pending
+                assert isinstance(future, asyncio.Future)
+                assert not future.done()
+                assert abort not in old._drained_media
         assert channel_registry.activate(b.channel.id)
         manager._sessions["speaker"] = replacement
+        device_registry.set_state("speaker", "listening")
+        states = []
+        original_set_state = device_registry.set_state
+
+        def set_state(device_id, state):
+            states.append((device_id, state))
+            original_set_state(device_id, state)
+
+        monkeypatch.setattr(device_registry, "set_state", set_state)
+        ws.send_str.reset_mock()
         await replacement._channel_turn_complete_callback()
         b_abort, = replacement._channel_media
         b_listener = {"on_delta": lambda *args: None, "on_end": lambda *args: None,
@@ -173,7 +224,8 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
                 while abort in old._channel_media:
                     await asyncio.sleep(0)
             assert not old._pending_ends
-            old._send_audio_end.assert_awaited_once_with(False)
+            ws.send_str.assert_not_awaited()
+            assert not consumption._pending
             assert "vauxr_output_drained" not in ends[0].metadata
             assert not abort.is_set()
             old._connection.disconnect.assert_not_awaited()
@@ -187,18 +239,32 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
                     await auth_connections.disconnect_stale(service.store)
                 assert authority in auth_connections._connections
                 assert server._media_turns[abort] == a.channel.id
+                assert abort.is_set()
+                assert not b_abort.is_set()
+                assert not replacement.is_closed
+                replacement._connection.disconnect.assert_not_awaited()
             await auth_connections.disconnect_stale(service.store)
             assert abort.is_set()
             assert old._connection.disconnect.await_count == (2 if finish == "retry" else 1)
         await authority.close()
+        # Replay the real bound completion captured from A's LLM end frame.
+        # It can arrive after drain/teardown and must never complete B's turn.
+        assert output_completions
+        await output_completions[0]()
+        await old._send_audio_end(False)
+        await old._notify_ended()
         assert not old._channel_media
         assert not old._drained_media
         assert abort not in server._media_turns
         assert authority not in auth_connections._connections
+        ws.send_str.assert_not_awaited()
+        assert device_registry.get("speaker").state == "listening"
+        assert states == []
         assert not b_abort.is_set()
         assert server._media_turns[b_abort] == b.channel.id
         assert server.get_response_listener("speaker") is b_listener
         assert manager._sessions["speaker"] is replacement
+        assert not replacement.is_closed
         replacement._connection.disconnect.assert_not_awaited()
         b.ws.close.assert_not_awaited()
         assert ends  # The actual LLM end, including errors, carries the marker.
@@ -211,3 +277,7 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
         await socket.close()
         await asyncio.wait_for(socket_task, 2)
         auth_connections.release(b.authority)
+        receiver.cancel()
+        await asyncio.gather(receiver, return_exceptions=True)
+        track.stop()
+        device_registry.unregister("speaker")

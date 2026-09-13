@@ -11,9 +11,9 @@ from aiohttp.test_utils import TestClient, TestServer
 
 import config as cfg_mod
 import device_registry as dev_reg
+import realtime_session
 from realtime_session import RealtimeManager
 from server import make_app
-
 
 # --- conversation log (record_turn choke point) ---
 
@@ -95,6 +95,7 @@ async def test_empty_timeout_completion_does_not_force_follow_up() -> None:
     dev_reg.register("dev-empty", ws=ws)
     try:
         session = RealtimeSession("dev-empty", channel_server=object())
+        realtime_session.get_manager()._sessions[session.device_id] = session
         await session._on_turn_complete(False, "")
         ends = _audio_ends(ws)
         assert ends
@@ -117,6 +118,7 @@ async def test_idle_interruption_does_not_force_follow_up() -> None:
     dev_reg.register("dev-idle-int", ws=ws)
     try:
         session = RealtimeSession("dev-idle-int", channel_server=object())
+        realtime_session.get_manager()._sessions[session.device_id] = session
         session._on_interruption()
         assert session._user_barged_in is False
         session._bot_stop_credits = 1
@@ -141,6 +143,7 @@ async def test_barge_in_during_reply_keeps_listening() -> None:
     dev_reg.register("dev-barge-int", ws=ws)
     try:
         session = RealtimeSession("dev-barge-int", channel_server=object())
+        realtime_session.get_manager()._sessions[session.device_id] = session
         session._bot_speaking = 1
         session._on_interruption()
         assert session._user_barged_in is True
@@ -163,6 +166,7 @@ def test_turns_suppressed_when_barge_in_disabled(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(dev_reg, "get_config_for", lambda _id: {"barge_in": False})
     session = RealtimeSession("dev-bi", channel_server=object())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     session._awaiting_reply = False
     session._bot_speaking = 1
     assert session._turns_suppressed() is True
@@ -177,6 +181,7 @@ def test_turns_not_suppressed_during_tts_when_barge_in_enabled(
 
     monkeypatch.setattr(dev_reg, "get_config_for", lambda _id: {"barge_in": True})
     session = RealtimeSession("dev-bi", channel_server=object())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     session._awaiting_reply = False
     session._bot_speaking = 1
     assert session._turns_suppressed() is False
@@ -188,6 +193,7 @@ def test_turns_suppressed_when_mic_paused() -> None:
     from realtime_session import RealtimeSession
 
     session = RealtimeSession("dev-pause", channel_server=object())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     assert session._turns_suppressed() is False
     session.set_mic_paused(True)
     assert session._turns_suppressed() is True
@@ -296,13 +302,14 @@ async def test_ws_pipeline_records_turn_into_log(monkeypatch: pytest.MonkeyPatch
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    monkeypatch.setattr(realtime_session, "_manager", realtime_session.RealtimeManager())
     cfg_mod.reset_config()
     monkeypatch.setenv("DEVICE_TOKEN", "ws-test-token")
     monkeypatch.setenv("REALTIME_ENABLED", "1")
     monkeypatch.setenv("REALTIME_HOST", "192.168.1.50")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    from tests.auth_helpers import seed
     from auth_policy import Role
+    from tests.auth_helpers import seed
     seed("ws-test-token", Role.DEVICE, "dev1")
     yield
     cfg_mod.reset_config()
@@ -417,6 +424,7 @@ async def test_text_completion_leaves_barge_in_open_until_late_tts_drain(
     ws = _FakeWs()
     dev_reg.register("dev-drain", ws=ws)
     session = realtime_session.RealtimeSession("dev-drain", channel_server=object())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     try:
         session._awaiting_reply = True
         session._on_bot_started_speaking()
@@ -462,6 +470,7 @@ async def test_late_completion_preserves_explicit_mic_state(paused: bool) -> Non
     from realtime_session import RealtimeSession
 
     session = RealtimeSession("dev-explicit", channel_server=object())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     session.set_mic_paused(paused)
     await session._on_turn_complete(not paused, "")
     assert session._mic_paused is paused
@@ -474,6 +483,7 @@ async def test_completion_after_teardown_does_not_queue_or_send(terminal: str) -
     ws = _FakeWs()
     dev_reg.register("dev-ended", ws=ws)
     session = RealtimeSession("dev-ended", channel_server=object())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     try:
         setattr(session, terminal, True)
         await session._on_turn_complete(False, "Late reply")
@@ -514,6 +524,7 @@ async def test_empty_barge_in_completion_releases_processing_before_old_audio_dr
     ws = _FakeWs()
     dev_reg.register("dev-empty-barge", ws=ws)
     session = RealtimeSession("dev-empty-barge", channel_server=object())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     try:
         old_complete = session._turn_complete_callback()
         session._on_bot_started_speaking()
