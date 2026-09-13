@@ -16,6 +16,7 @@ class Role(StrEnum):
 class Operation(StrEnum):
     DEVICES_LIST = "devices.list"
     DEVICE_CONFIG = "device.configure"
+    SPEECH_CONFIG = "speech.configure"
     ANNOUNCE = "device.announce"
     CONTROL = "device.control"
     PLAYBACK = "device.playback"
@@ -78,6 +79,7 @@ _OWNER = frozenset(
     {
         Operation.DEVICES_LIST,
         Operation.DEVICE_CONFIG,
+        Operation.SPEECH_CONFIG,
         Operation.ANNOUNCE,
         Operation.CONTROL,
         Operation.PLAYBACK,

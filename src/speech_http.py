@@ -1,6 +1,6 @@
 """Speech management API. Authorization is injected by the HTTP composition root.
 
-Future owner/scoped auth plugs in here; device/offer input never sets selections.
+Owner/scoped auth is injected here; device/offer input never sets selections.
 """
 
 from __future__ import annotations
@@ -31,6 +31,9 @@ def attach_speech_routes(app: web.Application, authorize: ManagementAuthorizatio
         for backend, state in zip(result["backends"], states, strict=True):
             backend["readiness"] = state
         return web.json_response(result)
+
+    # The injected callback checks the explicit speech.configure policy before any I/O.
+    settings.authz_boundary = True  # type: ignore[attr-defined]
 
     for path in ("/api/speech", "/api/devices/{device_id}/speech"):
         app.router.add_get(path, settings)

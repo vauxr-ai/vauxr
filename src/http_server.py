@@ -470,8 +470,14 @@ async def serve_firmware(request: web.Request) -> web.StreamResponse:
 
 
 async def _authorize_speech_management(request: web.Request) -> bool:
-    """Legacy management boundary; replace with owner/scoped policy during #45/#49 integration."""
-    return await _bearer_token_valid(request)
+    """PR58 management uses the same fresh owner session and explicit scoped policy."""
+    principal = _http_principal(request)
+    if not allowed(principal, Operation.SPEECH_CONFIG):
+        audit_denial(principal is not None)
+        if principal is not None:
+            raise web.HTTPForbidden(text='{"error": "forbidden"}', content_type="application/json")
+        return False
+    return True
 
 
 def attach_http_routes(app: web.Application) -> None:

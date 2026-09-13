@@ -131,7 +131,8 @@ class OwnerAuth:
             state = self._state()
             if self.override is not None or state.get("mode") == "environment":
                 raise OwnerError("Replace the authoritative OPERATOR_TOKEN environment value and restart; "
-                                 "or remove it and restart, then run recover. Persisted rotation cannot override it.")
+                                 "or remove it and restart, then run recover. "
+                                 "Persisted rotation cannot override it.")
             if not recover and state.get("mode", "unclaimed") != "unclaimed":
                 raise OwnerError("Already claimed; use the explicit recover command")
             code = secrets.token_urlsafe(24)

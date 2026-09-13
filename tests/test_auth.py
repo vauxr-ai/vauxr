@@ -16,6 +16,7 @@ from auth_store import Credential, CredentialStore, verifier
 MATRIX = {
     O.DEVICES_LIST: "oi",
     O.DEVICE_CONFIG: "o",
+    O.SPEECH_CONFIG: "o",
     O.ANNOUNCE: "oi",
     O.CONTROL: "oi",
     O.PLAYBACK: "oi",

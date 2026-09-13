@@ -34,7 +34,8 @@ from openclaw_client import OpenClawClient
 from owner_http import owner_middleware
 from pipeline import run_voice_turn
 from protocol import encode_text_message, parse_text_message
-from speech import Selection, get_store as get_speech_store, resolve
+from speech import Selection, resolve
+from speech import get_store as get_speech_store
 
 log = logging.getLogger("vauxr.server")
 

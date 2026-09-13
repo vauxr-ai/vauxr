@@ -68,7 +68,9 @@ ROUTES = [
 async def test_http_matrix(method, path, grants, outcome, role, key):
     async with TestClient(TestServer(make_http_app())) as client:
         response = await client.request(
-            method, path, headers=owner_headers(client) if role == "owner" else {"Authorization": f"Bearer {role}-secret"}, json={}
+            method, path,
+            headers=owner_headers(client) if role == "owner" else {"Authorization": f"Bearer {role}-secret"},
+            json={},
         )
         assert response.status == (outcome if key in grants else (401 if key == "-" else 403))
         text = await response.text()
@@ -101,6 +103,8 @@ def test_route_inventory_complete():
     }
     expected |= {("GET", "/api/auth/{action}"), ("POST", "/api/auth/{action}"),
                  ("POST", "/api/enrollment/v1/{action}"), ("POST", "/api/lifecycle/v1/{action}")}
+    expected |= {(method, path) for method in ("GET", "PATCH")
+                 for path in ("/api/speech", "/api/devices/{device_id}/speech")}
     assert actual == expected
     assert len(HTTP_OPERATIONS) == len(ROUTES)
 

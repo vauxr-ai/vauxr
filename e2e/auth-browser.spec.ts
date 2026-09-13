@@ -1,7 +1,7 @@
 // Isolated real aiohttp + clean Chromium. Synthetic clients only; no physical hardware.
 import { test, expect } from "@playwright/test";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createServer } from "node:https";
 import { networkInterfaces } from "node:os";
@@ -25,6 +25,11 @@ function consoleCode(recover = false) {
 test.use({ baseURL: origin, trace: "off", screenshot: "off", video: "off" });
 test.beforeAll(async () => {
   data = mkdtempSync(resolve(root, ".browser-test-"));
+  // Synthetic unavailable Wyoming providers exercise selection without model inference.
+  writeFileSync(resolve(data, "speech-providers.json"), JSON.stringify([
+    { id: "parakeet", kind: "stt", adapter: "parakeet-v3", model: "v3", host: "127.0.0.1", port: 1 },
+    { id: "kokoro", kind: "tts", adapter: "kokoro", model: "kokoro-test", host: "127.0.0.1", port: 1, voices: ["af", "bf"] },
+  ]));
   environment = {
     ...process.env,
     PYTHONPATH: resolve(root, "src"),
@@ -396,6 +401,45 @@ test("non-loopback HTTP administration works while browser microphone remains re
   await expect(
     page.getByRole("heading", { name: "Webhooks", exact: true }),
   ).toBeVisible();
+  const speechRequests: { url: string; authorization?: string; csrf?: string }[] = [];
+  page.on("request", request => {
+    if (request.url().endsWith("/speech")) speechRequests.push({
+      url: request.url(), authorization: request.headers()["authorization"],
+      csrf: request.headers()["x-csrf-token"],
+    });
+  });
+  const globalSpeech = page.getByRole("region", { name: "Global speech", exact: true });
+  await expect(globalSpeech.getByLabel("TTS backend")).toBeVisible();
+  await globalSpeech.getByLabel("STT backend").selectOption("parakeet");
+  await expect(globalSpeech.getByLabel("TTS backend")).toBeEnabled();
+  await globalSpeech.getByLabel("TTS backend").selectOption("kokoro");
+  await expect(globalSpeech.getByText("Effective: parakeet / kokoro / af")).toBeVisible();
+  await expect(globalSpeech.getByRole("option", { name: "kokoro · kokoro-test · unavailable" })).toBeAttached();
+  await globalSpeech.getByRole("combobox", { name: /^Voice/ }).selectOption("bf");
+  await expect(globalSpeech.getByText("Effective: parakeet / kokoro / bf")).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(globalSpeech.getByText("Effective: parakeet / kokoro / bf")).toBeVisible();
+  // Serve an offline device projection to expose the existing expandable device card;
+  // speech GET/PATCH still reach the real isolated server and persistent store.
+  await page.route("**/api/devices", route => route.fulfill({ json: [{
+    id: "speech-offline", name: "Speech offline device", state: "idle",
+    lastSeen: new Date().toISOString(), config: {},
+  }] }));
+  await page.getByRole("button", { name: "Devices", exact: true }).click();
+  await page.getByText("Speech offline device", { exact: true }).click();
+  const deviceSpeech = page.getByRole("region", { name: "Device speech", exact: true });
+  await expect(deviceSpeech.getByText("Effective: parakeet / kokoro / bf")).toBeVisible();
+  await expect(deviceSpeech.getByLabel("TTS backend")).toHaveValue("");
+  await deviceSpeech.getByRole("combobox", { name: /^Voice/ }).selectOption("af");
+  await expect(deviceSpeech.getByText("Effective: parakeet / kokoro / af")).toBeVisible();
+  await deviceSpeech.getByLabel("TTS backend").selectOption("piper");
+  await expect(deviceSpeech.getByRole("combobox", { name: /^Voice/ })).not.toContainText("af");
+  await expect(deviceSpeech.getByRole("button", { name: "Reset to defaults" })).toBeEnabled();
+  await deviceSpeech.getByRole("button", { name: "Reset to defaults" }).click();
+  await expect(deviceSpeech.getByText("Effective: parakeet / kokoro / bf")).toBeVisible();
+  expect(speechRequests.length).toBeGreaterThan(6);
+  expect(speechRequests.every(r => r.url.startsWith(lan + "/api/") && !r.authorization && Boolean(r.csrf))).toBe(true);
   await page.getByText("Log out on this browser").click();
   await expect(page.getByRole("main")).toHaveCount(0);
 });

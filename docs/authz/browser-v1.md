@@ -125,31 +125,41 @@ certificate provisioning or warning-clickthrough flow is supplied. See owner-v1
 for exact reverse-proxy configuration. This package uses WS voice and does not
 advertise WebRTC capabilities or consume plaintext realtime offer URLs.
 
-PR58 was inspected read-only at speech branch dd93663 and deployment/GitHub head
-ce45599948a604d0024aca4fa80b119b7a0ea0bf. It adds SpeechSettings inside DevicesPanel
-and SettingsPanel. Preserve those additions when integrating. SpeechSettings' direct
-bearer fetch must become ownerFetch(path, init), with no inferred port or bearer.
-Its GET/PATCH server routes also need explicit operation inventory/policy integration
-with PR55 before release; do not relax auth middleware to accommodate them.
-This package neither imports the speech server implementation nor edits/deploys the
-speech worktrees. #51 owns integration enrollment and its approval UI contract;
-this package manages existing integrations via the frozen lifecycle API.
+PR60 is rebased onto merged PR58 at `8ffc9110f0fefcf285b822e7829dcb345ba6b33f`.
+SpeechSettings remains inside DevicesPanel and SettingsPanel, with global defaults,
+per-device inheritance/reset, model-scoped voices, readiness and effective selection.
+Its requests now use `ownerFetch`, without bearer credentials or an inferred port.
+The required server integration is explicit: both GET/PATCH paths use the new
+owner-only `speech.configure` operation and the existing exact Host/Origin/CSRF
+middleware. This replaces PR58's legacy authorization callback only; speech API
+payloads, provider behavior and persistence do not change. See the route inventory
+and `docs/speech-settings.md`. #51 still owns integration enrollment; this package
+manages existing integrations via the frozen lifecycle API.
 
 
 ## Verification of this package
 
 `npm --prefix web-client run build` and `npm --prefix web-client test -- --run`
-pass (121 tests). The unchanged backend baseline passes 929 tests with two optional
-media skips. Run `cd e2e && npx playwright test auth-browser.spec.ts`: three real
+pass (125 tests). The reconciled backend passes 969 tests with six optional
+Pipecat skips (including restored owner generation/session regression cases). Run `cd e2e && npx playwright test auth-browser.spec.ts`: three real
 Chromium scenarios start isolated aiohttp servers on ports 18080/18765, with a
 throwaway DATA_DIR under this worktree. They cover owner claim/save/login/recovery,
 CSRF/Origin denial, synthetic signed physical pairing, scoped browser identity,
 non-extractable persisted key, device-admin denial, microphone permission denial,
 one active voice tab, offline rotation/save/ACK, revocation/recovery, reload,
 cross-tab logout and credential cleanup. A non-loopback LAN test proves HTTP admin
-with a blocked browser microphone; a separate HTTPS/WSS test rejects an untrusted
+with a blocked browser microphone, global provider/voice changes, persistence across
+reload, and per-device inheritance/override/reset through real speech GET/PATCH.
+The device-list projection in that test is synthetic; speech requests are not mocked. A separate HTTPS/WSS test rejects an untrusted
 certificate without bypass. The latter is rejection evidence, not deployment of
 trusted HTTPS or successful browser media over TLS. Tests disable tracing/video/
 screenshots to avoid recording generated secrets. Physical speaker/microphone,
 real STT/TTS, firmware durable storage, browser/OS power-loss and positive deployed
 trusted-TLS acceptance remain untested. No release/deployment/OTA is implied.
+
+Reconciliation validation used the available Python 3.11.2, not the declared 3.12
+runtime. Chromium required the previously extracted libraries under this worktree's
+`.auth50-runtime/usr/lib/x86_64-linux-gnu` through `LD_LIBRARY_PATH`; no global
+packages or services were changed. The historical `channels.spec.ts` exercises
+removed shared-token create/export forms and is outside this supported auth-browser
+run; new integration enrollment remains #51.

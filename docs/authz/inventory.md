@@ -12,6 +12,8 @@ configured LAN HTTP or HTTPS origin/Host boundary and explicit local-console pro
 | POST /api/auth/logout | owner contract v1 | owner session + selected-mode transport + exact Host/Origin + CSRF |
 | POST /api/enrollment/v1/{action} | enrollment v1 | configured HTTP/HTTPS; signed client proof or fresh owner/integration control; [exact actions and roles](enrollment-v1.md) |
 | POST /api/lifecycle/v1/{action} | lifecycle v1 | configured HTTP/HTTPS; owner controls, subject-only delivery/ACK; [exact fields and roles](lifecycle-v1.md) |
+| GET/PATCH /api/speech | speech.configure | owner session only; exact Host/Origin; CSRF on PATCH |
+| GET/PATCH /api/devices/{device_id}/speech | speech.configure | owner session only; same boundary, including offline IDs |
 | GET /api/devices | devices.list | owner/integration |
 | PATCH /api/devices/{device_id} | device.configure | owner, including button mapping |
 | POST /api/devices/{device_id}/announce | device.announce | owner/integration |
