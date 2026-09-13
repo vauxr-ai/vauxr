@@ -1,5 +1,12 @@
 # Enrollment and server trust contract v1 (#48)
 
+Current lifecycle extension: [credential lifecycle v1](lifecycle-v1.md) defines
+schema 4 preservation, durable revocation tombstones, bounded rotation/save ACK,
+and explicit same-key/kind enrollment recovery. Earlier package-scoped statements
+below about lifecycle being unimplemented or schema 3 being latest are historical;
+this versioned extension supersedes those statements without changing owner auth
+or ordinary enrollment v1 response fields.
+
 Status: server backend contract frozen for downstream #49/#50/#51 and firmware
 #69. This implementation is stacked on PR55 and PR56. Browser, firmware and
 integration UX, credential lifecycle, deployment and physical acceptance are

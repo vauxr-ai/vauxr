@@ -7,17 +7,21 @@ firmware's esp_peer (RSA cert) to complete the DTLS handshake.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from aiohttp import web
 
-from auth import authenticate
-from auth_policy import Operation, allowed, audit_denial
+import auth_connections
+import channel_registry
+from auth import authenticate, current, get_store
+from auth_policy import Operation, Principal, Role, allowed, audit_denial
 from config import get_config
 from http_server import transport_boundary
 
 log = logging.getLogger("vauxr.realtime")
+_media_authorities: dict[str, list[auth_connections.Connection]] = {}
 
 
 def broaden_aiortc_dtls_ciphers() -> None:
@@ -96,6 +100,13 @@ async def _offer_handler(request: web.Request) -> web.Response:
         log.warning("realtime offer for %s rejected — no active realtime.start", device_id)
         return web.json_response({"error": "No active realtime session"}, status=403)
 
+    active = channel_registry.get_active()
+    dependencies = []
+    if active is not None and active.type == "openclaw":
+        dependencies = [Principal(r.role, r.subject, r.id, r.generation) for r in get_store().records
+                        if r.role == Role.INTEGRATION and r.subject == active.id and get_store().usable(r)]
+        if not dependencies:
+            return web.json_response({"error": "unauthorized"}, status=401)
     try:
         answer = await manager.handle_offer(device_id, body)
     except Exception:  # noqa: BLE001
@@ -105,9 +116,26 @@ async def _offer_handler(request: web.Request) -> web.Response:
         await manager.abort_wake(device_id)
         return web.json_response({"error": "realtime offer failed"}, status=500)
 
+    if not current(principal) or (dependencies and not any(current(p) for p in dependencies)):
+        await manager.stop(device_id)
+        return web.json_response({"error": "unauthorized"}, status=401)
     if answer is None:
         await manager.abort_wake(device_id)
         return web.json_response({"error": "No SDP answer"}, status=500)
+    close_lock = asyncio.Lock()
+
+    async def close_revoked() -> None:
+        async with close_lock:
+            if _media_authorities.get(device_id) is authorities:
+                await manager.stop(device_id)
+                _media_authorities.pop(device_id, None)
+                for retained in authorities:
+                    auth_connections.release(retained)
+
+    for previous in _media_authorities.pop(device_id, []):
+        auth_connections.release(previous)
+    authorities = [auth_connections.retain(p, close_revoked) for p in (principal, *dependencies)]
+    _media_authorities[device_id] = authorities
     return web.json_response(answer)
 
 

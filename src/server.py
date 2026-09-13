@@ -15,6 +15,7 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
+import auth_connections
 import channel_registry
 import device_registry as registry
 from auth import authenticate, current, get_store
@@ -48,6 +49,7 @@ class ConnectionCtx:
     state: ConnectionState = ConnectionState.IDLE
     device_id: str | None = None
     principal: Principal | None = None
+    authority: auth_connections.Connection | None = None
     audio_chunks: list[bytes] = field(default_factory=list)
     output_sample_rate: int | None = None
     # Realtime (WebRTC) hybrid: armed on realtime.start, cleared on
@@ -163,6 +165,19 @@ async def _authorize_message(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg:
             return False
         ctx.principal = principal
         ctx.device_id = resource
+
+        async def close_revoked() -> None:
+            live = registry.get(ctx.device_id)
+            if live is None or live.ws is ws:
+                registry.abort_active_turn(ctx.device_id)
+                registry.unregister(ctx.device_id, ws)
+                if ctx.realtime:
+                    from realtime_session import get_manager
+
+                    await get_manager().stop(ctx.device_id)
+            await ws.close()
+
+        ctx.authority = auth_connections.retain(principal, close_revoked)
     return True
 
 
@@ -409,6 +424,9 @@ async def _realtime_start(
     # Cold wake: arm WS pre-roll and wait for the device-VAD voice.end marker.
     # A stale session from a dropped peer must be cleared first.
     await manager.stop(device_id)
+    if not current(ctx.principal):
+        await ws.close()
+        return
     manager.begin_preroll(device_id)
     registry.set_state(device_id, "listening")
     await send_json(ws, {"type": "ready"})
@@ -498,6 +516,7 @@ async def device_ws_handler(request: web.Request) -> web.WebSocketResponse:
             elif msg.type == WSMsgType.ERROR:
                 log.warning("ws error: %s", ws.exception())
     finally:
+        auth_connections.release(ctx.authority)
         log.info("device disconnected: %s", ctx.device_id or "unknown")
         if ctx.device_id:
             live = registry.get(ctx.device_id)

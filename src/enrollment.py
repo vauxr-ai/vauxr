@@ -65,6 +65,15 @@ class Enrollment:
         """Persist trust/authority invalidation even if no old request is examined."""
         with self.store.transaction():
             self._state()
+            # Migrate retained consumed v1 evidence before enrollment pruning.
+            from lifecycle import Lifecycle
+
+            lifecycle = Lifecycle(self.store, self.origin)
+            for row in self.store.enrollment.get("requests", {}).values():
+                if row["state"] == "consumed":
+                    lifecycle.bind_enrollment(row)
+            if self.store.lifecycle:
+                self.store.replace(self.store.records)
 
     def rate_limit(self) -> None:
         """Charge before parsing even malformed HTTP bodies; global, durable, bounded."""
@@ -176,6 +185,9 @@ class Enrollment:
             principal = None
             if action in ("initiate", "approve", "deny"):
                 principal = self._controller(resolve, row["kind"])
+                if (row["device_id"] in self.store.lifecycle.get("recovery", {})
+                        and principal.role != Role.OWNER):
+                    raise EnrollmentError("forbidden")
             status = self._status(row)
             if action == "status":
                 # A terminal status is readable with the key; never exposes code/token.
@@ -219,6 +231,16 @@ class Enrollment:
                 self._unowned(row)
                 token = "vx_dev_" + secrets.token_urlsafe(32)
                 credential = Credential(secrets.token_hex(16), Role.DEVICE, row["device_id"], verifier(token))
+                from lifecycle import Lifecycle
+
+                Lifecycle(self.store, self.origin).bind_enrollment(row)
+                recovery = self.store.lifecycle["recovery"].get(row["device_id"])
+                extra = {}
+                if recovery:
+                    operation = self.store.lifecycle["operations"][recovery["operation_id"]]
+                    operation.update(state="delivered", credential_id=credential.id,
+                                     overlap_until=operation["expires_at"])
+                    extra = {"operation_id": recovery["operation_id"], "save_required": True}
                 row["state"] = "consumed"
                 self.store.save_enrollment(state, (*self.store.records, credential))
                 log.info("enrollment consumed")
@@ -228,6 +250,7 @@ class Enrollment:
                     "device_id": row["device_id"],
                     "credential_id": credential.id,
                     "device_token": token,
+                    **extra,
                 }
             elif action in ("cancel", "deny"):
                 row["state"] = "cancelled" if action == "cancel" else "denied"
@@ -254,8 +277,20 @@ class Enrollment:
         if len(self.store.records) >= 1024:
             raise EnrollmentError("capacity")
         # Disabled records count too. No overwrite, rotation or reset side effect.
-        if any(record.subject == row["device_id"] for record in self.store.records):
-            raise EnrollmentError("already_owned")
+        if (any(record.subject == row["device_id"] for record in self.store.records)
+                or row["device_id"] in self.store.lifecycle.get("bindings", {})):
+            recovery = self.store.lifecycle.get("recovery", {}).get(row["device_id"])
+            binding = self.store.lifecycle.get("bindings", {}).get(row["device_id"])
+            operation = self.store.lifecycle.get("operations", {}).get(
+                recovery["operation_id"] if recovery else "", {}
+            )
+            if (not recovery or binding != {"public_key": row["public_key"], "kind": row["kind"]}
+                    or operation.get("state") not in ("queued", "pending")
+                    or operation["expires_at"] <= time.time()
+                    or operation["owner_generation"] != self.store.owner.get("generation")
+                    or operation["origin"] != self.origin
+                    or recovery["request_id"] not in ("", row["request_id"])):
+                raise EnrollmentError("already_owned")
 
     def _request(self, state: dict, body: dict) -> dict:
         if (
@@ -299,6 +334,12 @@ class Enrollment:
             for other in state["requests"].values()
         ):
             raise EnrollmentError("conflict")
+        recovery = self.store.lifecycle.get("recovery", {}).get(row["device_id"])
+        if recovery:
+            # Copy before mutation; the enrollment save commits both namespaces.
+            self.store.lifecycle = copy.deepcopy(self.store.lifecycle)
+            self.store.lifecycle["recovery"][row["device_id"]]["request_id"] = row["request_id"]
+            self.store.lifecycle["operations"][recovery["operation_id"]]["state"] = "pending"
         state["requests"][row["request_id"]] = row
         self.store.save_enrollment(state)
         log.info("enrollment challenge created")

@@ -1,4 +1,4 @@
-"""Shared credential, owner and enrollment snapshot (schema versions 1 through 3).
+"""Shared credential, owner and enrollment snapshot (schema versions 1 through 4).
 
 Only high-entropy generated bearer tokens are supported by this verifier schema.
 No plaintext credentials, legacy-token imports, or automatic enrollment.
@@ -20,6 +20,7 @@ from pathlib import Path
 
 from auth_policy import Principal, Role
 from enrollment_schema import validate_enrollment
+from lifecycle_schema import validate_lifecycle
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 
@@ -127,6 +128,7 @@ class CredentialStore:
         self.records: tuple[Credential, ...] = ()
         self.owner: dict = {}
         self.enrollment: dict = {}
+        self.lifecycle: dict = {}
         self._lock = threading.RLock()
         self._transaction_active = False
         self.load()
@@ -147,6 +149,7 @@ class CredentialStore:
     def load(self) -> None:
         self.owner = {}
         self.enrollment = {}
+        self.lifecycle = {}
         self.records = ()  # A failed reload never leaves stale access active.
         if not self.path.exists():
             return
@@ -156,17 +159,22 @@ class CredentialStore:
                 data = json.load(stream)
             if (
                 not isinstance(data, dict)
-                or (set(data) != {"version", "credentials"} if data.get("version") == 1
-                 else set(data) != ({"version", "credentials", "owner", "enrollment"}
-                                   if data.get("version") == 3 else {"version", "credentials", "owner"}))
+                or set(data) != ({1: {"version", "credentials"},
+                                  2: {"version", "credentials", "owner"},
+                                  3: {"version", "credentials", "owner", "enrollment"},
+                                  4: {"version", "credentials", "owner", "enrollment", "lifecycle"}}
+                                 .get(data.get("version"), set()))
                 or type(data["version"]) is not int
-                or data["version"] not in (1, 2, 3)
+                or data["version"] not in (1, 2, 3, 4)
             ):
                 raise ValueError
             records = tuple(Credential(**{**row, "role": Role(row["role"])}) for row in data["credentials"])
             self._validate(records)
             validate_owner_state(data.get("owner", {}))
             validate_enrollment(data.get("enrollment", {}))
+            validate_lifecycle(data.get("lifecycle", {}))
+            if data["version"] == 4 and not data["lifecycle"]:
+                raise ValueError("Invalid lifecycle state")
             if data["version"] == 3 and not data["enrollment"]:
                 raise ValueError("Invalid enrollment state")
         except (ValueError, TypeError, KeyError):
@@ -176,6 +184,7 @@ class CredentialStore:
             raise ValueError("Invalid credential store")  # noqa: TRY004
         self.owner = owner
         self.enrollment = data.get("enrollment", {})
+        self.lifecycle = data.get("lifecycle", {})
         self.records = records
 
     @contextmanager
@@ -237,9 +246,12 @@ class CredentialStore:
                 raise ValueError("Credential IDs are immutable; replacement requires a new ID")
         validate_owner_state(self.owner)
         validate_enrollment(self.enrollment)
+        validate_lifecycle(self.lifecycle)
         payload = {"version": 2, "credentials": [asdict(r) for r in records], "owner": self.owner}
         if self.enrollment:
             payload.update(version=3, enrollment=self.enrollment)
+        if self.lifecycle:
+            payload.update(version=4, enrollment=self.enrollment, lifecycle=self.lifecycle)
         try:
             atomic_private_json(self.path, payload)
         except OSError:
@@ -257,14 +269,31 @@ class CredentialStore:
         except UnicodeError:
             return None
         for record in self.records:
-            if hmac.compare_digest(digest, record.verifier) and record.enabled:
+            if hmac.compare_digest(digest, record.verifier) and self.usable(record):
                 return Principal(record.role, record.subject, record.id, record.generation)
         return None
 
     def current(self, principal: Principal | None) -> bool:
         return principal is not None and any(
-            r.enabled
-            and (r.id, r.role, r.subject) == (principal.credential_id, principal.role, principal.subject)
+            (r.id, r.role, r.subject) == (principal.credential_id, principal.role, principal.subject)
             and r.generation == principal.credential_generation
+            and self.usable(r)
             for r in self.records
         )
+
+    def usable(self, record: Credential) -> bool:
+        """Tombstones override even exact restored records; pending delivery is deadline bound."""
+        import time
+
+        if not record.enabled or record.verifier in self.lifecycle.get("blocked", []):
+            return False
+        for row in self.lifecycle.get("operations", {}).values():
+            if (row["state"] == "delivered" and row["overlap_until"] <= time.time()
+                    and record.id in row["old_ids"]):
+                return False
+            if row["credential_id"] == record.id and row["action"] in ("rotate", "recover"):
+                if row["state"] in ("expired", "revoked"):
+                    return False
+                if row["state"] == "delivered" and row["overlap_until"] <= time.time():
+                    return False
+        return True
