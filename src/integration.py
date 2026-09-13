@@ -48,7 +48,10 @@ class Integration:
     def sweep(self) -> None:
         with self.store.transaction():
             state = copy.deepcopy(self.store.integration) or empty_state()
-            changed = False
+            changed = bool(state["active_channel"]) and not any(
+                row["channel_id"] == state["active_channel"] and self.store.integration_channel_valid(row)
+                for row in state["requests"].values()
+            )
             for row in state["requests"].values():
                 if row["state"] == "completed":
                     matching = [r for r in self.store.records if r.subject == row["channel_id"]]

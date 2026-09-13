@@ -273,6 +273,13 @@ class CredentialStore:
             from enrollment import EnrollmentError
 
             raise EnrollmentError("capacity")
+        # Selection and credential retirement must share the same atomic snapshot.
+        if self.integration.get("active_channel") and not any(
+            row["channel_id"] == self.integration["active_channel"]
+            and self.integration_channel_valid(row, records)
+            for row in self.integration["requests"].values()
+        ):
+            self.integration = {**self.integration, "active_channel": ""}
         payload = {"version": 2, "credentials": [asdict(r) for r in records], "owner": self.owner}
         if self.enrollment:
             payload.update(version=3, enrollment=self.enrollment)
@@ -289,6 +296,13 @@ class CredentialStore:
             self.load()
             raise
         self.records = records
+
+    def integration_channel_valid(self, row: dict, records: tuple[Credential, ...] | None = None) -> bool:
+        """Completed enrollment with current authority, including rotated replacements."""
+        return bool(row["credential_id"]) and row["state"] == "completed" and any(
+            record.role == Role.INTEGRATION and record.subject == row["channel_id"] and self.usable(record)
+            for record in (self.records if records is None else records)
+        )
 
     def authenticate(self, token: object) -> Principal | None:
         if not isinstance(token, str) or not token or len(token) > 512:

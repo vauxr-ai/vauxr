@@ -2,6 +2,8 @@
 
 import copy
 import json
+import os
+import stat
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -360,7 +362,9 @@ async def test_http_owner_csrf_native_boundary_and_no_cors(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize("action", ["rotate", "revoke"])
-async def test_retiring_channel_connected_before_activation_tears_down_dependents(env, monkeypatch, action):
+async def test_retiring_channel_connected_before_activation_tears_down_dependents(
+    env, monkeypatch, action, alternate_channel
+):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
@@ -395,6 +399,11 @@ async def test_retiring_channel_connected_before_activation_tears_down_dependent
             lifecycle.execute("ack", {"operation_id": control["operation_id"], "saved": True},
                               lambda: service.store.authenticate(replacement["credential"]))
             assert service.store.authenticate(replacement["credential"])
+        if action == "revoke":
+            assert channel_registry.get_active().id == alternate_channel.id
+            server.add_response_listener("alternate-speaker", {"on_error": lambda *args: errors.append(args)})
+            monkeypatch.setattr(device_registry, "get_all", lambda: [
+                SimpleNamespace(id="speaker"), SimpleNamespace(id="alternate-speaker")])
         await auth_connections.disconnect_stale(service.store)
         socket.close.assert_awaited_once()
         assert errors == [("speaker", "integration_revoked")]
@@ -402,3 +411,220 @@ async def test_retiring_channel_connected_before_activation_tears_down_dependent
         assert not server.is_active_connected()
     finally:
         auth_connections.release(connection.authority)
+
+
+@pytest.fixture
+def alternate_channel(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    config.reset_config()
+    channel_registry._reset_for_tests()
+    channel = channel_registry.Channel("alternate", "Alternate", "openclaw", "", True, "")
+    channel_registry._set_active_for_tests(channel)
+    yield channel
+    channel_registry._reset_for_tests()
+    config.reset_config()
+
+
+def assert_retired_routing(service, channel_id, alternate):
+    assert service.store.integration["active_channel"] == ""
+    assert CredentialStore(service.store.path).integration["active_channel"] == ""
+    assert channel_registry.get_by_id(channel_id) is None
+    assert channel_id not in {c.id for c in channel_registry.get_all()}
+    assert channel_registry.get_active().id == alternate.id
+    assert next(c for c in channel_registry.get_all() if c.id == alternate.id).active
+    assert not channel_registry.activate(channel_id)
+    assert channel_registry.get_active().id == alternate.id
+
+
+def test_owner_revoke_clears_selection_before_sweep_and_restart(env, alternate_channel):
+    service, owner = env
+    body, _, result = deliver(env)
+    service.execute("ack", ack_body(body, result))
+    assert channel_registry.activate(result["channel_id"])
+    assert channel_registry.get_active().id == result["channel_id"]
+    assert not next(c for c in channel_registry.get_all() if c.id == alternate_channel.id).active
+    Lifecycle(service.store, ORIGIN).execute("revoke", {
+        "operation_id": "d" * 32, "role": "integration", "subject": result["channel_id"]}, owner)
+    assert_retired_routing(service, result["channel_id"], alternate_channel)
+    service.sweep()
+    service.store = CredentialStore(service.store.path)
+    assert service.store.integration["requests"][body["request_id"]]["state"] == "revoked"
+    assert_retired_routing(service, result["channel_id"], alternate_channel)
+
+
+@pytest.mark.parametrize("cause", ["expiry", "origin", "owner", "revoked"])
+@pytest.mark.parametrize("after", [False, True])
+def test_retirement_and_selection_clear_are_one_atomic_write(env, alternate_channel, monkeypatch, cause, after):
+    service, _ = env
+    body, _, result = deliver(env)
+    # Reproduce the old version's selected, credential-bearing unfinished row.
+    payload = json.loads(service.store.path.read_text())
+    payload["integration"]["active_channel"] = result["channel_id"]
+    auth_store.atomic_private_json(service.store.path, payload)
+    service.store.load()
+    if cause == "expiry":
+        monkeypatch.setattr(integration.time, "time", lambda: body["expires_at"])
+    elif cause == "origin":
+        service.origin = "http://changed.example"
+    elif cause == "owner":
+        payload["owner"]["generation"] = "b" * 32
+        auth_store.atomic_private_json(service.store.path, payload)
+    elif cause == "revoked":
+        payload["lifecycle"] = Lifecycle(service.store, ORIGIN)._state()
+        payload["lifecycle"]["blocked"].append(auth_store.verifier(result["credential"]))
+        auth_store.atomic_private_json(service.store.path, payload)
+    before = service.store.path.read_text()
+    save = auth_store.atomic_private_json
+
+    def fail(path, value):
+        if after:
+            save(path, value)
+        raise OSError("synthetic durable store failure")
+
+    monkeypatch.setattr(auth_store, "atomic_private_json", fail)
+    with pytest.raises(OSError, match="synthetic"):
+        service.sweep()
+    disk = CredentialStore(service.store.path)
+    assert service.store.integration == disk.integration
+    assert service.store.lifecycle == disk.lifecycle
+    assert service.store.records == disk.records
+    if not after:
+        assert service.store.path.read_text() == before
+    else:
+        assert disk.integration["active_channel"] == ""
+        assert not disk.authenticate(result["credential"])
+        assert disk.integration["requests"][body["request_id"]]["state"] in {"expired", "stale", "revoked"}
+    monkeypatch.setattr(auth_store, "atomic_private_json", save)
+    service.sweep()
+    expected = {"expiry": "expired", "origin": "stale", "owner": "stale", "revoked": "revoked"}[cause]
+    assert service.store.integration["requests"][body["request_id"]]["state"] == expected
+    assert not service.store.authenticate(result["credential"])
+    assert_retired_routing(service, result["channel_id"], alternate_channel)
+
+
+@pytest.mark.parametrize("state", sorted(integration.TERMINAL - {"completed"}) + ["pending", "approved", "delivered"])
+def test_invalid_credential_bearing_rows_cannot_displace_valid_selection(env, state):
+    service, _ = env
+    good_body, _, good = deliver(env)
+    service.execute("ack", ack_body(good_body, good))
+    assert channel_registry.activate(good["channel_id"])
+    body, _, invalid = deliver(env, 2)
+    with service.store.transaction():
+        service.store.integration["requests"][body["request_id"]]["state"] = state
+        # Even an enabled credential does not make an unfinished/terminal row routable.
+        service.store.replace(tuple(replace(r, enabled=True) for r in service.store.records))
+    before = service.store.path.read_text()
+    assert channel_registry.get_by_id(invalid["channel_id"]) is None
+    assert not channel_registry.activate(invalid["channel_id"])
+    assert not channel_registry._activate_integration(invalid["channel_id"])
+    assert service.store.path.read_text() == before
+    assert channel_registry.get_active().id == good["channel_id"]
+
+
+@pytest.mark.parametrize("invalidity", ["disabled", "blocked"])
+def test_completed_row_requires_current_authority(env, alternate_channel, invalidity):
+    service, _ = env
+    body, _, result = deliver(env)
+    service.execute("ack", ack_body(body, result))
+    assert channel_registry.activate(result["channel_id"])
+    with service.store.transaction():
+        records = service.store.records
+        if invalidity == "blocked":
+            service.store.lifecycle = Lifecycle(service.store, ORIGIN)._state()
+            service.store.lifecycle["blocked"].append(auth_store.verifier(result["credential"]))
+        else:
+            records = tuple(replace(r, enabled=False) if r.id == result["credential_id"] else r for r in records)
+        service.store.replace(records)
+    assert_retired_routing(service, result["channel_id"], alternate_channel)
+
+
+@pytest.mark.parametrize("after_rename", [False, True])
+def test_owner_revoke_fsync_failure_keeps_routing_and_authority_atomic(
+    env, alternate_channel, monkeypatch, after_rename
+):
+    service, owner = env
+    body, _, result = deliver(env)
+    service.execute("ack", ack_body(body, result))
+    assert channel_registry.activate(result["channel_id"])
+    before = service.store.path.read_bytes()
+    fsync = os.fsync
+
+    def fail(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode) == after_rename:
+            raise OSError("synthetic fsync failure")
+        fsync(fd)
+
+    control = {"operation_id": "d" * 32, "role": "integration", "subject": result["channel_id"]}
+    with monkeypatch.context() as patch:
+        patch.setattr(auth_store.os, "fsync", fail)
+        with pytest.raises(OSError, match="synthetic fsync"):
+            Lifecycle(service.store, ORIGIN).execute("revoke", control, owner)
+    disk = CredentialStore(service.store.path)
+    assert service.store.integration == disk.integration
+    assert service.store.lifecycle == disk.lifecycle
+    assert service.store.records == disk.records
+    assert not list(service.store.path.parent.glob(".auth-*"))
+    if after_rename:
+        assert not disk.authenticate(result["credential"])
+        assert disk.lifecycle["operations"][control["operation_id"]]["state"] == "revoked"
+        assert_retired_routing(service, result["channel_id"], alternate_channel)
+    else:
+        assert service.store.path.read_bytes() == before
+        assert disk.authenticate(result["credential"])
+        assert channel_registry.get_active().id == result["channel_id"]
+    Lifecycle(service.store, ORIGIN).execute("revoke", control, owner)
+    assert_retired_routing(service, result["channel_id"], alternate_channel)
+
+
+@pytest.mark.parametrize("finish", ["ack", "overlap_expiry", "queued_expiry"])
+def test_rotation_preserves_valid_routing_and_retires_only_unusable_channel(
+    env, alternate_channel, monkeypatch, finish
+):
+    service, owner = env
+    body, _, result = deliver(env)
+    service.execute("ack", ack_body(body, result))
+    channel_id = result["channel_id"]
+    assert channel_registry.activate(channel_id)
+    life = Lifecycle(service.store, ORIGIN)
+    control = {"operation_id": "a" * 32, "role": "integration", "subject": channel_id}
+    queued = life.execute("rotate", control, owner)
+
+    def assert_selected():
+        service.sweep()
+        assert service.store.integration["requests"][body["request_id"]]["state"] == "completed"
+        assert CredentialStore(service.store.path).integration["active_channel"] == channel_id
+        assert channel_registry.get_active().id == channel_id
+        assert channel_registry.activate(channel_id)
+
+    assert_selected()
+    original = lambda: service.store.authenticate(result["credential"])
+    if finish == "queued_expiry":
+        monkeypatch.setattr(integration.time, "time", lambda: queued["expires_at"])
+        life.sweep()
+        assert original()
+        assert_selected()
+        return
+    life.execute("poll", {}, original)
+    rotated = life.execute("deliver", {"operation_id": control["operation_id"]}, original)
+    assert_selected()
+    replacement = lambda: service.store.authenticate(rotated["credential"])
+    if finish == "overlap_expiry":
+        monkeypatch.setattr(integration.time, "time", lambda: rotated["overlap_until"])
+        # Read-time filtering protects routing before maintenance persists expiry.
+        assert channel_registry.get_active().id == alternate_channel.id
+        assert not channel_registry.activate(channel_id)
+        life.sweep()
+        assert_retired_routing(service, channel_id, alternate_channel)
+        assert not original() and not replacement()
+    else:
+        life.execute("ack", {"operation_id": control["operation_id"], "saved": True}, replacement)
+        life.sweep()
+        assert not original() and replacement()
+        # Enrollment expiry / owner-origin changes do not invalidate a completed row.
+        monkeypatch.setattr(integration.time, "time", lambda: rotated["overlap_until"] + 1)
+        service.origin = "http://changed.example"
+        with service.store.transaction():
+            service.store.save_owner({**service.store.owner, "generation": "b" * 32})
+        service.store = CredentialStore(service.store.path)
+        assert_selected()
+        assert replacement()

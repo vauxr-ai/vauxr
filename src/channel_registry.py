@@ -161,11 +161,12 @@ def get_all() -> list[ChannelPublic]:
         out.append(_public(direct))
     for c in _channels:
         out.append(_public(c))
-    if any(c.active for c in _integration_channels()):
+    integrations = _integration_channels()
+    if any(c.active for c in integrations):
         from dataclasses import replace
 
         out = [replace(c, active=False) for c in out]
-    out.extend(_public(c) for c in _integration_channels())
+    out.extend(_public(c) for c in integrations)
     return out
 
 
@@ -330,11 +331,12 @@ def _integration_channels() -> list[Channel]:
     """Project atomically enrolled routing metadata; never copy credentials to channels.json."""
     from auth import get_store
 
-    state = get_store().integration
+    store = get_store()
+    state = store.integration
     return [Channel(id=row["channel_id"], name=row["display_name"], type="openclaw", tokenHash="",
                     active=state.get("active_channel") == row["channel_id"],
                     createdAt=datetime.fromtimestamp(row["created_at"], tz=UTC).isoformat())
-            for row in state.get("requests", {}).values() if row["credential_id"]]
+            for row in state.get("requests", {}).values() if store.integration_channel_valid(row)]
 
 
 def _activate_integration(channel_id: str) -> bool:
@@ -347,8 +349,11 @@ def _activate_integration(channel_id: str) -> bool:
         state = copy.deepcopy(store.integration)
         if not state:
             return False
-        found = any(r["channel_id"] == channel_id and r["credential_id"]
+        found = any(r["channel_id"] == channel_id and store.integration_channel_valid(r)
                     for r in state["requests"].values())
+        # A row may have been retired since activate() looked it up.
+        if not found and any(r["channel_id"] == channel_id for r in state["requests"].values()):
+            return False
         state["active_channel"] = channel_id if found else ""
         store.integration = state
         try:

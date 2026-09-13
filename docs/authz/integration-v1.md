@@ -134,7 +134,14 @@ configuration/button mappings, channel configuration/listing, webhook configurat
 server management, firmware publication or device impersonation. See the complete
 [route inventory](inventory.md) for transport checks and reserved operations.
 
-Issued channel metadata is projected from the atomic authorization snapshot, with
+Only completed integrations with a currently usable integration credential are
+projected or eligible for explicit activation. Rotation replacements preserve this
+eligibility. Retirement clears the selected integration channel in the same atomic
+write; previously selected legacy/direct routing can then resume. Invalid selections
+left by older snapshots are hidden immediately and cleared by maintenance. Enrollment
+deadlines and owner/origin staleness apply before completion, as before.
+
+Channel metadata is projected from the atomic authorization snapshot, with
 no bearer copied into channels.json. Enrollment does not automatically activate a
 channel. The owner selects it through the existing channel activation route. The
 client sends `{"type":"channel.auth","token":"<saved credential>"}` on the

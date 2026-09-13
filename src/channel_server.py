@@ -55,6 +55,7 @@ class ChannelServer:
     def __init__(self) -> None:
         self._connections: dict[str, _Connection] = {}
         self._response_listeners: dict[str, DeviceResponseListener] = {}
+        self._response_channels: dict[str, str] = {}
 
     # --- Pipeline-facing API ---
 
@@ -100,6 +101,8 @@ class ChannelServer:
 
     def add_response_listener(self, device_id: str, listener: DeviceResponseListener) -> None:
         self._response_listeners[device_id] = listener
+        active = channel_registry.get_active()
+        self._response_channels[device_id] = active.id if active else ""
 
     def remove_response_listener(
         self, device_id: str, listener: DeviceResponseListener | None = None
@@ -110,6 +113,7 @@ class ChannelServer:
         if listener is not None and self._response_listeners.get(device_id) is not listener:
             return
         self._response_listeners.pop(device_id, None)
+        self._response_channels.pop(device_id, None)
 
     def get_response_listener(self, device_id: str) -> DeviceResponseListener | None:
         return self._response_listeners.get(device_id)
@@ -204,8 +208,12 @@ class ChannelServer:
                 if self._connections.get(channel.id) is conn:
                     self._connections.pop(channel.id, None)
                     active = channel_registry.get_active()
-                    if active is not None and active.id == channel.id:
-                        for device_id, listener in list(self._response_listeners.items()):
+                    # Routing may already have fallen back after atomic retirement.
+                    # Retain the turn's channel independently of the current selection.
+                    dependents = {device_id: listener for device_id, listener in self._response_listeners.items()
+                                  if self._response_channels.get(device_id) == channel.id}
+                    if dependents or (active is not None and active.id == channel.id):
+                        for device_id, listener in dependents.items():
                             async def notify(device_id=device_id, listener=listener) -> None:
                                 listener["on_error"](device_id, "integration_revoked")
 
@@ -214,6 +222,8 @@ class ChannelServer:
                         from config import get_config
 
                         for device in device_registry.get_all():
+                            if device.id not in dependents and (active is None or active.id != channel.id):
+                                continue
                             device_registry.abort_active_turn(device.id)
                             if get_config().realtime.enabled:
                                 from realtime_session import get_manager
