@@ -7,7 +7,7 @@ and follow_up handling work unchanged.
 
 Cold wake: the command spoken right after the wake word is streamed over the
 always-on WS while WebRTC connects. On the device-VAD ``voice.end`` marker the
-server transcribes that buffered PCM (batch Whisper) and either seeds it into
+server transcribes that buffered PCM (batch STT) and either seeds it into
 Pipecat (when WebRTC is connected) or runs the WS turn pipeline (fallback).
 Live follow-up turns use WebRTC audio -> VAD -> STT as normal.
 """
@@ -315,7 +315,7 @@ class RealtimeSession:
             ``min_volume`` gate). Purely diagnostic — passes frames through.
 
             If ``VAUXR_RECORD_DIR`` is set, also writes the decoded inbound PCM to
-            a per-session WAV in that directory so the exact audio Silero/Whisper
+            a per-session WAV in that directory so the exact audio VAD/STT
             see can be played back and inspected for static/clipping/level.
             """
 

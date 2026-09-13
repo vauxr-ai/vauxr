@@ -5,9 +5,12 @@ never endpoint URLs or provider/voice selections. The existing device `voice`
 field remains a **boolean** voice-formatting/enable flag; `voice_id` is a separate
 speech identity. No firmware changes are required.
 
-`src/speech.py` owns the registry, persistence and immutable complete selection.
-The shared Wyoming adapters (`wyoming_stt.py`, `wyoming_tts.py`) own transport and
-wire voice mapping; orchestration never branches on Whisper/Parakeet/Piper/Kokoro.
+`src/speech.py` owns persistence, inheritance and shared selection resolution;
+`speech_models.py` defines provider-neutral deployments and immutable complete
+selections. `speech_catalog.py` owns the bounded server-side adapter catalog,
+legacy deployment defaults and wire voice mapping. `wyoming_protocol.py` owns
+shared events/framing/errors; `wyoming_stt.py` and `wyoming_tts.py` are generic
+transport clients. Orchestration never branches on Whisper/Parakeet/Piper/Kokoro.
 Each backend ID represents **one model deployment**, not a request to load a model.
 Whisper and Parakeet v3 use Wyoming audio/transcript events. Piper and Kokoro use
 Wyoming synthesize with `voice.name` equal to the configured voice ID. Use a
@@ -17,6 +20,24 @@ Wyoming-compatible service configured to serve that model and those wire names.
 
 The built-in IDs `whisper` and `piper` preserve `WHISPER_URL`, `PIPER_URL`, and
 `PIPER_VOICE` behavior and defaults. Without new files, selection is unchanged.
+The internal config fields are `stt` / `tts` (`WyomingEndpoint` /
+`WyomingTTSConfig`). Operators may migrate environment names on restart:
+
+| Preferred name | Legacy fallback | Unchanged default |
+| --- | --- | --- |
+| `STT_URL` | `WHISPER_URL` | `tcp://whisper:10300` |
+| `TTS_URL` | `PIPER_URL` | `tcp://piper:10200` |
+| `TTS_VOICE` | `PIPER_VOICE` | `en_US-libritts_r-medium` |
+
+A nonempty preferred value wins; an empty or unset value uses the legacy value,
+then the default. These are server environment settings only. Migrating env
+names preserves the built-in IDs and existing `speech-settings.json` selections;
+no persisted file rewrite is required. Those IDs remain legacy catalog slots,
+not inference-time model selectors. To describe a different deployment accurately,
+add a catalog entry with its own opaque ID/model label and select it through the
+existing settings API/UI. Changing or removing an explicitly selected voice
+continues to fail resolution until settings are updated.
+
 Additional endpoints are declared in `DATA_DIR/speech-providers.json` (restart to
 reload). The file is operator-owned, never writable through HTTP. Example:
 
@@ -50,6 +71,13 @@ reload). The file is operator-owned, never writable through HTTP. Example:
   }
 ]
 ```
+
+The catalog also accepts `"adapter": "wyoming"` for either kind when the
+operator's service implements the same audio/transcript or synthesize/voice.name
+contract. This does not add another protocol or dynamically load adapter code.
+The resolver initializes an unpersisted store from its first STT and first TTS
+entries; the catalog supplies legacy entries first to preserve default behavior.
+Neither IDs nor model labels are interpreted by routing code.
 
 These are illustrative deployment names, not provisioned services. At most 32
 backends total (including the two built-ins); IDs must be unique. Multiple model
@@ -135,7 +163,10 @@ Readiness sends Wyoming `describe` and checks for the appropriate ASR/TTS
 capability in `info`, with a two-second bound and bounded response buffer. It is
 an on-demand protocol check, not proof that a model is loaded, a configured voice
 exists on the remote service, or inference will succeed. Outages/timeouts are
-shown as unavailable. Connection/read timeouts also bound the shared clients.
+shown as unavailable. Connection/read timeouts also bound the shared clients. Explicit Wyoming `error`
+events fail immediately with a shared `WyomingError` (a `RuntimeError` subclass),
+without exposing the remote error payload or waiting for the peer to disconnect.
+Premature EOF uses the same error class.
 
 `realtime_wyoming` still buffers **the entire TTS segment** before passing PCM to
 Pipecat. WS synthesis streams received PCM. This feature does not redesign

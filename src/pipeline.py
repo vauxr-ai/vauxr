@@ -430,7 +430,7 @@ async def run_text_turn(
     send_audio_end: Callable[[bool], Awaitable[None]] | None = None,
 ) -> None:
     """Drive a turn from already-known user text (no STT). Used by voice turns
-    after Whisper and by action-button prompt mappings.
+    after STT and by action-button prompt mappings.
     """
     selection = selection or resolve(device_id)
     if send_audio_end is None:

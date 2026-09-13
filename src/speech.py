@@ -8,29 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 from typing import TypedDict
 
 from config import Config, get_config
-
-
-@dataclass(frozen=True)
-class Backend:
-    id: str
-    kind: str
-    adapter: str
-    model: str
-    host: str
-    port: int
-    voices: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class Selection:
-    stt: Backend
-    tts: Backend
-    voice_id: str
+from speech_catalog import load_backends, validate_backend
+from speech_models import Backend, Selection
 
 
 class Settings(TypedDict, total=False):
@@ -46,21 +30,13 @@ class SpeechStore:
         if len(self.backends) != len(backends) or len(backends) > 32:
             raise ValueError("Speech registry needs unique IDs and at most 32 backends")
         for b in backends:
-            allowed = {"stt": {"whisper", "parakeet-v3"}, "tts": {"piper", "kokoro"}}
-            if (
-                b.adapter not in allowed.get(b.kind, set())
-                or not b.id
-                or not b.model
-                or not b.host
-                or type(b.port) is not int
-                or not 1 <= b.port <= 65535
-                or (b.kind == "tts" and not b.voices)
-                or any(not isinstance(v, str) or not v for v in b.voices)
-            ):
-                raise ValueError("Invalid speech backend")
+            validate_backend(b)
+        initial = {kind: next((b.id for b in backends if b.kind == kind), None) for kind in ("stt", "tts")}
+        if initial["stt"] is None or initial["tts"] is None:
+            raise ValueError("Speech registry requires STT and TTS backends")
         self.defaults: Settings = {
-            "stt_backend": "whisper",
-            "tts_backend": "piper",
+            "stt_backend": initial["stt"],
+            "tts_backend": initial["tts"],
             "voices": {b.id: b.voices[0] for b in backends if b.kind == "tts"},
         }
         self.devices: dict[str, Settings] = {}
@@ -75,6 +51,8 @@ class SpeechStore:
         override = self.devices.get(device_id, {})
         stt = self.backends[override.get("stt_backend", self.defaults["stt_backend"])]
         tts = self.backends[override.get("tts_backend", self.defaults["tts_backend"])]
+        if stt.kind != "stt" or tts.kind != "tts":
+            raise ValueError("Selected backend has incompatible speech kind")
         voice = override.get("voices", {}).get(tts.id, self.defaults["voices"].get(tts.id, tts.voices[0]))
         if voice not in tts.voices:
             raise ValueError("Selected voice is no longer configured")
@@ -146,18 +124,7 @@ def get_store() -> SpeechStore:
     cfg = get_config()
     directory = Path(cfg.data_dir)
     if _store is None or _store_config is not cfg:
-        backends = [
-            Backend("whisper", "stt", "whisper", "legacy-whisper", cfg.whisper.host, cfg.whisper.port),
-            Backend(
-                "piper", "tts", "piper", cfg.piper.voice, cfg.piper.host, cfg.piper.port, (cfg.piper.voice,)
-            ),
-        ]
-        path = directory / "speech-providers.json"
-        if path.exists():
-            for item in json.loads(path.read_text()):
-                item["voices"] = tuple(item.get("voices", []))
-                backends.append(Backend(**item))
-        _store = SpeechStore(directory, tuple(backends))
+        _store = SpeechStore(directory, load_backends(cfg))
         _store_config = cfg
     return _store
 
@@ -168,7 +135,7 @@ def resolve(device_id: str = "") -> Selection:
 
 async def readiness(backend: Backend) -> str:
     """Bounded Wyoming describe probe; not an inference or hardware benchmark."""
-    from wyoming_stt import WyomingEvent, encode_event, parse_wyoming_events
+    from wyoming_protocol import WyomingEvent, encode_event, parse_wyoming_events
 
     writer = None
     try:

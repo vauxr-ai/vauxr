@@ -1,4 +1,4 @@
-"""Wyoming TTS client (Piper).
+"""Wyoming TTS client.
 
 Port of `src/wyoming-tts.ts`. Streams synthesized PCM back as it arrives,
 optionally resampling to a device-specific output rate via cascaded biquad
@@ -14,7 +14,8 @@ import struct
 from collections.abc import AsyncIterator, Callable
 
 from speech import Selection, resolve
-from wyoming_stt import WyomingEvent, encode_event, parse_wyoming_events
+from speech_catalog import synthesis_event
+from wyoming_protocol import WyomingError, encode_event, parse_wyoming_events
 
 log = logging.getLogger("vauxr.wyoming_tts")
 
@@ -94,7 +95,7 @@ async def synthesize(
     abort_event: asyncio.Event | None = None,
     on_sample_rate: Callable[[int], None] | None = None,
 ) -> AsyncIterator[bytes]:
-    """Stream synthesized PCM from Piper.
+    """Stream synthesized PCM from the selected Wyoming TTS service.
 
     `abort_event` mirrors the AbortSignal used by the Node port — the
     generator stops mid-stream when it fires.
@@ -105,15 +106,11 @@ async def synthesize(
     reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=30)
 
     try:
-        writer.write(
-            encode_event(
-                WyomingEvent(type="synthesize", data={"text": text, "voice": {"name": selection.voice_id}})
-            )
-        )
+        writer.write(encode_event(synthesis_event(text, selection)))
         await writer.drain()
 
         buf = b""
-        piper_rate = 0
+        source_rate = 0
         resample: Callable[[bytes], bytes] | None = None
         sample_rate_fired = False
 
@@ -123,26 +120,28 @@ async def synthesize(
 
             data = await asyncio.wait_for(reader.read(8192), timeout=30)
             if not data:
-                raise RuntimeError("TTS connection closed before audio-stop")
+                raise WyomingError("TTS connection closed before audio-stop")
             buf += data
             events, buf = parse_wyoming_events(buf)
 
             stop = False
             for ev in events:
+                if ev.type == "error":
+                    raise WyomingError("TTS provider returned a Wyoming error")
                 if ev.type == "audio-start" and isinstance(ev.data.get("rate"), (int, float)):
-                    piper_rate = int(ev.data["rate"])
+                    source_rate = int(ev.data["rate"])
                 elif ev.type == "audio-chunk":
-                    if piper_rate == 0 and isinstance(ev.data.get("rate"), (int, float)):
-                        piper_rate = int(ev.data["rate"])
+                    if source_rate == 0 and isinstance(ev.data.get("rate"), (int, float)):
+                        source_rate = int(ev.data["rate"])
                     if ev.payload:
                         # Fire on_sample_rate once, on first chunk we can ship.
-                        if not sample_rate_fired and on_sample_rate is not None and piper_rate:
-                            effective = target_rate if (target_rate and target_rate != piper_rate) else piper_rate
+                        if not sample_rate_fired and on_sample_rate is not None and source_rate:
+                            effective = target_rate if (target_rate and target_rate != source_rate) else source_rate
                             on_sample_rate(effective)
                             sample_rate_fired = True
-                        if target_rate and piper_rate and piper_rate != target_rate:
+                        if target_rate and source_rate and source_rate != target_rate:
                             if resample is None:
-                                resample = _make_resampler(piper_rate, target_rate)
+                                resample = _make_resampler(source_rate, target_rate)
                             yield resample(ev.payload)
                         else:
                             yield ev.payload

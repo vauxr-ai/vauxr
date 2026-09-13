@@ -194,7 +194,8 @@ async def test_cold_realtime_fallback_uses_wake_snapshot(store, monkeypatch):
     assert selection.stt.id == "whisper" and selection.tts.id == "piper"
 
 
-async def test_wyoming_adapter_wire_voice_and_readiness(store):
+@pytest.mark.parametrize("generic", [False, True])
+async def test_wyoming_adapter_wire_voice_and_readiness(store, generic):
     from wyoming_stt import WyomingEvent, encode_event, parse_wyoming_events, transcribe
     from wyoming_tts import synthesize
 
@@ -227,11 +228,16 @@ async def test_wyoming_adapter_wire_voice_and_readiness(store):
     async with await asyncio.start_server(handler, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         selection = store.resolve()
-        selection = replace(selection, tts=replace(store.backends["kokoro"], port=port), voice_id="bf")
+        tts = replace(store.backends["kokoro"], port=port)
+        stt = replace(store.backends["parakeet"], port=port)
+        if generic:
+            tts = replace(tts, id="speaker", adapter="wyoming", model="operator-model")
+            stt = replace(stt, id="recognizer", adapter="wyoming", model="operator-model")
+        selection = replace(selection, tts=tts, voice_id="bf")
         assert await speech.readiness(selection.tts) == "ready"
         assert [b async for b in synthesize("hello", selection=selection)] == [b"\0\0"]
         assert requests[-1]["data"]["voice"] == {"name": "bf"}
-        assert await transcribe([b"\0\0"], backend=replace(store.backends["parakeet"], port=port)) == "test"
+        assert await transcribe([b"\0\0"], backend=stt) == "test"
     assert await speech.readiness(selection.tts) == "unavailable"
     with pytest.raises(OSError):
         await anext(synthesize("hello", selection=selection))
@@ -337,5 +343,32 @@ def test_legacy_environment_and_operator_registry_restart(tmp_path, monkeypatch)
         speech.get_store().update({"tts_backend": "extra"})
         config.reset_config()
         assert speech.resolve().tts == extra
+    finally:
+        config.reset_config()
+
+
+def test_neutral_env_migration_preserves_persisted_legacy_selection(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEVICE_TOKEN", "speech-test")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    values = {
+        "STT_URL": ("WHISPER_URL", "127.0.0.1:13001"),
+        "TTS_URL": ("PIPER_URL", "127.0.0.1:13002"),
+        "TTS_VOICE": ("PIPER_VOICE", "configured-voice"),
+    }
+    for name, (legacy, value) in values.items():
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv(legacy, value)
+    config.reset_config()
+    try:
+        store = speech.get_store()
+        store.update({"tts_backend": "piper", "voices": {"piper": "configured-voice"}}, "a")
+        before = store.resolve("a")
+        persisted = store.path.read_bytes()
+        for name, (legacy, value) in values.items():
+            monkeypatch.setenv(name, value)
+            monkeypatch.delenv(legacy)
+        config.reset_config()
+        assert speech.resolve("a") == before
+        assert speech.get_store().path.read_bytes() == persisted
     finally:
         config.reset_config()

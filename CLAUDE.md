@@ -27,8 +27,12 @@ src/
 ├── device_registry.py # Connected device registry (+ next_seq helper)
 ├── device_config.py   # Per-device config validation
 ├── device_settings.py # Persisted device settings
-├── wyoming_stt.py     # Whisper STT via Wyoming protocol
-├── wyoming_tts.py     # Piper TTS via Wyoming protocol (synthesize())
+├── speech.py          # Shared selection resolver and persisted inheritance
+├── speech_models.py   # Generic deployments and immutable selections
+├── speech_catalog.py  # Server-owned adapters, legacy defaults and voice mapping
+├── wyoming_protocol.py # Shared Wyoming events/framing/errors
+├── wyoming_stt.py     # Configured STT via Wyoming protocol
+├── wyoming_tts.py     # Configured TTS via Wyoming protocol (synthesize())
 ├── protocol.py        # WS message encode/parse + binary frame helpers
 ├── auth.py            # Token validation
 ├── utils.py           # make_binary_frame + shared helpers

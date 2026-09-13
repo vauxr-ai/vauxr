@@ -59,10 +59,10 @@ The core of the stack. A Node.js WebSocket server that:
 
 - Accepts device connections (Vauxr WS protocol)
 - Receives audio chunks from the device
-- Forwards audio to Whisper (Wyoming) for transcription
+- Forwards audio to the selected Wyoming STT deployment for transcription
 - Sends transcript to OpenClaw via native WS protocol (`chat.send`)
 - Subscribes to `chat` events for streaming reply deltas
-- Streams TTS audio back to the device via Piper, flushing buffered
+- Streams TTS audio back to the device via the selected Wyoming TTS deployment, flushing buffered
   text early whenever the agent's delta stream goes idle long enough
   to indicate a real pause (e.g. tool call or reasoning) so playback
   starts before the full reply is generated. Idle threshold is
@@ -161,7 +161,7 @@ All audio is sent as raw binary WebSocket frames with a 3-byte header:
 | Value | Direction | Content |
 |---|---|---|
 | `0x01` | Device → Server | Mic audio — raw PCM 16-bit, 16kHz, mono |
-| `0x02` | Server → Device | TTS audio — raw PCM (from Piper/Wyoming) |
+| `0x02` | Server → Device | TTS audio — raw PCM (from the selected Wyoming TTS deployment) |
 | `0x03` | Server → Device | Proactive push audio — raw PCM |
 
 The sequence number allows the device to detect dropped or reordered frames and discard stale audio.
@@ -219,7 +219,7 @@ stop:     peer close (taper Drop) drives reactive cleanup via _on_disconnected; 
 
 ### Cold-start seeding & per-turn branch
 
-WebRTC takes ~1–2s to negotiate (ICE + DTLS), so on a **cold** wake the device streams the wake-word command as WS `0x01` frames while the peer connects. Seeding is driven by the **device-VAD `voice.end` marker** (stamped with `webrtc_connected`), not by `media_ready` — decoupling it from negotiation timing avoids partial/never-ending first turns. On that marker the server transcribes the buffered utterance once (batch Whisper) and branches:
+WebRTC takes ~1–2s to negotiate (ICE + DTLS), so on a **cold** wake the device streams the wake-word command as WS `0x01` frames while the peer connects. Seeding is driven by the **device-VAD `voice.end` marker** (stamped with `webrtc_connected`), not by `media_ready` — decoupling it from negotiation timing avoids partial/never-ending first turns. On that marker the server transcribes the buffered utterance once (batch Wyoming STT) and branches:
 
 - **WS-only** (`webrtc_connected:false`): feed the utterance through the turn-based WS pipeline (`pipeline.py`). Graceful-degradation path; keeps streaming STT.
 - **Text-seeded realtime** (`webrtc_connected:true`): seed the transcript into Pipecat's `LLMContext` + `LLMRunFrame`, TTS over the WebRTC track. One-time cold→warm handoff.
@@ -271,8 +271,8 @@ vauxr connects to OpenClaw using OpenClaw's **native gateway WebSocket protocol*
 
 vauxr supports two routing modes via a channel registry:
 
-- **openclaw-direct** — vauxr connects outbound to OpenClaw WS (`chat.send` / `chat` events), collects the full reply, then synthesizes via Piper and streams to device
-- **channel plugin** — the `vauxr-openclaw` plugin connects inbound to vauxr's `/channel` WS path, handles LLM routing, and streams response deltas back; vauxr synthesizes via Piper and sends to device
+- **openclaw-direct** — vauxr connects outbound to OpenClaw WS (`chat.send` / `chat` events), collects the full reply, then synthesizes via the selected Wyoming TTS deployment and streams to device
+- **channel plugin** — the `vauxr-openclaw` plugin connects inbound to vauxr's `/channel` WS path, handles LLM routing, and streams response deltas back; vauxr synthesizes via the selected Wyoming TTS deployment and sends to device
 
 Persistent per-device session key: `vauxr:${device_id}`
 
@@ -341,6 +341,9 @@ ESP-IDF component will be published to the ESP-IDF Component Registry. Ports to 
 ## Bounded speech provider selection
 
 Global and per-device STT/TTS/model-scoped voice selection lives in `speech.py`.
+Generic deployment/snapshot models live in `speech_models.py`; the bounded
+server-side catalog and legacy defaults live in `speech_catalog.py`. Shared
+Wyoming framing and errors live in `wyoming_protocol.py`.
 The server owns configured Wyoming endpoints; management clients select IDs only.
 Complete immutable selections are captured at turn start and used across WS,
 WebRTC, announcements and button speech. Shared Wyoming adapters replace the
