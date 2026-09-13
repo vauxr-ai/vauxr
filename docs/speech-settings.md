@@ -197,3 +197,81 @@ streaming, validate GPU operation, benchmark latency, or verify Whisper,
 Parakeet v3, Piper or Kokoro models on hardware. Tests use fake local Wyoming
 peers and mocked inference, including real Pipecat adapter contracts where the
 optional dependency is installed. No live voice service or model is required.
+
+## Optional local CPU services
+
+The `speech-extra` Compose profile adds Parakeet v3 and Kokoro alongside the
+existing Whisper/Piper services. Start just these services:
+
+```sh
+docker compose --profile speech-extra up -d parakeet-v3 kokoro
+```
+
+The images are pinned to the digests verified on 2026-09-13. Parakeet uses
+[OHF-Voice/rhasspy Wyoming Whisper](https://github.com/OHF-Voice/wyoming-faster-whisper)
+with explicit `--stt-library sherpa`,
+`--model sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8`, `--device cpu`,
+`--cpu-threads 4`, and `--language en`. Specifying v3 matters: automatic English
+model selection may choose v2. Its dedicated `/data` cache receives the model
+on first start. The upstream image's Describe healthcheck targets port 10310.
+
+[Kokoro Wyoming](https://github.com/nordwestt/kokoro-wyoming) implements Wyoming
+synthesis, not an OpenAI HTTP API. The pinned image's `--help` verifies `--uri`,
+`--voice`, `--model`, and `--voices`. The wrapper seeds only missing model/voice
+files from `/app/src` into its dedicated `/data` cache, then runs the upstream
+entrypoint with explicit paths. `ONNX_PROVIDER=CPUExecutionProvider` selects CPU
+in the packaged kokoro-onnx implementation. No GPU access is requested or tested.
+Its healthcheck requires a Wyoming Info response with TTS capability.
+
+Both use host networking, loopback listeners (10310/10210), and restart policy
+`unless-stopped`. Cache defaults are `./data/parakeet-v3` and `./data/kokoro`;
+`PARAKEET_CACHE_DIR` / `KOKORO_CACHE_DIR` can point to existing daemon-host paths.
+Keep caches on durable storage. The initial model download can exceed the
+five-minute healthcheck grace period on slow connections; inspect logs and wait
+for readiness before registering. Starting this profile does not register or
+select providers and adds no mandatory gateway dependency.
+
+After checking Describe and actual local inference, merge these objects into the
+**existing** mounted `DATA_DIR/speech-providers.json` array (create it if absent).
+Preserve existing entries, ownership, modes, and all speech settings:
+
+```json
+[
+  {
+    "id": "recognizer-local-01",
+    "kind": "stt",
+    "adapter": "wyoming",
+    "model": "parakeet-tdt-0.6b-v3-int8",
+    "host": "127.0.0.1",
+    "port": 10310
+  },
+  {
+    "id": "speaker-local-01",
+    "kind": "tts",
+    "adapter": "wyoming",
+    "model": "kokoro-82m-v1.0",
+    "host": "127.0.0.1",
+    "port": 10210,
+    "voices": ["af_heart"]
+  }
+]
+```
+
+These IDs are opaque deployment keys; endpoints and wire voice metadata stay on
+the server. `af_heart` was advertised among 54 voices by the pinned Kokoro image
+and verified by synthesis. Restart only Vauxr to reload the registry. Confirm
+all four providers are ready via authenticated `GET /api/speech`, and compare
+current defaults and device overrides with the pre-change snapshot. Registration
+does not change the selected Whisper/Piper defaults or write speech settings.
+
+The local verification synthesized “The quick brown fox jumps over the lazy dog.”
+with Kokoro through the project client, resampled it to mono 16-bit 16 kHz PCM,
+and sent that fixed audio through the project Parakeet Wyoming client. The
+transcript matched exactly. Audio stayed local; no speaker, device, or LLM turn
+was involved. This is a smoke test, not a latency or recognition benchmark.
+
+For service rollback, first restore the prior registry (or remove only the two
+new objects) and restart Vauxr, then stop/remove only `parakeet-v3` and `kokoro`.
+Keep cache directories for recovery. If selections were subsequently changed,
+restore their prior values before removing the catalog entries. Do not run a
+stack-wide `down` or remove Whisper/Piper/data volumes.
