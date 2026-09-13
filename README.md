@@ -50,6 +50,16 @@ do not use host `chown 100:101` for a rootless deployment.
 
 Use the web client or HTTP API at `http://your-server-ip:8080`. Voice devices connect to `ws://your-server-ip:8765`.
 
+## Connecting to OpenClaw
+
+The recommended path is the [vauxr-openclaw](https://github.com/vauxr-ai/vauxr-openclaw) channel plugin, installed from [ClaWHub](https://clawhub.ai):
+
+```bash
+openclaw plugins install clawhub:@vauxr/openclaw
+```
+
+The plugin wires OpenClaw to your Vauxr server and exposes device announcements and controls as agent tools. See the [vauxr-openclaw README](https://github.com/vauxr-ai/vauxr-openclaw) for configuration.
+
 ## Persistent data
 
 Vauxr bind-mounts `./data` beside this Compose file into `/data`. This directory
@@ -69,16 +79,6 @@ Migration is only needed when changing existing named volumes to the new bind mo
 2. **Stop the services.** Run `docker compose stop vauxr piper whisper`, and stop any other containers sharing those volumes or data directories.
 3. **Back up and copy.** Back up any existing `./data/`, then copy the selected sources into a fresh directory with the layout above, preserving ownership and permissions. Leave the separate `./firmware/` and `./recordings/` mounts unchanged. Check that settings and model files copied successfully before replacing `./data/` with the prepared directory.
 4. **Restart and verify.** Run `docker compose up -d --force-recreate vauxr piper whisper`, then check saved devices, channels, and a voice interaction. If anything fails, stop the services and restore the backup or previous volume mounts.
-
-## Connecting to OpenClaw
-
-The recommended path is the [vauxr-openclaw](https://github.com/vauxr-ai/vauxr-openclaw) channel plugin, installed from [ClaWHub](https://clawhub.ai):
-
-```bash
-openclaw plugins install clawhub:@vauxr/openclaw
-```
-
-The plugin wires OpenClaw to your Vauxr server and exposes device announcements and controls as agent tools. See the [vauxr-openclaw README](https://github.com/vauxr-ai/vauxr-openclaw) for configuration.
 
 ## Connecting to other backends
 
