@@ -85,6 +85,27 @@ function RequestRow({ request, busy, act }: {
           <input value={code} autoComplete="off" spellCheck={false} maxLength={8}
             onChange={event => setCode(event.target.value.toUpperCase())} />
         </label>
+        <section aria-label="Integration permissions" className="space-y-2">
+          <p>Approving grants this integration fixed permissions after it acknowledges
+            durable credential save, even while its channel is inactive:</p>
+          <ul className="list-disc pl-5">
+            <li>List devices, send device announcements, and issue allowed device controls.</li>
+            <li>Initiate firmware updates, including OTA.</li>
+            <li>Initiate and approve physical device pairing. Each pairing approval still requires
+              a fresh verified physical pairing window and confirmation of the matching code
+              spoken by the device.</li>
+            <li>Connect to its own channel and respond to existing voice requests on that
+              channel when active.</li>
+          </ul>
+          <p>Channel activation selects voice routing; it does not grant these permissions
+            or gate device access. Device playback is reserved; no playback URL endpoint is available.</p>
+          <p>This does not grant owner administration; credential creation, disclosure, rotation
+            or revocation; device configuration, button mappings or speech/provider settings;
+            channel listing or configuration; webhook configuration; server management;
+            firmware image reading, upload or publication; or device impersonation.</p>
+          <p>It cannot approve browser enrollment or known-device recovery, choose a replacement
+            device key, or receive a device credential.</p>
+        </section>
         <label><input type="checkbox" checked={confirmed}
           onChange={event => setConfirmed(event.target.checked)} />
           I started this setup and matched the request, server and code in my client
