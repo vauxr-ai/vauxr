@@ -867,8 +867,7 @@ async def test_realtime_disconnected_channel_retains_exact_peer_until_drain(env,
         b_abort, = replacement._channel_media
         if finish == "drain":
             old._bot_speaking = 0
-            old._bot_stop_credits = 1
-            await old._drain_ends()
+            await complete.output_drained()
             assert not abort.is_set()
             old._connection.disconnect.assert_not_awaited()
         else:
@@ -898,5 +897,41 @@ async def test_realtime_disconnected_channel_retains_exact_peer_until_drain(env,
     finally:
         await old.close()
         await replacement.close()
+        for conn in connections:
+            auth_connections.release(conn.authority)
+
+
+@pytest.mark.parametrize("kind", ["delta", "end", "error"])
+async def test_response_dispatch_requires_principal_channel_ownership(env, kind):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    import auth_connections
+    from channel_server import ChannelServer, _Connection
+
+    service, _ = env
+    server = ChannelServer()
+    connections = []
+    for index in (1, 2):
+        body, _, issued = deliver(env, index)
+        service.execute("ack", ack_body(body, issued))
+        conn = _Connection(SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock()))
+        await server._handle_auth(conn, issued["credential"])
+        connections.append(conn)
+    a, b = connections
+    try:
+        assert channel_registry.activate(a.channel.id)
+        listener = {"on_delta": Mock(), "on_end": Mock(), "on_error": Mock()}
+        server.add_response_listener("speaker", listener)
+        # Even a current, scoped B credential cannot speak as registered A.
+        a.principal = b.principal
+        await server._handle_authenticated_message(a, {
+            "type": "channel.response." + kind, "deviceId": "speaker", "runId": "a",
+            "text": "Wrong owner", "message": "Wrong owner"})
+        for callback in listener.values():
+            callback.assert_not_called()
+        a.ws.close.assert_awaited_once()
+        b.ws.close.assert_not_awaited()
+    finally:
         for conn in connections:
             auth_connections.release(conn.authority)

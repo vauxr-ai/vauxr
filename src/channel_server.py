@@ -268,7 +268,8 @@ class ChannelServer:
         active = channel_registry.get_active()
         authenticated = current(conn.principal)
         if (not authenticated or not allowed(conn.principal, Operation.VOICE_RESPONSE)
-                or conn.channel is None or active is None or active.id != conn.channel.id
+                or conn.channel is None or conn.principal.subject != conn.channel.id
+                or active is None or active.id != conn.channel.id
                 or self._connections.get(conn.channel.id) is not conn
                 or not isinstance(msg.get("type"), str)
                 or msg.get("type") not in {

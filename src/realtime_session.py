@@ -95,6 +95,25 @@ def _latest_user_text(context: Any) -> str:
     return ""
 
 
+class _MediaCompletion:
+    """Bind control completion and output acknowledgement to one exact turn."""
+
+    def __init__(self, session: RealtimeSession, abort: asyncio.Event) -> None:
+        self.session = session
+        self.abort = abort
+        self.generation = session._turn_generation
+
+    async def __call__(self, follow_up: bool, reply: str) -> None:
+        await self.session._on_turn_complete(
+            follow_up, reply, turn_generation=self.generation, media_abort=self.abort,
+        )
+
+    async def output_drained(self) -> None:
+        if self.abort in self.session._channel_media and not self.session._closed:
+            self.session._drained_media.add(self.abort)
+            await self.session._drain_ends()
+
+
 class RealtimeSession:
     """One device's live WebRTC pipeline + WS control relay."""
 
@@ -121,13 +140,13 @@ class RealtimeSession:
         # Set once the pipeline is built and the WebRTC client is connected.
         self._pipeline_ready = asyncio.Event()
         # Deferred audio.end queue, in turn order. Each entry is (follow_up,
-        # has_audio, media_abort): a turn that produced bot speech can't end until its bot
-        # audio fully drains (counted as a credit), while a silent turn (empty/
-        # errored reply) ends as soon as it reaches the head — but never ahead of
-        # an earlier still-speaking turn, which would advance turn state while the
-        # first reply is still playing.
+        # has_audio, media_abort). Channel turns require their exact downstream
+        # output acknowledgement, even for empty/error control completions.
+        # Non-channel callbacks retain the legacy bot-idle credit behavior.
+        # FIFO prevents a later silent turn from advancing an earlier reply.
         self._pending_ends: deque[tuple[bool, bool, asyncio.Event | None]] = deque()
         self._channel_media: dict[asyncio.Event, str] = {}
+        self._drained_media: set[asyncio.Event] = set()
         self._bot_stop_credits = 0
         # Bot-speaking bookkeeping. Wyoming TTS speaks one sentence per run_tts,
         # so a single reply produces several BotStarted/BotStoppedSpeaking pairs.
@@ -215,7 +234,7 @@ class RealtimeSession:
         from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
         from device_settings import get_segmentation
-        from realtime_llm import ChannelLLMService
+        from realtime_llm import ChannelLLMService, OutputDrainTap
         from realtime_turn import (
             SuppressibleVADUserTurnStartStrategy,
             VADStopUserTurnStopStrategy,
@@ -511,6 +530,7 @@ class RealtimeSession:
                 llm,
                 tts,
                 transport.output(),
+                OutputDrainTap(),
                 assistant_aggregator,
             ]
         )
@@ -747,10 +767,11 @@ class RealtimeSession:
         abort = asyncio.Event()
         self._channel_media[abort] = active.id
         self._channel_server.retain_media_turn(active.id, abort, self.close)
-        return partial(self._on_turn_complete, turn_generation=self._turn_generation, media_abort=abort)
+        return _MediaCompletion(self, abort)
 
     def _release_channel_media(self, abort: asyncio.Event | None) -> None:
         if abort is not None:
+            self._drained_media.discard(abort)
             self._channel_media.pop(abort, None)
             self._channel_server.release_media_turn(abort)
 
@@ -861,21 +882,27 @@ class RealtimeSession:
         except asyncio.CancelledError:
             return
         self._drain_timer = None
-        # Reply has drained (no bot frames + debounce elapsed) — drop back to the
-        # snappy idle VAD so the next quiet utterance is heard.
+        # Silence restores idle VAD; it is not proof of channel output drain.
+        # Slow TTS or later segments may still be queued before playback.
         self._apply_vad_profile()
         if self._closed or self._bot_speaking != 0:
             return
-        if not any(has_audio for _, has_audio, _ in self._pending_ends):
+        if not any(has_audio and abort is None for _, has_audio, abort in self._pending_ends):
             return
         self._bot_stop_credits += 1
         await self._drain_ends()
 
     async def _drain_ends(self) -> None:
         """Emit deferred audio.end events in turn order."""
-        while self._pending_ends and not self._ended_notified:
+        while self._pending_ends and not self._ended_notified and not self._closed:
             follow_up, has_audio, media_abort = self._pending_ends[0]
-            if has_audio:
+            # Text/error completion and bot-idle credits cannot prove that a
+            # channel response has left TTS and the ordered output queue. Only
+            # its exact end frame at the output tap (or successful close) can.
+            if media_abort is not None:
+                if media_abort not in self._drained_media:
+                    break
+            elif has_audio:
                 if self._bot_stop_credits <= 0:
                     break
                 self._bot_stop_credits -= 1

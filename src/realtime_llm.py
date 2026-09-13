@@ -26,7 +26,7 @@ from pipecat.frames.frames import (
     LLMFullResponseStartFrame,
     LLMTextFrame,
 )
-from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.llm_service import LLMService
 from pipecat.services.settings import LLMSettings
 
@@ -84,6 +84,22 @@ def _count_user_messages(context: Any) -> int:
     except Exception:  # noqa: BLE001
         return 0
     return sum(1 for m in messages if m.get("role") == "user")
+
+
+class OutputDrainTap(FrameProcessor):
+    """Observe ends after TTS serialization and the transport's audio queue.
+
+    Pipecat 1.9 preserves the original LLM end frame through both queues.
+    Interrupted/dropped markers deliberately retain authority until teardown.
+    """
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if direction == FrameDirection.DOWNSTREAM and isinstance(frame, LLMFullResponseEndFrame):
+            drained = frame.metadata.pop("vauxr_output_drained", None)
+            if drained is not None:
+                await drained()
+        await self.push_frame(frame, direction)
 
 
 class ChannelLLMService(LLMService):
@@ -272,7 +288,11 @@ class ChannelLLMService(LLMService):
                     seg_out.put_nowait(None)
                 await pump
             await self.stop_processing_metrics()
-            await self.push_frame(LLMFullResponseEndFrame())
+            end = LLMFullResponseEndFrame()
+            drained = getattr(on_turn_complete, "output_drained", None)
+            if drained is not None:
+                end.metadata["vauxr_output_drained"] = drained
+            await self.push_frame(end)
 
         if error:
             logger.error("ChannelLLM error for {}: {}", self._device_id, error)
