@@ -21,6 +21,7 @@ Features grouped by theme. No ordering assigned.
 - **Vauxr STT/TTS providers for HA** — HA sees stable "Vauxr STT" and "Vauxr TTS" entities that speak the Vauxr WS protocol under the hood. HA users can route their voice pipeline through Vauxr without ever exposing Whisper/Piper TCP ports directly. Distinct from the firmware ROADMAP's HA event forwarder (`vauxr.wake` etc. to `/api/events`) and from the existing webhook dispatcher.
 
 ### Provider Abstraction
+- **Bounded configured Wyoming selection** — global defaults and per-device inheritance/overrides for STT, TTS and model-scoped voices; immutable turn snapshots and management UI. See [configuration and limitations](docs/speech-settings.md). This does not implement arbitrary provider plugins or model provisioning.
 - **STTProvider / TTSProvider extension system** — pluggable provider interface so Whisper and Piper become one option among many. Swap in Deepgram, ElevenLabs, Groq Whisper, Coqui, or any other STT/TTS backend without touching device firmware or the WS protocol. Keeps the device-facing protocol stable while the backend evolves.
 
 ### Device Context & Voice Formatting

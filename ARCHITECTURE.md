@@ -337,3 +337,14 @@ ESP-IDF component will be published to the ESP-IDF Component Registry. Ports to 
 - Tokens: scoped per device, revocable
 
 
+
+## Bounded speech provider selection
+
+Global and per-device STT/TTS/model-scoped voice selection lives in `speech.py`.
+The server owns configured Wyoming endpoints; management clients select IDs only.
+Complete immutable selections are captured at turn start and used across WS,
+WebRTC, announcements and button speech. Shared Wyoming adapters replace the
+realtime path's duplicate transport clients. The boolean device `voice` flag
+retains its existing meaning. Realtime TTS still buffers an entire segment.
+See [speech settings](docs/speech-settings.md) for persistence, API, readiness
+limits, configuration examples and the #45/#49 owner/scoped auth integration seam.
