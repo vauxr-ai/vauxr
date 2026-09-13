@@ -2,9 +2,10 @@
 """In-memory TLS trust prototype for Vauxr issue #45.
 
 This is deliberately not production gateway code.  It uses Python's maintained
-``ssl`` binding to OpenSSL and MemoryBIOs, so no TCP port is opened.  It proves
-the ordering requirement: an application credential is sent only after a
-hostname-validated TLS handshake completes.
+``ssl`` binding to OpenSSL and MemoryBIOs, so no TCP port is opened. It shows
+that this test client writes its synthetic credential only after a
+hostname-validated TLS handshake completes. It does not observe peer-side
+plaintext receipt on failed handshakes.
 """
 
 from __future__ import annotations
@@ -27,10 +28,14 @@ def issue_ca(directory: Path, name: str) -> tuple[Path, Path]:
     return key, cert
 
 
-def issue_server(directory: Path, ca_key: Path, ca_cert: Path, hostname: str, *, expired: bool = False) -> tuple[Path, Path]:
-    key, csr, cert = directory / f"{hostname}.key", directory / f"{hostname}.csr", directory / f"{hostname}.crt"
+def issue_server(
+    directory: Path, ca_key: Path, ca_cert: Path, hostname: str, *, expired: bool = False,
+    material_name: str | None = None,
+) -> tuple[Path, Path]:
+    stem = material_name or hostname
+    key, csr, cert = directory / f"{stem}.key", directory / f"{stem}.csr", directory / f"{stem}.crt"
     run("req", "-newkey", "rsa:2048", "-nodes", "-subj", f"/CN={hostname}", "-keyout", str(key), "-out", str(csr), cwd=directory)
-    ext = directory / f"{hostname}.ext"
+    ext = directory / f"{stem}.ext"
     ext.write_text(f"subjectAltName=DNS:{hostname}\nextendedKeyUsage=serverAuth\n", encoding="utf-8")
     args = [
         "x509", "-req", "-in", str(csr), "-CA", str(ca_cert), "-CAkey", str(ca_key),
@@ -120,36 +125,52 @@ class TlsTrustPrototypeTests(unittest.TestCase):
         client.write(credential); transfer(cout, sin)
         self.assertEqual(server.read(), credential)
 
-    def test_untrusted_server_never_receives_credential(self) -> None:
+    def test_untrusted_server_is_rejected_before_application_write(self) -> None:
         rogue_key, rogue_cert = issue_ca(self.dir, "rogue-root")
         key, cert = issue_server(self.dir, rogue_key, rogue_cert, "gateway.test")
         client, server, cin, cout, sin, sout = self.pair(self.root_cert, "gateway.test", key, cert)
         with self.assertRaises(ssl.SSLCertVerificationError):
             handshake(client, server, cin, cout, sin, sout)
-        self.assertEqual(sin.pending, 0, "client sent no application credential before trust")
 
-    def test_hostname_mismatch_never_receives_credential(self) -> None:
+    def test_hostname_mismatch_is_rejected_before_application_write(self) -> None:
         client, server, cin, cout, sin, sout = self.pair(self.root_cert, "other-gateway.test")
         with self.assertRaises(ssl.SSLCertVerificationError):
             handshake(client, server, cin, cout, sin, sout)
-        self.assertEqual(sin.pending, 0)
 
     def test_expired_certificate_is_rejected(self) -> None:
         key, cert = issue_server(self.dir, self.root_key, self.root_cert, "gateway.test", expired=True)
         client, server, cin, cout, sin, sout = self.pair(self.root_cert, "gateway.test", key, cert)
         with self.assertRaises(ssl.SSLCertVerificationError):
             handshake(client, server, cin, cout, sin, sout)
-        self.assertEqual(sin.pending, 0)
 
-    def test_root_rollover_accepts_only_explicit_overlap_bundle(self) -> None:
+    def test_new_root_is_rejected_before_rollover_overlap(self) -> None:
         next_key, next_root = issue_ca(self.dir, "next-root")
         key, cert = issue_server(self.dir, next_key, next_root, "gateway.test")
         client, server, cin, cout, sin, sout = self.pair(self.root_cert, "gateway.test", key, cert)
         with self.assertRaises(ssl.SSLCertVerificationError):
             handshake(client, server, cin, cout, sin, sout)
+
+    def test_root_rollover_accepts_old_and_new_during_overlap(self) -> None:
+        next_key, next_root = issue_ca(self.dir, "next-root")
+        next_server_key, next_server_cert = issue_server(
+            self.dir, next_key, next_root, "gateway.test", material_name="next-gateway"
+        )
         bundle = self.dir / "overlap-roots.pem"
         bundle.write_bytes(self.root_cert.read_bytes() + next_root.read_bytes())
-        client, server, cin, cout, sin, sout = self.pair(bundle, "gateway.test", key, cert)
+        client, server, cin, cout, sin, sout = self.pair(bundle, "gateway.test")
+        handshake(client, server, cin, cout, sin, sout)
+        client, server, cin, cout, sin, sout = self.pair(bundle, "gateway.test", next_server_key, next_server_cert)
+        handshake(client, server, cin, cout, sin, sout)
+
+    def test_root_retirement_rejects_old_and_accepts_new(self) -> None:
+        next_key, next_root = issue_ca(self.dir, "next-root")
+        next_server_key, next_server_cert = issue_server(
+            self.dir, next_key, next_root, "gateway.test", material_name="next-gateway"
+        )
+        client, server, cin, cout, sin, sout = self.pair(next_root, "gateway.test")
+        with self.assertRaises(ssl.SSLCertVerificationError):
+            handshake(client, server, cin, cout, sin, sout)
+        client, server, cin, cout, sin, sout = self.pair(next_root, "gateway.test", next_server_key, next_server_cert)
         handshake(client, server, cin, cout, sin, sout)
 
 

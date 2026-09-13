@@ -25,15 +25,18 @@ TLS for the API/control plane does not remove WebRTC ICE/NAT requirements.
    chain and hostname against an already trusted public/private root or a
    physical bootstrap trust anchor. It then sends an enrollment request over
    that authenticated channel.
-3. **Physical bootstrap is intentional.** A local owner action (for example a
-   one-time code or QR shown while holding a server-side setup control) binds
-   the request to the server and owner approval. The code is short lived,
-   single use, rate limited, and does not itself replace TLS server validation.
-4. **Device identity is distinct.** The enrollment request contains a freshly
-   generated device public key/attestation identifier and nonce. Server records
-   owner approval + request nonce + device public key + server identity. A
-   signed enrollment response is addressed to that device key, not to the
-   approving browser; it cannot be replayed for another key or after expiry.
+3. **Owner approval and speaker pairing are separate questions.** The owner
+   must approve a requested enrollment through an authenticated control
+   surface. Separately, a speaker may need a physical pairing interaction or a
+   spoken/displayed matching code to associate it with that approval. This
+   record does not require a physical button on the server, choose either
+   interaction, or define a custom enrollment-credential format. Any code is
+   short lived, single use, and rate limited; it does not replace TLS server
+   validation.
+4. **Device identity is distinct.** The eventual enrollment contract needs a
+   device-generated identity and replay protection bound to owner approval and
+   verified server identity. Its exact credential/attestation and response
+   format belongs to the shared auth contract (#46--#49), not this TLS record.
 5. **Reconnect is name based.** DHCP/IP changes do not change the verified
    server name. Devices use a configured name and trust bundle, not a learned
    private IP certificate exception.
@@ -51,27 +54,49 @@ certificate format, and endpoint enforcement to #46--#49.
 
 | Option | Browser/phone trust | DNS/control and cost | Privacy/offline behavior | Renewal/outage tradeoff |
 |---|---|---|---|---|
-| Public CA + owned domain, DNS-01 | Normal stock trust for the domain; HTTPS/WSS works without installing a root | Owner controls a domain and DNS API/credentials; domain/DNS provider costs and operational dependency | Local gateway can keep serving LAN traffic during an Internet outage until certificate expiry; issuance/renewal needs DNS control | Automated renewal is practical; DNS provider/registrar loss or expired domain breaks future issuance |
+| Owner-managed public name + DNS-01 | Normal stock trust for the domain; HTTPS/WSS works without installing a root | Owner controls a domain and DNS API/credentials; domain/DNS provider costs and operational dependency | Local gateway can keep serving LAN traffic during an Internet outage until certificate expiry; issuance/renewal needs DNS control | Automated renewal is practical; DNS provider/registrar loss or expired domain breaks future issuance |
+| **Vauxr-managed per-install public name + local TLS termination + DNS-01** | Normal stock trust for a name such as 'install-id.devices.example'; no root installation | Vauxr owns/delegates the parent zone, operates DNS-01 authorization and pays domain/DNS/control-service costs; gateway needs a narrowly scoped issuance flow, not a shared fleet TLS private key | DNS-01 proves name control without exposing the gateway to the public Internet; this is **not** a traffic tunnel. LAN clients still need that public name to resolve to the local gateway (for example through supported local DNS); arbitrary LAN browser trust is not solved by Internet access alone | Vauxr carries issuance, renewal, account recovery, abuse, privacy, and DNS availability responsibilities; the gateway generates and retains its own certificate private key |
 | Private local CA + explicit trust provisioning | Stock browser/phone trust only after each client installs/provisions the private root; ESP32 can ship/receive the root bundle | No public DNS is required; owner must protect CA key and distribute/revoke roots | Best local-only/privacy story; arbitrary LAN names/IPs are still not automatically trusted by browsers | Root and client fleet lifecycle becomes product work; mobile/browser policy varies and hardware validation is required |
 | Managed tunnel/edge/certificate service | Usually normal browser trust through provider hostname/domain | Continuing provider account, DNS delegation and possible price/egress/privacy dependency | Typically needs outbound Internet; not a LAN-offline substitute | Provider manages issuance but creates service/outage/account dependency |
+| Bring-your-own HTTPS reverse proxy | Normal stock trust when the owner's proxy presents a valid certificate for its configured name | Advanced owner supplies and operates its DNS, certificate issuance, proxy, routing, updates, and support boundary | Can preserve LAN-only data paths depending on the deployment, but discovery/name resolution and proxy reachability are the owner's responsibility | Suitable integration/advanced path, not a zero-config consumer default |
 
 ### Provisional recommendation
 
-For a consumer-facing browser/phone setup flow, prefer **an owner-controlled
-domain with DNS-01 public certificates** if the product decision accepts domain
-and DNS operations. It is the only option above that gives ordinary clients
-standard trust without installing a root. Keep a private-CA local-only mode as
-a separately validated advanced/offline path, not as an implicit fallback.
+For a consumer-facing browser/phone setup flow, recommend a **Vauxr-managed
+per-install public name with DNS-01 certificates terminated locally at the
+gateway**, if Vauxr accepts operating the related DNS and certificate-control
+service. This avoids asking every consumer to own DNS while retaining ordinary
+browser/phone trust and avoids making the certificate key a fleet-shared Vauxr
+secret. It is distinct from a tunnel: API/control traffic remains LAN-local.
 
-**Genuine unresolved decision:** whether Vauxr will require/provision an
-owner-controlled domain + DNS automation, or will support a private-root local
-mode (and bear platform-specific provisioning, CA-key custody, recovery, and
-support cost). No cloud/DNS service was provisioned for this work.
+Proposed user-facing setup, subject to validation: (1) connect the gateway to
+the LAN, (2) use the Vauxr app's local discovery to start setup, (3) approve
+the displayed gateway/name association in the authenticated app, (4) open the
+shown HTTPS name on the same LAN, and (5) pair a speaker with the product's
+separately designed physical/code interaction. The implementation must prove
+that the name resolves locally and that real browsers retain stock trust before
+this can be presented as a supported flow.
+
+Service/cost responsibility under that default: Vauxr operates/finances the
+parent domain, authoritative DNS, DNS-01 authorization service, issuance and
+renewal control plane, install-name lifecycle, monitoring, incident response,
+privacy disclosures, abuse controls, and recovery/support. The gateway owns
+its generated TLS private key and terminates TLS locally. Owner-managed DNS
+and a pre-existing HTTPS reverse proxy remain advanced alternatives; private
+CA remains an explicitly provisioned local-only alternative.
+
+**Genuine unresolved decision:** whether Vauxr will operate the per-install
+name/DNS-01 control service and validate the required local-DNS UX, or require
+owner-managed DNS/proxy, or support a private-root local mode (with its
+platform-specific provisioning, CA-key custody, recovery, and support cost).
+No cloud/DNS service was provisioned for this work.
 
 ## Evidence and boundaries
 
 * Let's Encrypt documents DNS-01 validation and its ability to issue wildcard
   certificates: <https://letsencrypt.org/docs/challenge-types/#dns-01-challenge>.
+* RFC 8555 defines ACME's DNS challenge and account authorization model:
+  <https://www.rfc-editor.org/rfc/rfc8555.html#section-8.4>.
 * MDN documents that secure contexts are a prerequisite for web features and
   that `localhost` is a special potentially trustworthy case, not arbitrary
   LAN hostnames/IPs: <https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts>.
@@ -82,8 +107,13 @@ support cost). No cloud/DNS service was provisioned for this work.
   <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/provisioning/provisioning.html>.
 
 The prototype proves standard OpenSSL certificate-chain, hostname, expiration,
-and overlap-root behaviors in this development environment only. It does not
-prove public-CA issuance, DNS ownership, clean browser/phone acceptance,
-ESP32 firmware acceptance, trusted-time bootstrap, client root installation,
-NAT/ICE operation, or production server configuration. Those are explicit
-follow-ons before this architecture can be selected or shipped.
+and old/new-root overlap plus retirement behaviors in this development
+environment only. It exercises TLS handshake state and deliberately sends a
+synthetic credential only after a successful handshake. On failure paths it
+does **not** attempt an application write; MemoryBIO.pending measures BIO
+buffering and is not evidence that a peer received or did not receive
+plaintext. It does not prove public-CA issuance, DNS ownership, local DNS
+resolution, clean browser/phone acceptance, ESP32 firmware acceptance,
+trusted-time bootstrap, client root installation, NAT/ICE operation, or
+production server configuration. Those are explicit follow-ons before this
+architecture can be selected or shipped.
