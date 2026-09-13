@@ -1,5 +1,10 @@
 # Authorization foundation (#46)
 
+**Stacked owner update (#47):** [owner-v1.md](owner-v1.md) supersedes this
+foundation snapshot for owner setup, sessions, startup configuration and persistence
+schema 2. Owner HTTP bearer admission is removed; paired-client policy is unchanged.
+The descriptions below record PR55's original foundation boundary.
+
 This is a breaking, staged foundation for issue #46, scoped by the `scope`
 acceptance criteria in the September 12 work packages. It is not an owner login,
 enrollment, credential lifecycle, TLS or release implementation. **Do not deploy

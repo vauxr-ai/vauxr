@@ -101,7 +101,7 @@ def load_config() -> Config:
             token=_optional("OPENCLAW_TOKEN", ""),
         ),
         channel=ChannelConfig(ws_path="/channel"),
-        device=DeviceConfigSection(token=_required("DEVICE_TOKEN")),
+        device=DeviceConfigSection(token=_optional("DEVICE_TOKEN", "")),
         data_dir=_optional("DATA_DIR", "/data"),
         stt=_parse_wyoming_url(speech_env("STT_URL")),
         tts=WyomingTTSConfig(

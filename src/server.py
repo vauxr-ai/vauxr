@@ -30,9 +30,10 @@ from http_server import (
     transport_boundary,
 )
 from openclaw_client import OpenClawClient
+from owner_http import owner_middleware
 from pipeline import run_voice_turn
 from protocol import encode_text_message, parse_text_message
-from speech import Selection, get_store, resolve
+from speech import Selection, get_store as get_speech_store, resolve
 
 log = logging.getLogger("vauxr.server")
 
@@ -539,7 +540,7 @@ async def channel_ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 
 def make_app() -> web.Application:
-    app = web.Application(middlewares=[cors_middleware, policy_middleware])
+    app = web.Application(middlewares=[owner_middleware, cors_middleware, policy_middleware])
     app[APP_STATE] = AppState()
     cfg = get_config()
     app.router.add_get(cfg.channel.ws_path, channel_ws_handler)

@@ -20,9 +20,10 @@ import channel_registry
 import device_registry as registry
 import webhooks
 from auth import authenticate
-from auth_policy import HTTP_OPERATIONS, UNSHIPPED, Operation, allowed, audit_denial
+from auth_policy import HTTP_OPERATIONS, UNSHIPPED, Operation, Principal, Role, allowed, audit_denial
 from config import get_config
 from device_config import VALID_FOLLOW_UP_MODES, parse_button_actions
+from owner_http import attach_owner, owner_middleware, session_principal
 from protocol import encode_text_message
 
 if TYPE_CHECKING:
@@ -67,11 +68,20 @@ async def policy_middleware(request: web.Request, handler: Handler) -> web.Strea
     return await handler(request)
 
 
+def _http_principal(request: web.Request) -> Principal | None:
+    principal = session_principal(request)
+    if principal is None:
+        header = request.headers.get("Authorization", "")
+        principal = authenticate(header[7:] if header.startswith("Bearer ") else None)
+        if principal is not None and principal.role == Role.OWNER:
+            return None
+    return principal
+
+
 def _require_auth(handler: Handler) -> Handler:
     @wraps(handler)
     async def wrapped(request: web.Request) -> web.StreamResponse:
-        header = request.headers.get("Authorization", "")
-        principal = authenticate(header[7:] if header.startswith("Bearer ") else None)
+        principal = _http_principal(request)
         operation = HTTP_OPERATIONS.get(handler.__name__)
         if not allowed(principal, operation):
             audit_denial(principal is not None)
@@ -92,7 +102,9 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
         resp: web.StreamResponse = web.Response(status=204)
     else:
         resp = await handler(request)
-    resp.headers["Access-Control-Allow-Origin"] = "*"
+    # Same-origin owner API never enables credentialed cross-origin access.
+    if not request.path.startswith("/api/auth/") and "__Host-vauxr_owner" not in request.cookies:
+        resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
     resp.headers["Access-Control-Max-Age"] = "86400"
@@ -215,8 +227,7 @@ async def device_command(request: web.Request) -> web.Response:
         return web.json_response({"error": f"unknown command: {cmd}"}, status=400)
 
     operation = Operation.FIRMWARE_INITIATE if cmd == "ota" else Operation.CONTROL
-    header = request.headers.get("Authorization", "")
-    if not allowed(authenticate(header[7:] if header.startswith("Bearer ") else None), operation):
+    if not allowed(_http_principal(request), operation):
         audit_denial(True)
         return web.json_response({"error": "forbidden"}, status=403)
     params = body.get("params")
@@ -464,6 +475,7 @@ def attach_http_routes(app: web.Application) -> None:
     from speech_http import attach_speech_routes
 
     attach_speech_routes(app, _authorize_speech_management)
+    attach_owner(app)
     async def _options(_r: web.Request) -> web.Response:
         return web.Response(status=204)
 
@@ -486,7 +498,7 @@ def attach_http_routes(app: web.Application) -> None:
 
 
 def make_http_app(_channel_server: ChannelServer | None = None) -> web.Application:
-    app = web.Application(middlewares=[cors_middleware, policy_middleware])
+    app = web.Application(middlewares=[owner_middleware, cors_middleware, policy_middleware])
     attach_http_routes(app)
     app.router.add_get("/{tail:.*}", serve_static)
     return app
