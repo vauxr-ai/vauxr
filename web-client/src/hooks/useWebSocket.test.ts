@@ -87,10 +87,11 @@ describe("useWebSocket", () => {
       expect(result.current.state).toBe("disconnected");
     });
 
-    it("state becomes connected after ws.onopen fires", () => {
+    it("state becomes connected only after scoped hello acknowledgement", () => {
       const { result } = renderHook(() => useWebSocket(defaultOpts()));
       act(() => result.current.connect("ws://localhost:8765", "dev1", "tok"));
       act(() => lastWs().simulateOpen());
+      act(() => lastWs().simulateMessage(JSON.stringify({type: "hello"})));
       expect(result.current.state).toBe("connected");
     });
 
@@ -278,14 +279,14 @@ describe("useWebSocket", () => {
       expect(opts.onError).toHaveBeenCalledWith("AUTH_FAIL", "Bad token");
     });
 
-    it("unparseable message → log entry added with (unparseable):", () => {
+    it("unparseable message → log entry added with Unparseable server message", () => {
       const opts = defaultOpts();
       const { result } = renderHook(() => useWebSocket(opts));
       act(() => result.current.connect("ws://localhost:8765", "dev1", "tok"));
       act(() => lastWs().simulateOpen());
       act(() => lastWs().simulateMessage("not json {{{"));
 
-      expect(findLog(result.current.log, "(unparseable):")).toBeDefined();
+      expect(findLog(result.current.log, "Unparseable server message")).toBeDefined();
     });
   });
 
@@ -297,8 +298,8 @@ describe("useWebSocket", () => {
       act(() => result.current.sendVoiceStart());
 
       const ws = lastWs();
-      expect(ws.sent).toHaveLength(1);
-      const msg = JSON.parse(ws.sent[0] as string);
+      expect(ws.sent).toHaveLength(2);
+      const msg = JSON.parse(ws.sent[1] as string);
       expect(msg).toEqual({ type: "voice.start", device_id: "dev1", token: "tok" });
     });
 
@@ -320,8 +321,8 @@ describe("useWebSocket", () => {
       act(() => result.current.sendAudioFrame(pcm));
 
       const ws = lastWs();
-      expect(ws.sent).toHaveLength(1);
-      const buf = ws.sent[0] as ArrayBuffer;
+      expect(ws.sent).toHaveLength(2);
+      const buf = ws.sent[1] as ArrayBuffer;
       const view = new DataView(buf);
       expect(view.getUint8(0)).toBe(0x01);
       // Payload starts at offset 3
@@ -351,8 +352,8 @@ describe("useWebSocket", () => {
       act(() => result.current.sendJson(msg));
 
       const ws = lastWs();
-      expect(ws.sent).toHaveLength(1);
-      expect(ws.sent[0]).toBe(JSON.stringify(msg));
+      expect(ws.sent).toHaveLength(2);
+      expect(ws.sent[1]).toBe(JSON.stringify(msg));
       expect(findLog(result.current.log, JSON.stringify(msg))).toBeDefined();
     });
   });

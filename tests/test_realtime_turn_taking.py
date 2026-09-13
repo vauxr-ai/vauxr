@@ -295,11 +295,15 @@ async def test_ws_pipeline_records_turn_into_log(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.fixture(autouse=True)
-def _env(monkeypatch: pytest.MonkeyPatch):
+def _env(monkeypatch: pytest.MonkeyPatch, tmp_path):
     cfg_mod.reset_config()
     monkeypatch.setenv("DEVICE_TOKEN", "ws-test-token")
     monkeypatch.setenv("REALTIME_ENABLED", "1")
     monkeypatch.setenv("REALTIME_HOST", "192.168.1.50")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from tests.auth_helpers import seed
+    from auth_policy import Role
+    seed("ws-test-token", Role.DEVICE, "dev1")
     yield
     cfg_mod.reset_config()
     dev_reg.unregister("dev1")
@@ -494,10 +498,10 @@ async def test_explicit_pause_resume_routes_to_existing_session(
         await _recv_json(ws)
         for message, paused in [("realtime.pause", True), ("realtime.resume", False)]:
             await ws.send_json({"type": message})
-            # An unknown sentinel round-trip proves the preceding control was
-            # handled without itself producing an UNKNOWN_MESSAGE error.
-            await ws.send_json({"type": "test.barrier"})
-            assert (await _recv_json(ws))["message"] == "Unknown type: test.barrier"
+            # An authenticated hello round-trip proves the preceding control
+            # was handled before checking session state.
+            await ws.send_json({"type": "hello", "device_id": "dev1", "token": "ws-test-token"})
+            assert (await _recv_json(ws))["type"] == "hello"
             assert session._turns_suppressed() is paused
 
 

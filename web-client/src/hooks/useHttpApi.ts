@@ -1,4 +1,5 @@
-import { useCallback, useRef } from "react";
+import { ownerFetch } from "../auth/api";
+import { useCallback } from "react";
 
 export interface ApiDevice {
   id: string;
@@ -19,18 +20,12 @@ export function deriveHttpUrl(wsUrl: string, httpPort = 8080): string {
   return `${scheme}//${url.hostname}:${httpPort}`;
 }
 
-export function useHttpApi(baseUrl: string, token: string) {
-  const baseUrlRef = useRef(baseUrl);
-  const tokenRef = useRef(token);
-  baseUrlRef.current = baseUrl;
-  tokenRef.current = token;
-
+export function useHttpApi(_baseUrl = "", _token = "") {
   const request = useCallback(async (path: string, init?: RequestInit): Promise<Response> => {
-    const res = await fetch(`${baseUrlRef.current}${path}`, {
+    const res = await ownerFetch(path, {
       ...init,
       headers: {
         ...init?.headers,
-        Authorization: `Bearer ${tokenRef.current}`,
         "Content-Type": "application/json",
       },
     });

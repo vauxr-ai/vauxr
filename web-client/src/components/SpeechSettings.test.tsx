@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { setCsrf } from "../auth/api";
 import SpeechSettings from "./SpeechSettings";
 
 const view = {
@@ -11,12 +12,13 @@ const view = {
     { id: "kokoro", kind: "tts", model: "kokoro-model", voices: ["af"], readiness: "unavailable" },
   ],
 };
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); setCsrf(""); });
 
 it("shows effective inheritance, availability, and model-scoped choices; resets all overrides", async () => {
   const fetcher = vi.fn().mockImplementation(async () => ({ ok: true, json: async () => view }));
   vi.stubGlobal("fetch", fetcher);
-  render(<SpeechSettings baseUrl="http://localhost" token="test" deviceId="a/b" />);
+  setCsrf("csrf-test");
+  render(<SpeechSettings deviceId="a/b" />);
   expect(await screen.findByText("Effective: whisper / piper / amy")).toBeTruthy();
   expect(screen.getByText("kokoro · kokoro-model · unavailable")).toBeTruthy();
   expect(screen.queryByRole("option", { name: "af" })).toBeNull();
@@ -27,9 +29,14 @@ it("shows effective inheritance, availability, and model-scoped choices; resets 
   await waitFor(() => expect((screen.getByText("Reset to defaults") as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(screen.getByText("Reset to defaults"));
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
-  expect(fetcher.mock.calls[2][0]).toBe("http://localhost/api/devices/a%2Fb/speech");
+  expect(fetcher.mock.calls[2][0]).toBe("/api/devices/a%2Fb/speech");
   expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ stt_backend: null, tts_backend: null, voices: null });
-  expect(fetcher.mock.calls[2][1].headers.Authorization).toBe("Bearer test");
+  for (const [path, init] of fetcher.mock.calls) {
+    expect(path).toBe("/api/devices/a%2Fb/speech");
+    expect(init).toMatchObject({ credentials: "same-origin", cache: "no-store", redirect: "error" });
+    expect(init.headers.has("Authorization")).toBe(false);
+    expect(init.headers.get("X-CSRF-Token")).toBe("csrf-test");
+  }
 });
 
 it("refreshes inheritors and scopes voice controls after a global model change", async () => {
@@ -39,7 +46,7 @@ it("refreshes inheritors and scopes voice controls after a global model change",
       effective: { ...view.effective, tts_backend: "kokoro", voice_id: "af" },
     }) });
   vi.stubGlobal("fetch", fetcher);
-  render(<SpeechSettings baseUrl="http://localhost" token="test" deviceId="b" />);
+  render(<SpeechSettings deviceId="b" />);
   await screen.findByText("Effective: whisper / piper / amy");
   fireEvent.click(screen.getByText("Refresh speech"));
   await screen.findByText("Effective: whisper / kokoro / af");
@@ -49,13 +56,13 @@ it("refreshes inheritors and scopes voice controls after a global model change",
 
 it("reports authorization failure without offering edits", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 401 }));
-  render(<SpeechSettings baseUrl="http://localhost" token="bad" />);
+  render(<SpeechSettings />);
   expect((await screen.findByRole("alert")).textContent).toContain("401");
   expect(screen.queryByLabelText("TTS backend")).toBeNull();
 });
 
 it("handles an incompatible server response without crashing the panel", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => [] }));
-  render(<SpeechSettings baseUrl="http://localhost" token="test" />);
+  render(<SpeechSettings />);
   expect((await screen.findByRole("alert")).textContent).toBe("Invalid speech settings response");
 });
