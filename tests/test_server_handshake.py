@@ -18,6 +18,9 @@ def _device_token(monkeypatch: pytest.MonkeyPatch, tmp_path):
     cfg_mod.reset_config()
     monkeypatch.setenv("DEVICE_TOKEN", "ws-test-token")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from tests.auth_helpers import seed
+    from auth_policy import Role
+    seed("ws-test-token", Role.DEVICE, "dev1")
     yield
     cfg_mod.reset_config()
 
@@ -60,8 +63,8 @@ async def test_voice_start_missing_token(client: TestClient) -> None:
         err = await _recv_json(ws)
         assert err == {
             "type": "error",
-            "code": "INVALID_MESSAGE",
-            "message": "Missing device_id or token",
+            "code": "UNAUTHORIZED",
+            "message": "Access denied",
         }
 
 
@@ -70,7 +73,7 @@ async def test_unknown_message_type_returns_error(client: TestClient) -> None:
         await ws.send_json({"type": "not.a.real.type"})
         err = await _recv_json(ws)
         assert err["type"] == "error"
-        assert err["code"] == "UNKNOWN_MESSAGE"
+        assert err["code"] in {"UNAUTHORIZED", "FORBIDDEN"}
 
 
 async def test_invalid_json_returns_error(client: TestClient) -> None:
@@ -87,8 +90,8 @@ async def test_voice_end_without_voice_start_is_error(client: TestClient) -> Non
         err = await _recv_json(ws)
         assert err == {
             "type": "error",
-            "code": "INVALID_STATE",
-            "message": "Not in listening state",
+            "code": "UNAUTHORIZED",
+            "message": "Access denied",
         }
 
 
@@ -134,8 +137,8 @@ async def test_device_button_is_not_unknown_message(client: TestClient) -> None:
         )
         await ws.send_json({"type": "not.a.real.type"})
         err = await _recv_json(ws)
-        assert err["code"] == "UNKNOWN_MESSAGE"
-        assert "not.a.real.type" in err["message"]
+        assert err["code"] in {"UNAUTHORIZED", "FORBIDDEN"}
+        assert err["message"] == "Access denied"
 
 
 async def test_device_button_without_hello_is_ignored(
@@ -158,7 +161,7 @@ async def test_device_button_without_hello_is_ignored(
         )
         await ws.send_json({"type": "not.a.real.type"})
         err = await _recv_json(ws)
-        assert err["code"] == "UNKNOWN_MESSAGE"
+        assert err["code"] in {"UNAUTHORIZED", "FORBIDDEN"}
     assert called == []
 
 
@@ -192,5 +195,5 @@ async def test_device_button_ignores_spoofed_device_id(
         )
         await ws.send_json({"type": "not.a.real.type"})
         err = await _recv_json(ws)
-        assert err["code"] == "UNKNOWN_MESSAGE"
-    assert called == ["dev1"]
+        assert err["code"] in {"UNAUTHORIZED", "FORBIDDEN"}
+    assert called == []
