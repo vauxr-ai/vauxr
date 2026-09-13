@@ -6,6 +6,7 @@ import json
 
 from aiohttp import web
 
+from auth_connections import Teardown
 from auth_policy import Principal, Role
 from enrollment import EnrollmentError
 from enrollment_http import ENROLLMENT, unique_object
@@ -13,6 +14,7 @@ from lifecycle import Lifecycle
 from owner_http import COOKIE, ORIGIN, OWNER, secure_request
 
 LIFECYCLE = web.AppKey("lifecycle", Lifecycle)
+MEDIA_TEARDOWN = web.AppKey("lifecycle_media_teardown", Teardown)
 
 
 async def lifecycle_endpoint(request: web.Request) -> web.Response:
@@ -72,8 +74,14 @@ lifecycle_endpoint.authz_boundary = True  # type: ignore[attr-defined]
 async def disconnect_stale(app: web.Application) -> None:
     from auth_connections import disconnect_stale as disconnect
 
+    results = await asyncio.gather(disconnect(app[LIFECYCLE].store), app[MEDIA_TEARDOWN].run(),
+                                   return_exceptions=True)
+    if any(isinstance(result, BaseException) for result in results):
+        raise RuntimeError("transport_teardown_unavailable")
+
+
+async def disconnect_media(app: web.Application) -> None:
     store = app[LIFECYCLE].store
-    await disconnect(store)
     # A plugin may have disconnected while its dependent media/turn remains.
     # Revoke must tear that down even without a retained integration socket.
     import channel_registry
@@ -94,6 +102,7 @@ async def disconnect_stale(app: web.Application) -> None:
 
 def attach_lifecycle(app: web.Application) -> None:
     app[LIFECYCLE] = Lifecycle(app[OWNER].store, app[ORIGIN])
+    app[MEDIA_TEARDOWN] = Teardown(lambda: disconnect_media(app))
 
     async def maintenance(application: web.Application) -> None:
         while True:

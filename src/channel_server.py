@@ -196,22 +196,30 @@ class ChannelServer:
         conn.authenticated = True
         conn.channel = channel
 
+        teardown: list[auth_connections.Teardown] = []
+
         async def close_revoked() -> None:
-            if self._connections.get(channel.id) is conn:
-                self._connections.pop(channel.id, None)
-                if channel_registry.get_active() == channel:
-                    for device_id, listener in list(self._response_listeners.items()):
-                        listener["on_error"](device_id, "integration_revoked")
-                    import device_registry
-                    from config import get_config
+            if not teardown:
+                teardown.append(auth_connections.Teardown(conn.ws.close))
+                if self._connections.get(channel.id) is conn:
+                    self._connections.pop(channel.id, None)
+                    if channel_registry.get_active() == channel:
+                        for device_id, listener in list(self._response_listeners.items()):
+                            async def notify(device_id=device_id, listener=listener) -> None:
+                                listener["on_error"](device_id, "integration_revoked")
 
-                    for device in device_registry.get_all():
-                        device_registry.abort_active_turn(device.id)
-                        if get_config().realtime.enabled:
-                            from realtime_session import get_manager
+                            teardown.append(auth_connections.Teardown(notify))
+                        import device_registry
+                        from config import get_config
 
-                            await get_manager().stop(device.id)
-            await conn.ws.close()
+                        for device in device_registry.get_all():
+                            device_registry.abort_active_turn(device.id)
+                            if get_config().realtime.enabled:
+                                from realtime_session import get_manager
+
+                                teardown.append(auth_connections.Teardown(
+                                    lambda device_id=device.id: get_manager().stop(device_id)))
+            await auth_connections.run_teardowns(teardown)
 
         conn.authority = auth_connections.retain(principal, close_revoked)
 
