@@ -2,9 +2,9 @@ services:
 
   # The WebRTC realtime transport (aiortc, in-process Pipecat) gathers ICE on
   # ephemeral UDP ports that can't be predicted/published in Docker bridge mode,
-  # so the whole stack runs on host networking. Consequences: `ports:` mappings
-  # are dropped (services bind host ports directly) and inter-service addressing
-  # uses 127.0.0.1 instead of Docker DNS names.
+  # so Vauxr retains host networking, as do the existing Whisper/Piper services.
+  # Optional speech services use the Compose bridge with loopback-published ports;
+  # host-network Vauxr reaches them via 127.0.0.1, not Compose DNS names.
   vauxr:
     build:
       context: .
@@ -88,12 +88,13 @@ services:
     image: rhasspy/wyoming-whisper@sha256:c3c6a1bca0b72ad8df0fbb00d315ff58f349270d3c40b9611b8a7f6ae28fd58f
     container_name: parakeet-v3
     restart: unless-stopped
-    network_mode: host
-    command: ["--stt-library", "sherpa", "--model", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8", "--language", "en", "--device", "cpu", "--cpu-threads", "4", "--uri", "tcp://127.0.0.1:10310", "--data-dir", "/data", "--download-dir", "/data"]
+    ports:
+      - "127.0.0.1:10310:10310"
+    command: ["--stt-library", "sherpa", "--model", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8", "--language", "en", "--device", "cpu", "--cpu-threads", "4", "--uri", "tcp://0.0.0.0:10310", "--data-dir", "/data", "--download-dir", "/data"]
     volumes:
       - ${PARAKEET_CACHE_DIR:-./data/parakeet-v3}:/data
     healthcheck:
-      test: ["CMD-SHELL", "/usr/src/.venv/bin/python3 -m wyoming_faster_whisper.health_check --uri tcp://127.0.0.1:10310"]
+      test: ["CMD-SHELL", "/usr/src/.venv/bin/python3 -m wyoming_faster_whisper.health_check --uri tcp://127.0.0.1:10310 --timeout 2"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -104,7 +105,8 @@ services:
     image: nordwestt/kokoro-wyoming@sha256:5071dfe6a7c2c599c51677da698aebecdf8bd8dbab2d5345e99bb50d878a33f9
     container_name: kokoro
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "127.0.0.1:10210:10210"
     environment:
       ONNX_PROVIDER: CPUExecutionProvider
     volumes:
@@ -113,7 +115,7 @@ services:
     entrypoint: ["/bin/sh"]
     command:
       - -ec
-      - "for f in kokoro-v1.0.onnx voices-v1.0.bin; do test -f /data/\"$$f\" || cp /app/src/\"$$f\" /data/\"$$f\"; done; exec /usr/bin/python3 /app/src/main.py --uri tcp://127.0.0.1:10210 --voice af_heart --model /data/kokoro-v1.0.onnx --voices /data/voices-v1.0.bin"
+      - "for f in kokoro-v1.0.onnx voices-v1.0.bin; do test -f /data/\"$$f\" || cp /app/src/\"$$f\" /data/\"$$f\"; done; exec /usr/bin/python3 /app/src/main.py --uri tcp://0.0.0.0:10210 --voice af_heart --model /data/kokoro-v1.0.onnx --voices /data/voices-v1.0.bin"
     healthcheck:
       test: ["CMD-SHELL", "/usr/bin/python3 -c 'import socket,json; s=socket.create_connection((\"127.0.0.1\",10210),2); s.settimeout(2); s.sendall(b\"{\\\"type\\\":\\\"describe\\\"}\\n\"); f=s.makefile(\"rb\"); h=json.loads(f.readline()); d=json.loads(f.read(h[\"data_length\"])) if h.get(\"data_length\") else h.get(\"data\",{}); assert h[\"type\"]==\"info\" and d.get(\"tts\"); s.close()'"]
       interval: 10s

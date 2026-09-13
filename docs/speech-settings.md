@@ -193,8 +193,7 @@ Premature EOF uses the same error class.
 
 `realtime_wyoming` still buffers **the entire TTS segment** before passing PCM to
 Pipecat. WS synthesis streams received PCM. This feature does not redesign
-streaming, validate GPU operation, benchmark latency, or verify Whisper,
-Parakeet v3, Piper or Kokoro models on hardware. Tests use fake local Wyoming
+streaming, validate GPU operation, or benchmark latency. Automated tests use fake local Wyoming
 peers and mocked inference, including real Pipecat adapter contracts where the
 optional dependency is installed. No live voice service or model is required.
 
@@ -213,18 +212,31 @@ with explicit `--stt-library sherpa`,
 `--model sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8`, `--device cpu`,
 `--cpu-threads 4`, and `--language en`. Specifying v3 matters: automatic English
 model selection may choose v2. Its dedicated `/data` cache receives the model
-on first start. The upstream image's Describe healthcheck targets port 10310.
+on first start. The pinned image contains `/usr/src/.venv/bin/python3` and
+`wyoming_faster_whisper.health_check`; its Describe/ASR check targets internal
+loopback port 10310 with a two-second timeout.
 
 [Kokoro Wyoming](https://github.com/nordwestt/kokoro-wyoming) implements Wyoming
 synthesis, not an OpenAI HTTP API. The pinned image's `--help` verifies `--uri`,
 `--voice`, `--model`, and `--voices`. The wrapper seeds only missing model/voice
 files from `/app/src` into its dedicated `/data` cache, then runs the upstream
-entrypoint with explicit paths. `ONNX_PROVIDER=CPUExecutionProvider` selects CPU
+entrypoint using the verified `/usr/bin/python3` (Python 3.12) with explicit
+paths; `/usr/local/bin/python3` is absent in this pinned image.
+`ONNX_PROVIDER=CPUExecutionProvider` selects CPU
 in the packaged kokoro-onnx implementation. No GPU access is requested or tested.
 Its healthcheck requires a Wyoming Info response with TTS capability.
 
-Both use host networking, loopback listeners (10310/10210), and restart policy
-`unless-stopped`. Cache defaults are `./data/parakeet-v3` and `./data/kokoro`;
+Both use the ordinary Compose bridge and listen on `0.0.0.0` **inside their
+containers**. Ports are published only on the Docker host's loopback interface:
+`127.0.0.1:10310:10310` and `127.0.0.1:10210:10210`. Vauxr, Whisper and Piper retain
+their existing host networking; Vauxr reaches the optional services at
+`127.0.0.1:10310` / `127.0.0.1:10210` through those published ports. Compose service
+DNS names are available to peers on that bridge, not to host-network Vauxr.
+Do not configure Vauxr with `kokoro` / `parakeet-v3` DNS names or ephemeral bridge
+IP addresses. A listener bound to container loopback would not accept published
+port traffic. The healthchecks correctly use loopback *inside* each container.
+See [Docker bridge networking](https://docs.docker.com/engine/network/drivers/bridge/).
+Both retain restart policy `unless-stopped`. Cache defaults are `./data/parakeet-v3` and `./data/kokoro`;
 `PARAKEET_CACHE_DIR` / `KOKORO_CACHE_DIR` can point to existing daemon-host paths.
 Keep caches on durable storage. The initial model download can exceed the
 five-minute healthcheck grace period on slow connections; inspect logs and wait
@@ -268,7 +280,11 @@ The local verification synthesized “The quick brown fox jumps over the lazy do
 with Kokoro through the project client, resampled it to mono 16-bit 16 kHz PCM,
 and sent that fixed audio through the project Parakeet Wyoming client. The
 transcript matched exactly. Audio stayed local; no speaker, device, or LLM turn
-was involved. This is a smoke test, not a latency or recognition benchmark.
+was involved. A subsequent review repeated Describe, both configured healthchecks,
+and this inference smoke test using isolated containers on a user-defined bridge,
+with a separate host-network client accessing loopback-published ports. The pinned
+Python paths above were inspected directly in the images. This is a smoke test,
+not a latency or recognition benchmark.
 
 For service rollback, first restore the prior registry (or remove only the two
 new objects) and restart Vauxr, then stop/remove only `parakeet-v3` and `kokoro`.

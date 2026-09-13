@@ -261,7 +261,8 @@ REALTIME_HOST=<device-reachable-lan-ip>   # used to build offer_url + for SDP mu
 REALTIME_STUN_URL=stun:stun.l.google.com:19302
 ```
 
-> WebRTC (aiortc) uses ephemeral UDP ports for ICE, so the realtime build runs the stack with `network_mode: host`. See `docker-compose.yml`.
+> WebRTC (aiortc) uses ephemeral UDP ports for ICE, so Vauxr retains `network_mode: host`, as do the existing Whisper/Piper services.
+> Optional Parakeet/Kokoro services use the Compose bridge with loopback-published ports. See `docker-compose.yml`.
 
 ---
 
