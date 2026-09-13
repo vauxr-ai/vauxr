@@ -15,6 +15,7 @@ from typing import Any, TypedDict
 
 from aiohttp import WSMsgType, web
 
+import auth_connections
 import channel_registry
 from auth import authenticate, current
 from auth_policy import Operation, Principal, allowed, audit_denial
@@ -31,13 +32,14 @@ class DeviceResponseListener(TypedDict):
 
 
 class _Connection:
-    __slots__ = ("authenticated", "channel", "principal", "ws")
+    __slots__ = ("authenticated", "authority", "channel", "principal", "ws")
 
     def __init__(self, ws: web.WebSocketResponse) -> None:
         self.ws: web.WebSocketResponse = ws
         self.channel: channel_registry.Channel | None = None
         self.authenticated = False
         self.principal: Principal | None = None
+        self.authority: auth_connections.Connection | None = None
 
 
 async def _send_json(ws: web.WebSocketResponse, obj: dict[str, Any]) -> None:
@@ -166,6 +168,7 @@ class ChannelServer:
 
                 await self._handle_authenticated_message(conn, payload)
         finally:
+            auth_connections.release(conn.authority)
             auth_done.set()
             timeout_task.cancel()
             if conn.authenticated and conn.channel is not None:
@@ -192,6 +195,25 @@ class ChannelServer:
         conn.principal = principal
         conn.authenticated = True
         conn.channel = channel
+
+        async def close_revoked() -> None:
+            if self._connections.get(channel.id) is conn:
+                self._connections.pop(channel.id, None)
+                if channel_registry.get_active() == channel:
+                    for device_id, listener in list(self._response_listeners.items()):
+                        listener["on_error"](device_id, "integration_revoked")
+                    import device_registry
+                    from config import get_config
+
+                    for device in device_registry.get_all():
+                        device_registry.abort_active_turn(device.id)
+                        if get_config().realtime.enabled:
+                            from realtime_session import get_manager
+
+                            await get_manager().stop(device.id)
+            await conn.ws.close()
+
+        conn.authority = auth_connections.retain(principal, close_revoked)
 
         existing = self._connections.get(channel.id)
         if existing is not None and existing is not conn:

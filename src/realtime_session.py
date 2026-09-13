@@ -1163,6 +1163,11 @@ class RealtimeManager:
             await _send_json(ws, {"type": "audio.end", "follow_up": False})
         registry.set_state(device_id, "idle")
 
+    async def stop_all(self) -> None:
+        """Retire media and armed wakes when their active integration is revoked."""
+        for device_id in set(self._sessions) | set(self._preroll):
+            await self.stop(device_id)
+
     async def stop(self, device_id: str) -> None:
         session = self._sessions.get(device_id)
         if session is not None:
