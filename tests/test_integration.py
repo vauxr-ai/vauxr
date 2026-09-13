@@ -1,5 +1,6 @@
 """Synthetic integration enrollment, persistence and client boundary regressions."""
 
+import asyncio
 import copy
 import json
 import os
@@ -366,7 +367,7 @@ async def test_retiring_channel_connected_before_activation_tears_down_dependent
     env, monkeypatch, action, alternate_channel
 ):
     from types import SimpleNamespace
-    from unittest.mock import AsyncMock, Mock
+    from unittest.mock import AsyncMock
 
     import auth_connections
     import device_registry
@@ -385,9 +386,9 @@ async def test_retiring_channel_connected_before_activation_tears_down_dependent
         assert server.is_active_connected()
         errors = []
         server.add_response_listener("speaker", {"on_error": lambda *args: errors.append(args)})
-        abort = Mock()
+        abort = asyncio.Event()
+        server.retain_media_turn(issued["channel_id"], abort)
         monkeypatch.setattr(device_registry, "get_all", lambda: [SimpleNamespace(id="speaker")])
-        monkeypatch.setattr(device_registry, "abort_active_turn", abort)
         monkeypatch.setattr(config, "get_config", lambda: SimpleNamespace(realtime=SimpleNamespace(enabled=False)))
         lifecycle = Lifecycle(service.store, ORIGIN)
         control = {"operation_id": "a" * 32, "role": "integration", "subject": issued["channel_id"]}
@@ -407,7 +408,7 @@ async def test_retiring_channel_connected_before_activation_tears_down_dependent
         await auth_connections.disconnect_stale(service.store)
         socket.close.assert_awaited_once()
         assert errors == [("speaker", "integration_revoked")]
-        abort.assert_called_once_with("speaker")
+        assert abort.is_set()
         assert not server.is_active_connected()
     finally:
         auth_connections.release(connection.authority)
@@ -628,3 +629,147 @@ def test_rotation_preserves_valid_routing_and_retires_only_unusable_channel(
         service.store = CredentialStore(service.store.path)
         assert_selected()
         assert replacement()
+
+
+@pytest.mark.parametrize("replacement_turn", [False, True])
+async def test_revoke_after_response_end_aborts_only_originating_media(
+    env, alternate_channel, monkeypatch, replacement_turn
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import auth_connections
+    import device_registry
+    import pipeline
+    from channel_server import ChannelServer, _Connection
+    from tests.test_pipeline import FakeWs
+
+    service, owner = env
+    body, _, issued = deliver(env)
+    service.execute("ack", ack_body(body, issued))
+    server = ChannelServer()
+    connection = _Connection(SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock()))
+    await server._handle_auth(connection, issued["credential"])
+    assert channel_registry.activate(issued["channel_id"])
+    ready, draining, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original_add = server.add_response_listener
+    original_done = pipeline.SegmentQueue.done
+
+    def add(device_id, listener):
+        original_add(device_id, listener)
+        ready.set()
+
+    async def done(queue):
+        # This barrier proves response.end was consumed and the listener removed.
+        assert server.get_response_listener("speaker") is None
+        draining.set()
+        await original_done(queue)
+
+    async def synthesize(*args, **kwargs):
+        await release.wait()
+        yield b"retired-audio"
+
+    monkeypatch.setattr(server, "add_response_listener", add)
+    monkeypatch.setattr(pipeline.SegmentQueue, "done", done)
+    monkeypatch.setattr(pipeline, "synthesize", synthesize)
+    ws = FakeWs()
+    device = device_registry.register("speaker", ws=ws)
+    abort = asyncio.Event()
+    device.abort_event = abort
+    task = asyncio.create_task(pipeline.run_text_turn("speaker", "hello", ws, None, server, abort))
+    replacement_abort = asyncio.Event()
+    try:
+        await asyncio.wait_for(ready.wait(), 1)
+        listener = server.get_response_listener("speaker")
+        listener["on_delta"]("a", "Queued speech.")
+        listener["on_end"]("a")
+        await asyncio.wait_for(draining.wait(), 1)
+        assert not task.done() and not abort.is_set()
+        # Switch selection before revocation; optionally replace this same device's turn.
+        assert channel_registry.activate(alternate_channel.id)
+        replacement_listener = {"on_delta": lambda *args: None, "on_end": lambda *args: None,
+                                "on_error": lambda *args: pytest.fail("replacement notified")}
+        if replacement_turn:
+            device.abort_event = replacement_abort
+            server.retain_media_turn(alternate_channel.id, replacement_abort)
+            server.add_response_listener("speaker", replacement_listener)
+        Lifecycle(service.store, ORIGIN).execute(
+            "revoke", {"operation_id": "e" * 32, "role": "integration", "subject": issued["channel_id"]}, owner)
+        await auth_connections.disconnect_stale(service.store)
+        assert abort.is_set()
+        assert not replacement_abort.is_set()
+        if replacement_turn:
+            assert device.abort_event is replacement_abort
+        # The completion hook need only assert removal for the first drain boundary.
+        monkeypatch.setattr(pipeline.SegmentQueue, "done", original_done)
+        release.set()
+        await asyncio.wait_for(task, 1)
+        assert not ws.binary
+        assert not any(msg["type"] == "audio.end" for msg in ws.json_messages())
+        assert abort not in server._media_turns
+        if replacement_turn:
+            assert server.get_response_listener("speaker") is replacement_listener
+            assert server._media_turns[replacement_abort] == alternate_channel.id
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        server.release_media_turn(replacement_abort)
+        auth_connections.release(connection.authority)
+        device_registry.reset()
+
+
+async def test_fallback_b_cannot_dispatch_to_a_listener_while_a_teardown_held(env, alternate_channel):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    import auth_connections
+    from channel_server import ChannelServer, _Connection
+
+    service, owner = env
+    server = ChannelServer()
+    connections = []
+    for index in (1, 2):
+        body, _, issued = deliver(env, index)
+        service.execute("ack", ack_body(body, issued))
+        conn = _Connection(SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock()))
+        await server._handle_auth(conn, issued["credential"])
+        connections.append(conn)
+    a, b = connections
+    # B is the configured fallback; A is selected in the integration snapshot.
+    channel_registry._set_active_for_tests(b.channel)
+    assert channel_registry.activate(a.channel.id)
+    listener = {"on_delta": Mock(), "on_end": Mock(), "on_error": Mock()}
+    server.add_response_listener("speaker", listener)
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_close = a.authority.close
+
+    async def held_close():
+        entered.set()
+        await release.wait()
+        await original_close()
+
+    a.authority.close = held_close
+    Lifecycle(service.store, ORIGIN).execute(
+        "revoke", {"operation_id": "f" * 32, "role": "integration", "subject": a.channel.id}, owner)
+    teardown = asyncio.create_task(auth_connections.disconnect_stale(service.store))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        assert channel_registry.get_active().id == b.channel.id
+        assert server.is_active_connected()
+        for kind in ("delta", "end", "error"):
+            await server._handle_authenticated_message(b, {
+                "type": "channel.response." + kind, "deviceId": "speaker", "runId": "b",
+                "text": "Wrong origin", "message": "Wrong origin"})
+        for callback in listener.values():
+            callback.assert_not_called()
+        b.ws.close.assert_not_awaited()
+        release.set()
+        await asyncio.wait_for(teardown, 1)
+        listener["on_error"].assert_called_once_with("speaker", "integration_revoked")
+    finally:
+        release.set()
+        await asyncio.gather(teardown, return_exceptions=True)
+        for conn in connections:
+            auth_connections.release(conn.authority)
