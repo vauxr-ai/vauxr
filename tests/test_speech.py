@@ -10,6 +10,9 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 import config
+import auth
+from auth_policy import Role
+from tests.auth_helpers import owner_headers, seed
 import speech
 from speech import Backend, SpeechStore
 
@@ -18,7 +21,12 @@ from speech import Backend, SpeechStore
 def store(tmp_path, monkeypatch):
     monkeypatch.setenv("DEVICE_TOKEN", "speech-test")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("OWNER_HTTPS_ORIGIN", "https://owner.example")
+    monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
     config.reset_config()
+    auth._store = None
+    seed("speech-test", Role.DEVICE, "a")
+    seed("integration-test", Role.INTEGRATION, "channel")
     backends = (
         Backend("whisper", "stt", "whisper", "small", "127.0.0.1", 10300),
         Backend("parakeet", "stt", "parakeet-v3", "v3", "127.0.0.1", 10301),
@@ -31,6 +39,7 @@ def store(tmp_path, monkeypatch):
 
     monkeypatch.setattr(speech_http, "get_store", lambda: store)
     yield store
+    auth._store = None
     config.reset_config()
 
 
@@ -97,7 +106,7 @@ async def test_http_management_auth_validation_and_isolation(store, monkeypatch)
             for method in ("GET", "PATCH"):
                 r = await client.request(method, path, json={"tts_backend": "kokoro"})
                 assert r.status == 401
-        headers = {"Authorization": "Bearer speech-test"}
+        headers = owner_headers(client)
         r = await client.patch("/api/devices/a/speech", headers=headers, json={"tts_backend": "kokoro"})
         assert r.status == 200
         body = await r.json()
@@ -108,10 +117,10 @@ async def test_http_management_auth_validation_and_isolation(store, monkeypatch)
         assert (await r.json())["effective"]["tts_backend"] == "piper"
         r = await client.patch("/api/speech", headers=headers, json={"url": "tcp://bad:1"})
         assert r.status == 400
-        # Existing channel-token management boundary is preserved, not reimplemented.
+        # Legacy channel tokens cannot manage speech settings.
         monkeypatch.setattr(channel_registry, "validate_channel_token", AsyncMock(return_value=object()))
         r = await client.get("/api/speech", headers={"Authorization": "Bearer channel-test"})
-        assert r.status == 200
+        assert r.status == 401
 
 
 async def test_midturn_stt_to_multiple_tts_segments(store, monkeypatch):
@@ -143,7 +152,7 @@ async def test_midturn_stt_to_multiple_tts_segments(store, monkeypatch):
     ws = SimpleNamespace(closed=False, send_str=AsyncMock(), send_bytes=AsyncMock())
     channels = SimpleNamespace(get_active_channel=lambda: SimpleNamespace(type="openclaw-direct"))
     state = AppState(openclaw_client=object(), channel_server=channels)
-    ctx = ConnectionCtx()
+    ctx = ConnectionCtx(device_id="a", principal=auth.authenticate("speech-test"))
     await _voice_start(
         state, ws, ctx, {"device_id": "a", "token": "speech-test", "tts_backend": "kokoro", "voice": "bf"}
     )
@@ -337,7 +346,7 @@ async def test_announcement_outage_returns_503_and_error_frame(store, monkeypatc
     monkeypatch.setattr(button_dispatch, "synthesize", failed)
     async with TestClient(TestServer(make_http_app())) as client:
         response = await client.post(
-            "/api/devices/a/announce", json={"text": "hello"}, headers={"Authorization": "Bearer speech-test"}
+            "/api/devices/a/announce", json={"text": "hello"}, headers=owner_headers(client)
         )
         assert response.status == 503
     messages = [json.loads(call.args[0]) for call in ws.send_str.call_args_list]
@@ -463,3 +472,25 @@ async def test_realtime_rejected_turn_cannot_retry_resolution(store, monkeypatch
     await tts.on_turn_context_created("accepted")
     assert tts._selections["accepted"] == selected
     resolver.assert_called_once_with("a")
+
+
+@pytest.mark.parametrize("path", ["/api/speech", "/api/devices/a/speech"])
+async def test_speech_owner_mutations_require_csrf_and_live_session(store, monkeypatch, path):
+    import speech_http
+    from http_server import make_http_app
+    from owner_http import OWNER
+
+    monkeypatch.setattr(speech_http, "readiness", AsyncMock(return_value="ready"))
+    async with TestClient(TestServer(make_http_app())) as client:
+        headers = owner_headers(client)
+        before = store.resolve("a")
+        for invalid in ({k: v for k, v in headers.items() if k != "X-CSRF-Token"},
+                        {**headers, "Origin": "https://other.example"}):
+            response = await client.patch(path, headers=invalid, json={"tts_backend": "kokoro"})
+            assert response.status == 403
+            assert store.resolve("a") == before
+        response = await client.patch(path, headers=headers, json={"tts_backend": "kokoro"})
+        assert response.status == 200
+        assert store.resolve("a").tts.id == "kokoro"
+        client.app[OWNER].console_claim(recover=True)
+        assert (await client.get(path, headers=headers)).status == 401

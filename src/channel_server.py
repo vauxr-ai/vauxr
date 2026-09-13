@@ -10,11 +10,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable, TypedDict
+from collections.abc import Awaitable, Callable
+from typing import Any, TypedDict
 
 from aiohttp import WSMsgType, web
 
+import auth_connections
 import channel_registry
+from auth import authenticate, current
+from auth_policy import Operation, Principal, allowed, audit_denial
 
 log = logging.getLogger("vauxr.channel_server")
 
@@ -28,12 +32,14 @@ class DeviceResponseListener(TypedDict):
 
 
 class _Connection:
-    __slots__ = ("ws", "channel", "authenticated")
+    __slots__ = ("authenticated", "authority", "channel", "principal", "ws")
 
     def __init__(self, ws: web.WebSocketResponse) -> None:
         self.ws: web.WebSocketResponse = ws
         self.channel: channel_registry.Channel | None = None
         self.authenticated = False
+        self.principal: Principal | None = None
+        self.authority: auth_connections.Connection | None = None
 
 
 async def _send_json(ws: web.WebSocketResponse, obj: dict[str, Any]) -> None:
@@ -49,6 +55,9 @@ class ChannelServer:
     def __init__(self) -> None:
         self._connections: dict[str, _Connection] = {}
         self._response_listeners: dict[str, DeviceResponseListener] = {}
+        self._response_channels: dict[str, str] = {}
+        self._media_turns: dict[asyncio.Event, str] = {}
+        self._media_authorities: dict[asyncio.Event, auth_connections.Connection] = {}
 
     # --- Pipeline-facing API ---
 
@@ -62,7 +71,7 @@ class ChannelServer:
         if active.type == "openclaw-direct":
             return True
         conn = self._connections.get(active.id)
-        return conn is not None and not conn.ws.closed
+        return conn is not None and not conn.ws.closed and current(conn.principal)
 
     def send_transcript(self, device_id: str, text: str) -> bool:
         active = channel_registry.get_active()
@@ -72,7 +81,7 @@ class ChannelServer:
         if active.type == "openclaw-direct":
             return False
         conn = self._connections.get(active.id)
-        if conn is None or conn.ws.closed:
+        if conn is None or conn.ws.closed or not current(conn.principal):
             log.warning("Active channel %s not connected — dropping transcript", active.name)
             return False
 
@@ -89,11 +98,39 @@ class ChannelServer:
                 },
             )
         )
-        log.info("Sent transcript to %s: %r", active.name, text)
+        log.info("Sent transcript")
         return True
+
+    def retain_media_turn(
+        self, channel_id: str, abort: asyncio.Event,
+        close: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        """Keep exact turn authority until all queued media has completed."""
+        if abort in self._media_turns:
+            raise ValueError("media turn already retained")
+        self._media_turns[abort] = channel_id
+        conn = self._connections.get(channel_id)
+        if conn is not None and conn.principal is not None:
+            async def close_revoked() -> None:
+                # A completed entry may already be in a teardown snapshot.
+                if abort not in self._media_turns:
+                    return
+                abort.set()
+                if close is not None:
+                    await close()
+
+            # This authority belongs to the media, not the socket. Socket close,
+            # routing fallback and replacement turns must not release it.
+            self._media_authorities[abort] = auth_connections.retain(conn.principal, close_revoked)
+
+    def release_media_turn(self, abort: asyncio.Event) -> None:
+        self._media_turns.pop(abort, None)
+        auth_connections.release(self._media_authorities.pop(abort, None))
 
     def add_response_listener(self, device_id: str, listener: DeviceResponseListener) -> None:
         self._response_listeners[device_id] = listener
+        active = channel_registry.get_active()
+        self._response_channels[device_id] = active.id if active else ""
 
     def remove_response_listener(
         self, device_id: str, listener: DeviceResponseListener | None = None
@@ -104,6 +141,7 @@ class ChannelServer:
         if listener is not None and self._response_listeners.get(device_id) is not listener:
             return
         self._response_listeners.pop(device_id, None)
+        self._response_channels.pop(device_id, None)
 
     def get_response_listener(self, device_id: str) -> DeviceResponseListener | None:
         return self._response_listeners.get(device_id)
@@ -118,7 +156,7 @@ class ChannelServer:
         async def auth_timeout() -> None:
             try:
                 await asyncio.wait_for(auth_done.wait(), timeout=_AUTH_TIMEOUT_S)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if not conn.authenticated:
                     await _send_json(
                         ws,
@@ -149,6 +187,7 @@ class ChannelServer:
                         await self._handle_auth(conn, payload.get("token", ""))
                         auth_done.set()
                     else:
+                        audit_denial(False)
                         await _send_json(
                             ws,
                             {
@@ -161,6 +200,7 @@ class ChannelServer:
 
                 await self._handle_authenticated_message(conn, payload)
         finally:
+            auth_connections.release(conn.authority)
             auth_done.set()
             timeout_task.cancel()
             if conn.authenticated and conn.channel is not None:
@@ -173,16 +213,38 @@ class ChannelServer:
                 log.info("unauthenticated channel connection closed")
 
     async def _handle_auth(self, conn: _Connection, token: str) -> None:
-        channel = await channel_registry.validate_channel_token(token)
-        if channel is None:
+        principal = authenticate(token)
+        channel = channel_registry.get_by_id(principal.subject) if principal else None
+        if not allowed(principal, Operation.CHANNEL_CONNECT) or channel is None:
+            audit_denial(principal is not None)
             await _send_json(
                 conn.ws,
-                {"type": "error", "code": "UNAUTHORIZED", "message": "Invalid channel token"},
+                {"type": "error", "code": "UNAUTHORIZED" if principal is None else "FORBIDDEN",
+                 "message": "Access denied"},
             )
             await conn.ws.close()
             return
+        conn.principal = principal
         conn.authenticated = True
         conn.channel = channel
+
+        teardown: list[auth_connections.Teardown] = []
+
+        async def close_revoked() -> None:
+            if not teardown:
+                teardown.append(auth_connections.Teardown(conn.ws.close))
+                if self._connections.get(channel.id) is conn:
+                    self._connections.pop(channel.id, None)
+                    dependents = {device_id: listener for device_id, listener in self._response_listeners.items()
+                                  if self._response_channels.get(device_id) == channel.id}
+                    for device_id, listener in dependents.items():
+                        async def notify(device_id=device_id, listener=listener) -> None:
+                            listener["on_error"](device_id, "integration_revoked")
+
+                        teardown.append(auth_connections.Teardown(notify))
+            await auth_connections.run_teardowns(teardown)
+
+        conn.authority = auth_connections.retain(principal, close_revoked)
 
         existing = self._connections.get(channel.id)
         if existing is not None and existing is not conn:
@@ -191,6 +253,10 @@ class ChannelServer:
             # different conn and doesn't clear our slot.
             await existing.ws.close()
 
+        # Replacement close yields: revoke/rotation may retire this principal meanwhile.
+        if not current(principal) or conn.ws.closed:
+            await conn.ws.close()
+            return
         self._connections[channel.id] = conn
         await _send_json(
             conn.ws,
@@ -199,6 +265,22 @@ class ChannelServer:
         log.info("channel authenticated: %s (%s)", channel.name, channel.id)
 
     async def _handle_authenticated_message(self, conn: _Connection, msg: dict[str, Any]) -> None:
+        active = channel_registry.get_active()
+        authenticated = current(conn.principal)
+        if (not authenticated or not allowed(conn.principal, Operation.VOICE_RESPONSE)
+                or conn.channel is None or conn.principal.subject != conn.channel.id
+                or active is None or active.id != conn.channel.id
+                or self._connections.get(conn.channel.id) is not conn
+                or not isinstance(msg.get("type"), str)
+                or msg.get("type") not in {
+                    "channel.response.delta", "channel.response.end", "channel.response.error"
+                }):
+            audit_denial(authenticated)
+            await _send_json(conn.ws, {"type": "error",
+                                      "code": "FORBIDDEN" if authenticated else "UNAUTHORIZED",
+                                      "message": "Access denied"})
+            await conn.ws.close()
+            return
         device_id = msg.get("deviceId")
         run_id = msg.get("runId")
         msg_type = msg.get("type")
@@ -210,6 +292,11 @@ class ChannelServer:
         if listener is None:
             channel_name = conn.channel.name if conn.channel else "?"
             log.warning("%s: no listener for %s (%s)", channel_name, device_id, msg_type)
+            return
+
+        if self._response_channels.get(device_id) != conn.channel.id:
+            audit_denial(True)
+            log.warning("Ignoring response from channel other than listener origin")
             return
 
         if msg_type == "channel.response.delta":

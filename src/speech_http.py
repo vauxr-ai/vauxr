@@ -1,6 +1,6 @@
 """Speech management API. Authorization is injected by the HTTP composition root.
 
-Future owner/scoped auth plugs in here; device/offer input never sets selections.
+The composition root enforces owner/scoped auth; device/offer input never sets selections.
 """
 
 from __future__ import annotations
@@ -15,7 +15,13 @@ from speech import get_store, readiness
 ManagementAuthorization = Callable[[web.Request], Awaitable[bool]]
 
 
-def attach_speech_routes(app: web.Application, authorize: ManagementAuthorization) -> None:
+SpeechHandler = Callable[[web.Request], Awaitable[web.StreamResponse]]
+
+
+def attach_speech_routes(
+    app: web.Application, authorize: ManagementAuthorization,
+    boundary: Callable[[SpeechHandler], SpeechHandler],
+) -> None:
     async def settings(request: web.Request) -> web.Response:
         if not await authorize(request):
             return web.json_response({"error": "unauthorized"}, status=401)
@@ -32,6 +38,7 @@ def attach_speech_routes(app: web.Application, authorize: ManagementAuthorizatio
             backend["readiness"] = state
         return web.json_response(result)
 
+    settings = boundary(settings)
     for path in ("/api/speech", "/api/devices/{device_id}/speech"):
         app.router.add_get(path, settings)
         app.router.add_patch(path, settings)

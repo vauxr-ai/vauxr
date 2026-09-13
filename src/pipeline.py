@@ -67,7 +67,7 @@ def resolve_follow_up(full_reply: str, mode: FollowUpMode) -> FollowUpResult:
     if _FOLLOW_UP_TAG in trimmed:
         return FollowUpResult(follow_up=True, reply_text=strip_follow_up_tag(trimmed))
     trimmed_end = trimmed.rstrip()
-    if trimmed_end.endswith("?") or trimmed_end.endswith("？"):
+    if trimmed_end.endswith(("?", "？")):
         return FollowUpResult(follow_up=True, reply_text=trimmed)
     return FollowUpResult(follow_up=False, reply_text=trimmed)
 
@@ -169,7 +169,7 @@ async def _route_via_openclaw_direct(
     device_id: str,
     transcript_text: str,
     ws: Any,
-    openclaw_client: "OpenClawClient",
+    openclaw_client: OpenClawClient,
     abort: asyncio.Event,
     target_rate: int | None,
     *,
@@ -221,7 +221,7 @@ async def _route_via_channel(
     device_id: str,
     transcript_text: str,
     ws: Any,
-    channel_server: "ChannelServer",
+    channel_server: ChannelServer,
     abort: asyncio.Event,
     target_rate: int | None,
     *,
@@ -310,9 +310,8 @@ async def _route_via_channel(
         queue.close()
         response_done.set_exception(RuntimeError(message))
 
-    channel_server.add_response_listener(
-        device_id, {"on_delta": on_delta, "on_end": on_end, "on_error": on_error}
-    )
+    listener = {"on_delta": on_delta, "on_end": on_end, "on_error": on_error}
+    channel_server.add_response_listener(device_id, listener)
 
     # If abort fires, finish.
     abort_waiter = asyncio.create_task(abort.wait())
@@ -326,65 +325,72 @@ async def _route_via_channel(
     abort_waiter.add_done_callback(_on_abort)
 
     try:
-        full_reply = await asyncio.wait_for(response_done, timeout=_CHANNEL_RESPONSE_TIMEOUT_S)
-    except asyncio.TimeoutError:
+        try:
+            full_reply = await asyncio.wait_for(response_done, timeout=_CHANNEL_RESPONSE_TIMEOUT_S)
+        except TimeoutError:
+            segmenter.abort()
+            queue.close()
+            await queue.done()
+            abort_waiter.cancel()
+            channel_server.remove_response_listener(device_id, listener)
+            if abort.is_set():
+                return
+            await _send_json(
+                ws,
+                {
+                    "type": "error",
+                    "code": "BACKEND_ERROR",
+                    "message": f"Channel response timeout after {int(_CHANNEL_RESPONSE_TIMEOUT_S)}s",
+                },
+            )
+            await _synthesize_error_message(ws, device_id, abort, target_rate, selection)
+            if not abort.is_set():
+                await send_audio_end(False)
+            return
+        except RuntimeError as err:
+            await queue.done()
+            abort_waiter.cancel()
+            channel_server.remove_response_listener(device_id, listener)
+            if abort.is_set():
+                return
+            await _send_json(
+                ws, {"type": "error", "code": "BACKEND_ERROR", "message": str(err)}
+            )
+            await _synthesize_error_message(ws, device_id, abort, target_rate, selection)
+            if not abort.is_set():
+                await send_audio_end(False)
+            return
+
+        abort_waiter.cancel()
+        channel_server.remove_response_listener(device_id, listener)
+        await queue.done()
+
+        if abort.is_set():
+            return
+
+        result = resolve_follow_up(full_reply, _follow_up_mode_for(device_id))
+        log.info(
+            "Channel reply (%d chars, follow_up=%s): %s",
+            len(result.reply_text),
+            result.follow_up,
+            result.reply_text[:200],
+        )
+        _record_completed_turn(device_id, transcript_text, result.reply_text)
+        await send_audio_end(result.follow_up)
+    finally:
+        abort_waiter.cancel()
+        channel_server.remove_response_listener(device_id, listener)
         segmenter.abort()
         queue.close()
         await queue.done()
-        abort_waiter.cancel()
-        channel_server.remove_response_listener(device_id)
-        if abort.is_set():
-            return
-        await _send_json(
-            ws,
-            {
-                "type": "error",
-                "code": "BACKEND_ERROR",
-                "message": f"Channel response timeout after {int(_CHANNEL_RESPONSE_TIMEOUT_S)}s",
-            },
-        )
-        await _synthesize_error_message(ws, device_id, abort, target_rate, selection)
-        if not abort.is_set():
-            await send_audio_end(False)
-        return
-    except RuntimeError as err:
-        await queue.done()
-        abort_waiter.cancel()
-        channel_server.remove_response_listener(device_id)
-        if abort.is_set():
-            return
-        await _send_json(
-            ws, {"type": "error", "code": "BACKEND_ERROR", "message": str(err)}
-        )
-        await _synthesize_error_message(ws, device_id, abort, target_rate, selection)
-        if not abort.is_set():
-            await send_audio_end(False)
-        return
-
-    abort_waiter.cancel()
-    channel_server.remove_response_listener(device_id)
-    await queue.done()
-
-    if abort.is_set():
-        return
-
-    result = resolve_follow_up(full_reply, _follow_up_mode_for(device_id))
-    log.info(
-        "Channel reply (%d chars, follow_up=%s): %s",
-        len(result.reply_text),
-        result.follow_up,
-        result.reply_text[:200],
-    )
-    _record_completed_turn(device_id, transcript_text, result.reply_text)
-    await send_audio_end(result.follow_up)
 
 
 async def run_voice_turn(
     device_id: str,
     audio_chunks: list[bytes],
     ws: Any,
-    openclaw_client: "OpenClawClient | None",
-    channel_server: "ChannelServer",
+    openclaw_client: OpenClawClient | None,
+    channel_server: ChannelServer,
     abort: asyncio.Event,
     target_rate: int | None = None,
     *,
@@ -421,8 +427,8 @@ async def run_text_turn(
     device_id: str,
     transcript_text: str,
     ws: Any,
-    openclaw_client: "OpenClawClient | None",
-    channel_server: "ChannelServer",
+    openclaw_client: OpenClawClient | None,
+    channel_server: ChannelServer,
     abort: asyncio.Event,
     target_rate: int | None = None,
     *,
@@ -460,10 +466,14 @@ async def run_text_turn(
         )
     elif active is not None and getattr(active, "type", None) != "openclaw-direct":
         log.info("Routing via channel %r for %s", getattr(active, "name", "?"), device_id)
-        await _route_via_channel(
-            device_id, transcript_text, ws, channel_server, abort, target_rate,
-            selection=selection, send_audio_end=send_audio_end,
-        )
+        channel_server.retain_media_turn(active.id, abort)
+        try:
+            await _route_via_channel(
+                device_id, transcript_text, ws, channel_server, abort, target_rate,
+                selection=selection, send_audio_end=send_audio_end,
+            )
+        finally:
+            channel_server.release_media_turn(abort)
     else:
         log.warning("No active channel or backend available — dropping turn")
         await _send_json(

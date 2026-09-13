@@ -23,6 +23,7 @@ from pipecat.utils.types import NOT_GIVEN
 
 import config
 import device_registry
+import realtime_session
 from realtime_llm import ChannelLLMService
 from realtime_session import RealtimeSession
 from realtime_transport import use_websocket_control
@@ -33,6 +34,7 @@ from realtime_wyoming import WyomingSTTService, WyomingTTSService
 def session_config(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("DEVICE_TOKEN", "log-health-test")
     monkeypatch.setenv("REALTIME_ESP32", "1")
+    monkeypatch.setattr(realtime_session, "_manager", realtime_session.RealtimeManager())
     config.reset_config()
     yield
     config.reset_config()
@@ -146,6 +148,7 @@ async def test_warm_quiet_still_reads_audio_and_follow_up_reenables_track(
 ) -> None:
     track = _audio_track()
     session = RealtimeSession("log-health-test", channel_server=SimpleNamespace())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     session._connection = SimpleNamespace(audio_input_track=lambda: track)
     try:
         await session._send_audio_end(False)
@@ -179,6 +182,7 @@ async def test_browser_audio_policy_preserves_track_ownership(
     track = _audio_track()
     track.set_enabled(initially_enabled)
     session = RealtimeSession("log-health-test", channel_server=SimpleNamespace())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     session._connection = SimpleNamespace(audio_input_track=lambda: track)
     await session._send_audio_end(False)
     assert track.is_enabled() is initially_enabled
@@ -197,6 +201,7 @@ async def test_failed_audio_end_keeps_timeout_diagnostics(
     track = _audio_track()
     track.set_enabled(initially_enabled)
     session = RealtimeSession("log-health-test", channel_server=SimpleNamespace())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     session._connection = SimpleNamespace(audio_input_track=lambda: track)
     if failure == "missing":
         device_registry.unregister("log-health-test")
@@ -226,6 +231,7 @@ async def test_pending_audio_end_does_not_hide_new_activity(
 ) -> None:
     track = _audio_track()
     session = RealtimeSession("log-health-test", channel_server=SimpleNamespace())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     session._connection = SimpleNamespace(audio_input_track=lambda: track)
     started, release = asyncio.Event(), asyncio.Event()
 
@@ -315,6 +321,7 @@ async def test_rtp_only_warm_wake_can_promote_new_turn(control_ws: SimpleNamespa
 
     track = _audio_track()
     session = RealtimeSession("log-health-test", channel_server=SimpleNamespace())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     session._connection = SimpleNamespace(audio_input_track=lambda: track)
     strategy = SuppressibleVADUserTurnStartStrategy(is_suppressed=session._turns_suppressed)
     strategy.trigger_user_turn_started = AsyncMock()
@@ -344,6 +351,7 @@ async def test_channel_completion_owns_processing_gate(
     from pipecat.processors.aggregators.llm_context import LLMContext
 
     session = RealtimeSession("log-health-test", channel_server=SimpleNamespace())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     session._context = LLMContext([{"role": "user", "content": "first"}])
     listener = {}
     sends = 0
@@ -393,6 +401,7 @@ async def test_prompt_follow_up_reopens_mic_only_after_current_control_delivery(
     control_ws: SimpleNamespace, intervening: str,
 ) -> None:
     session = RealtimeSession("log-health-test", channel_server=SimpleNamespace())
+    realtime_session.get_manager()._sessions[session.device_id] = session
     session.set_mic_paused(True)
     device_registry.set_state(session.device_id, "processing")
 

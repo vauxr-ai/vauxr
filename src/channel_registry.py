@@ -13,8 +13,8 @@ import json
 import os
 import secrets
 import uuid
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal
 
 import bcrypt
@@ -143,7 +143,7 @@ def _openclaw_direct_channel() -> Channel | None:
         type="openclaw-direct",
         tokenHash="",
         active=_openclaw_direct_active,
-        createdAt=datetime.fromtimestamp(0, tz=timezone.utc).isoformat().replace("+00:00", "Z").replace("Z", ".000Z"),
+        createdAt=datetime.fromtimestamp(0, tz=UTC).isoformat().replace("+00:00", "Z").replace("Z", ".000Z"),
         builtin=True,
     )
 
@@ -161,10 +161,19 @@ def get_all() -> list[ChannelPublic]:
         out.append(_public(direct))
     for c in _channels:
         out.append(_public(c))
+    integrations = _integration_channels()
+    if any(c.active for c in integrations):
+        from dataclasses import replace
+
+        out = [replace(c, active=False) for c in out]
+    out.extend(_public(c) for c in integrations)
     return out
 
 
 def get_by_id(channel_id: str) -> Channel | None:
+    enrolled = next((c for c in _integration_channels() if c.id == channel_id), None)
+    if enrolled is not None:
+        return enrolled
     if channel_id == "openclaw-direct":
         return _openclaw_direct_channel()
     for c in _channels:
@@ -174,6 +183,9 @@ def get_by_id(channel_id: str) -> Channel | None:
 
 
 def get_active() -> Channel | None:
+    enrolled = next((c for c in _integration_channels() if c.active), None)
+    if enrolled is not None:
+        return enrolled
     direct = _openclaw_direct_channel()
     if direct is not None and direct.active:
         return direct
@@ -196,7 +208,7 @@ async def create(name: str, type_: str = "openclaw") -> tuple[ChannelPublic, str
         type="openclaw",
         tokenHash=token_hash.decode("utf-8"),
         active=False,
-        createdAt=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        createdAt=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     )
     _channels.append(channel)
     _save_channels()
@@ -217,6 +229,10 @@ def remove(channel_id: str) -> bool:
 
 def activate(channel_id: str) -> bool:
     global _openclaw_direct_active
+    if get_by_id(channel_id) is None:
+        return False
+    if _activate_integration(channel_id):
+        return True
     if channel_id == "openclaw-direct":
         direct = _openclaw_direct_channel()
         if direct is None:
@@ -292,7 +308,7 @@ def _reset_for_tests() -> None:
 
 def _set_active_for_tests(channel: Channel | None) -> None:
     """Used in pipeline tests where we don't want disk I/O."""
-    global _channels, _openclaw_direct_active
+    global _openclaw_direct_active
     if channel is None:
         for c in _channels:
             c.active = False
@@ -309,3 +325,40 @@ def _set_active_for_tests(channel: Channel | None) -> None:
     for c in _channels:
         c.active = c.id == channel.id
     _openclaw_direct_active = False
+
+
+def _integration_channels() -> list[Channel]:
+    """Project atomically enrolled routing metadata; never copy credentials to channels.json."""
+    from auth import get_store
+
+    store = get_store()
+    state = store.integration
+    return [Channel(id=row["channel_id"], name=row["display_name"], type="openclaw", tokenHash="",
+                    active=state.get("active_channel") == row["channel_id"],
+                    createdAt=datetime.fromtimestamp(row["created_at"], tz=UTC).isoformat())
+            for row in state.get("requests", {}).values() if store.integration_channel_valid(row)]
+
+
+def _activate_integration(channel_id: str) -> bool:
+    import copy
+
+    from auth import get_store
+
+    store = get_store()
+    with store.transaction():
+        state = copy.deepcopy(store.integration)
+        if not state:
+            return False
+        found = any(r["channel_id"] == channel_id and store.integration_channel_valid(r)
+                    for r in state["requests"].values())
+        # A row may have been retired since activate() looked it up.
+        if not found and any(r["channel_id"] == channel_id for r in state["requests"].values()):
+            return False
+        state["active_channel"] = channel_id if found else ""
+        store.integration = state
+        try:
+            store.replace(store.records)
+        except BaseException:
+            store.load()
+            raise
+        return found
