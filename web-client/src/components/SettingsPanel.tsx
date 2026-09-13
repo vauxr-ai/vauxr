@@ -1,3 +1,4 @@
+import SpeechSettings from "./SpeechSettings";
 import { useCallback, useEffect, useState } from "react";
 import { deriveHttpUrl } from "../hooks/useHttpApi";
 import { type ApiWebhook, useWebhooks } from "../hooks/useWebhooks";
@@ -198,6 +199,8 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
   }
 
   return (
+    <div className="space-y-4">
+      <SpeechSettings baseUrl={httpUrl} token={token} />
     <div className="card overflow-hidden">
       <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
         <div>
@@ -390,6 +393,7 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
           </ul>
         )}
       </div>
+    </div>
     </div>
   );
 }

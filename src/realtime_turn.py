@@ -1,6 +1,6 @@
-"""User-turn-stop strategy for batch (segmented) Whisper STT.
+"""User-turn-stop strategy for batch (segmented) Wyoming STT.
 
-Extracted from the realtime PoC. Wyoming/Whisper transcribes per VAD segment and
+Extracted from the realtime PoC. Wyoming STT transcribes per VAD segment and
 emits the TranscriptionFrame ~0.5-1s after VAD stop, so we finalize the user turn
 when that transcript lands (not on raw VAD stop) — otherwise the turn closes empty
 and the LLM runs one turn behind. A short fallback timeout finalizes anyway if no

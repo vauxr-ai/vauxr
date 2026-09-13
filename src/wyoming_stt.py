@@ -12,96 +12,31 @@ optionally followed by `data_length` bytes of separate JSON data and
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from dataclasses import dataclass, field
-from typing import Any
 
-from config import get_config
+from speech import Backend, resolve
+from wyoming_protocol import (
+    WyomingError,
+    WyomingEvent,
+    encode_event,
+    parse_wyoming_events,
+)
 
 log = logging.getLogger("vauxr.wyoming_stt")
-
-
-@dataclass
-class WyomingEvent:
-    type: str
-    data: dict[str, Any] = field(default_factory=dict)
-    payload: bytes | None = None
-
-
-def encode_event(event: WyomingEvent) -> bytes:
-    obj: dict[str, Any] = {"type": event.type, "data": event.data}
-    if event.payload and len(event.payload) > 0:
-        obj["payload_length"] = len(event.payload)
-    line = (json.dumps(obj, separators=(",", ":")) + "\n").encode("utf-8")
-    if event.payload and len(event.payload) > 0:
-        return line + event.payload
-    return line
-
-
-def parse_wyoming_events(buf: bytes) -> tuple[list[WyomingEvent], bytes]:
-    """Streaming parser. Returns parsed events + leftover bytes."""
-    events: list[WyomingEvent] = []
-    offset = 0
-    n = len(buf)
-
-    while offset < n:
-        nl = buf.find(b"\n", offset)
-        if nl == -1:
-            break
-
-        line_start = offset
-        line = buf[offset:nl]
-        offset = nl + 1
-
-        try:
-            parsed = json.loads(line.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            # Malformed header — skip to next line, matching Node behavior.
-            continue
-
-        if not isinstance(parsed, dict):
-            continue
-
-        data_len = int(parsed.get("data_length") or 0)
-        payload_len = int(parsed.get("payload_length") or 0)
-        total_trailing = data_len + payload_len
-
-        if total_trailing > 0 and offset + total_trailing > n:
-            # Need more bytes — rewind to the header start.
-            offset = line_start
-            break
-
-        data: dict[str, Any] = parsed.get("data") or {}
-        if data_len > 0:
-            try:
-                data = json.loads(buf[offset : offset + data_len].decode("utf-8"))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                # keep the header's `data` — same fallback as Node
-                pass
-            offset += data_len
-
-        payload: bytes | None = None
-        if payload_len > 0:
-            payload = bytes(buf[offset : offset + payload_len])
-            offset += payload_len
-
-        events.append(WyomingEvent(type=parsed.get("type", ""), data=data, payload=payload))
-
-    return events, bytes(buf[offset:])
 
 
 async def transcribe(
     chunks: list[bytes],
     sample_rate: int = 16000,
     timeout: float = 30.0,
+    *,
+    backend: Backend | None = None,
 ) -> str:
-    """Send audio chunks to whisper, return the first transcript text."""
-    cfg = get_config()
-    host = cfg.whisper.host
-    port = cfg.whisper.port
+    """Send audio chunks to the selected Wyoming STT service, return the first transcript text."""
+    backend = backend or resolve().stt
+    host, port = backend.host, backend.port
 
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
 
     try:
         writer.write(
@@ -130,10 +65,12 @@ async def transcribe(
             while True:
                 data = await reader.read(8192)
                 if not data:
-                    raise RuntimeError("STT connection closed before transcript")
+                    raise WyomingError("STT connection closed before transcript")
                 buf += data
                 events, buf = parse_wyoming_events(buf)
                 for ev in events:
+                    if ev.type == "error":
+                        raise WyomingError("STT provider returned a Wyoming error")
                     if ev.type == "transcript":
                         text = ev.data.get("text", "")
                         return text if isinstance(text, str) else ""

@@ -15,12 +15,13 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-import channel_registry, device_registry as registry
+import channel_registry
+import device_registry as registry
+import webhooks
 from auth import validate_channel_http_token, validate_token
 from config import get_config
 from device_config import VALID_FOLLOW_UP_MODES, parse_button_actions
 from protocol import encode_text_message
-import webhooks
 
 if TYPE_CHECKING:
     from channel_server import ChannelServer
@@ -171,7 +172,8 @@ async def announce(request: web.Request) -> web.Response:
     log.info("announce: synthesizing for %s %r", device_id, text)
     from button_dispatch import announce_to_device
 
-    await announce_to_device(device, text)
+    if not await announce_to_device(device, text):
+        return web.json_response({"error": "Selected speech provider unavailable"}, status=503)
     return web.json_response({"ok": True})
 
 
@@ -465,7 +467,15 @@ async def serve_firmware(request: web.Request) -> web.StreamResponse:
     )
 
 
+async def _authorize_speech_management(request: web.Request) -> bool:
+    """Legacy management boundary; replace with owner/scoped policy during #45/#49 integration."""
+    return await _bearer_token_valid(request)
+
+
 def attach_http_routes(app: web.Application) -> None:
+    from speech_http import attach_speech_routes
+
+    attach_speech_routes(app, _authorize_speech_management)
     async def _options(_r: web.Request) -> web.Response:
         return web.Response(status=204)
 

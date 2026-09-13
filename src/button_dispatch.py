@@ -13,6 +13,7 @@ import webhooks
 from device_config import VALID_GESTURES, ButtonAction
 from pipeline import run_text_turn
 from protocol import encode_text_message
+from speech import resolve
 from utils import make_binary_frame
 from wyoming_tts import synthesize
 
@@ -119,7 +120,7 @@ async def _dispatch_announce(device_id: str, text: str) -> None:
     await announce_to_device(entry, text)
 
 
-async def announce_to_device(device: Any, text: str) -> None:
+async def announce_to_device(device: Any, text: str) -> bool:
     """Synthesize ``text`` and stream it as 0x03 announce frames."""
     abort = asyncio.Event()
     sent_start = {"v": False}
@@ -132,18 +133,25 @@ async def announce_to_device(device: Any, text: str) -> None:
             sent_start["v"] = True
 
     chunk_count = 0
+    succeeded = True
     try:
+        selection = resolve(device.id)
         async for chunk in synthesize(
-            text, target_rate=device.output_sample_rate, abort_event=abort, on_sample_rate=on_rate
+            text, selection=selection, target_rate=device.output_sample_rate,
+            abort_event=abort, on_sample_rate=on_rate
         ):
             seq = registry.next_seq(device.id)
             await _send_bytes(device.ws, make_binary_frame(0x03, seq, chunk))
             chunk_count += 1
     except Exception as err:  # noqa: BLE001
+        succeeded = False
         log.error("TTS error for announce to %s: %s", device.id, err)
+        await _send_text(device.ws, {"type": "error", "code": "TTS_ERROR",
+                                    "message": "Selected speech provider unavailable"})
 
     await _send_text(device.ws, {"type": "audio.end"})
     log.info("announce: done %s, %d chunks sent", device.id, chunk_count)
+    return succeeded
 
 
 async def _dispatch_command(device_id: str, action: ButtonAction) -> None:

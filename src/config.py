@@ -1,13 +1,11 @@
-"""Configuration loaded from environment variables.
-
-Mirrors `src/config.ts` exactly: same env var names, same defaults, same
-parsing rules.
-"""
+"""Configuration loaded from environment variables, with legacy speech fallbacks."""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+
+from speech_catalog import speech_env
 
 
 @dataclass(frozen=True)
@@ -33,7 +31,7 @@ class DeviceConfigSection:
 
 
 @dataclass(frozen=True)
-class PiperConfig:
+class WyomingTTSConfig:
     host: str
     port: int
     voice: str
@@ -70,8 +68,8 @@ class Config:
     channel: ChannelConfig
     device: DeviceConfigSection
     data_dir: str
-    whisper: WyomingEndpoint
-    piper: PiperConfig
+    stt: WyomingEndpoint
+    tts: WyomingTTSConfig
     ws: PortConfig
     http: PortConfig
     streaming_tts: StreamingTtsConfig
@@ -105,10 +103,10 @@ def load_config() -> Config:
         channel=ChannelConfig(ws_path="/channel"),
         device=DeviceConfigSection(token=_required("DEVICE_TOKEN")),
         data_dir=_optional("DATA_DIR", "/data"),
-        whisper=_parse_wyoming_url(_optional("WHISPER_URL", "tcp://whisper:10300")),
-        piper=PiperConfig(
-            **_parse_wyoming_url(_optional("PIPER_URL", "tcp://piper:10200")).__dict__,
-            voice=_optional("PIPER_VOICE", "en_US-libritts_r-medium"),
+        stt=_parse_wyoming_url(speech_env("STT_URL")),
+        tts=WyomingTTSConfig(
+            **_parse_wyoming_url(speech_env("TTS_URL")).__dict__,
+            voice=speech_env("TTS_VOICE"),
         ),
         ws=PortConfig(port=int(_optional("WS_PORT", "8765"))),
         http=PortConfig(port=int(_optional("HTTP_PORT", "8080"))),

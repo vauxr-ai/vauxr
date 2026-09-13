@@ -21,12 +21,12 @@ from device_config import FollowUpMode
 from idle_segmenter import IdleSegmenter
 from protocol import encode_text_message
 from segment_queue import SegmentQueue
+from speech import Selection, resolve
 from utils import make_binary_frame
 from wyoming_stt import transcribe
 from wyoming_tts import synthesize
 
 if TYPE_CHECKING:
-    from aiohttp.web import WebSocketResponse
 
     from channel_server import ChannelServer
     from openclaw_client import OpenClawClient
@@ -115,6 +115,7 @@ async def _synthesize_and_send(
     text: str,
     abort: asyncio.Event,
     target_rate: int | None,
+    selection: Selection | None = None,
 ) -> None:
     if not text:
         return
@@ -126,16 +127,21 @@ async def _synthesize_and_send(
             state["sent_start"] = True
 
     try:
-        async for chunk in synthesize(text, target_rate=target_rate, abort_event=abort, on_sample_rate=on_rate):
+        async for chunk in synthesize(
+            text, selection=selection, target_rate=target_rate, abort_event=abort, on_sample_rate=on_rate,
+        ):
             if abort.is_set():
                 return
             await _send_binary(ws, device_id, 0x02, chunk)
     except Exception as e:  # noqa: BLE001
         log.error("TTS error: %s", e)
+        await _send_json(ws, {"type": "error", "code": "TTS_ERROR",
+                              "message": "Selected speech provider unavailable"})
 
 
 async def _synthesize_error_message(
-    ws: Any, device_id: str, abort: asyncio.Event, target_rate: int | None
+    ws: Any, device_id: str, abort: asyncio.Event, target_rate: int | None,
+    selection: Selection | None = None,
 ) -> None:
     state = {"sent_start": False}
 
@@ -146,7 +152,8 @@ async def _synthesize_error_message(
 
     try:
         async for chunk in synthesize(
-            _ERROR_FALLBACK_TEXT, target_rate=target_rate, abort_event=abort, on_sample_rate=on_rate
+            _ERROR_FALLBACK_TEXT, selection=selection, target_rate=target_rate,
+            abort_event=abort, on_sample_rate=on_rate
         ):
             if abort.is_set():
                 return
@@ -166,8 +173,10 @@ async def _route_via_openclaw_direct(
     abort: asyncio.Event,
     target_rate: int | None,
     *,
+    selection: Selection | None = None,
     send_audio_end: Callable[[bool], Awaitable[None]] | None = None,
 ) -> None:
+    selection = selection or resolve(device_id)
     if send_audio_end is None:
         async def send_audio_end(follow_up: bool) -> None:
             await _send_audio_end(ws, follow_up)
@@ -187,7 +196,7 @@ async def _route_via_openclaw_direct(
         await _send_json(
             ws, {"type": "error", "code": "BACKEND_ERROR", "message": str(err)}
         )
-        await _synthesize_error_message(ws, device_id, abort, target_rate)
+        await _synthesize_error_message(ws, device_id, abort, target_rate, selection)
         if not abort.is_set():
             await send_audio_end(False)
         return
@@ -202,7 +211,7 @@ async def _route_via_openclaw_direct(
         result.follow_up,
         result.reply_text[:200],
     )
-    await _synthesize_and_send(ws, device_id, result.reply_text, abort, target_rate)
+    await _synthesize_and_send(ws, device_id, result.reply_text, abort, target_rate, selection)
     if not abort.is_set():
         _record_completed_turn(device_id, transcript_text, result.reply_text)
         await send_audio_end(result.follow_up)
@@ -216,8 +225,10 @@ async def _route_via_channel(
     abort: asyncio.Event,
     target_rate: int | None,
     *,
+    selection: Selection | None = None,
     send_audio_end: Callable[[bool], Awaitable[None]] | None = None,
 ) -> None:
+    selection = selection or resolve(device_id)
     if send_audio_end is None:
         async def send_audio_end(follow_up: bool) -> None:
             await _send_audio_end(ws, follow_up)
@@ -244,12 +255,19 @@ async def _route_via_channel(
                 asyncio.create_task(_send_json(ws, {"type": "audio.start", "sample_rate": rate}))
                 start_state["sent_start"] = True
 
-        async for chunk in synthesize(text, target_rate=target_rate, abort_event=abort, on_sample_rate=on_rate):
+        async for chunk in synthesize(
+            text, selection=selection, target_rate=target_rate, abort_event=abort, on_sample_rate=on_rate,
+        ):
             if abort.is_set():
                 return
             await _send_binary(ws, device_id, 0x02, chunk)
 
-    queue = SegmentQueue(synthesize=synth_segment, abort_event=abort)
+    def on_tts_error(error: Exception) -> None:
+        log.error("TTS segment failed: %s", error)
+        asyncio.create_task(_send_json(ws, {"type": "error", "code": "TTS_ERROR",
+                                           "message": "Selected speech provider unavailable"}))
+
+    queue = SegmentQueue(synthesize=synth_segment, abort_event=abort, on_error=on_tts_error)
 
     # accumulated stores the full reply for resolve_follow_up.
     accumulated = ""
@@ -325,7 +343,7 @@ async def _route_via_channel(
                 "message": f"Channel response timeout after {int(_CHANNEL_RESPONSE_TIMEOUT_S)}s",
             },
         )
-        await _synthesize_error_message(ws, device_id, abort, target_rate)
+        await _synthesize_error_message(ws, device_id, abort, target_rate, selection)
         if not abort.is_set():
             await send_audio_end(False)
         return
@@ -338,7 +356,7 @@ async def _route_via_channel(
         await _send_json(
             ws, {"type": "error", "code": "BACKEND_ERROR", "message": str(err)}
         )
-        await _synthesize_error_message(ws, device_id, abort, target_rate)
+        await _synthesize_error_message(ws, device_id, abort, target_rate, selection)
         if not abort.is_set():
             await send_audio_end(False)
         return
@@ -369,6 +387,8 @@ async def run_voice_turn(
     channel_server: "ChannelServer",
     abort: asyncio.Event,
     target_rate: int | None = None,
+    *,
+    selection: Selection | None = None,
 ) -> None:
     """Drive a full voice turn: STT, route to active channel, TTS, audio.end."""
 
@@ -376,7 +396,8 @@ async def run_voice_turn(
         return
 
     try:
-        transcript_text = await transcribe(audio_chunks)
+        selection = selection or resolve(device_id)
+        transcript_text = await transcribe(audio_chunks, backend=selection.stt)
     except Exception as err:  # noqa: BLE001
         log.error("STT error for %s: %s", device_id, err)
         await _send_json(ws, {"type": "error", "code": "STT_ERROR", "message": str(err)})
@@ -391,7 +412,8 @@ async def run_voice_turn(
         return
 
     await run_text_turn(
-        device_id, transcript_text, ws, openclaw_client, channel_server, abort, target_rate
+        device_id, transcript_text, ws, openclaw_client, channel_server, abort, target_rate,
+        selection=selection,
     )
 
 
@@ -404,11 +426,13 @@ async def run_text_turn(
     abort: asyncio.Event,
     target_rate: int | None = None,
     *,
+    selection: Selection | None = None,
     send_audio_end: Callable[[bool], Awaitable[None]] | None = None,
 ) -> None:
     """Drive a turn from already-known user text (no STT). Used by voice turns
-    after Whisper and by action-button prompt mappings.
+    after STT and by action-button prompt mappings.
     """
+    selection = selection or resolve(device_id)
     if send_audio_end is None:
         async def send_audio_end(follow_up: bool) -> None:
             await _send_audio_end(ws, follow_up)
@@ -432,13 +456,13 @@ async def run_text_turn(
         log.info("Routing via openclaw-direct for %s", device_id)
         await _route_via_openclaw_direct(
             device_id, transcript_text, ws, openclaw_client, abort, target_rate,
-            send_audio_end=send_audio_end,
+            selection=selection, send_audio_end=send_audio_end,
         )
     elif active is not None and getattr(active, "type", None) != "openclaw-direct":
         log.info("Routing via channel %r for %s", getattr(active, "name", "?"), device_id)
         await _route_via_channel(
             device_id, transcript_text, ws, channel_server, abort, target_rate,
-            send_audio_end=send_audio_end,
+            selection=selection, send_audio_end=send_audio_end,
         )
     else:
         log.warning("No active channel or backend available — dropping turn")

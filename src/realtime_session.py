@@ -7,7 +7,7 @@ and follow_up handling work unchanged.
 
 Cold wake: the command spoken right after the wake word is streamed over the
 always-on WS while WebRTC connects. On the device-VAD ``voice.end`` marker the
-server transcribes that buffered PCM (batch Whisper) and either seeds it into
+server transcribes that buffered PCM (batch STT) and either seeds it into
 Pipecat (when WebRTC is connected) or runs the WS turn pipeline (fallback).
 Live follow-up turns use WebRTC audio -> VAD -> STT as normal.
 """
@@ -33,6 +33,7 @@ from config import get_config
 from device_config import barge_in_enabled
 from device_settings import get_realtime_vad, get_realtime_vad_barge_in, get_taper
 from pipeline import strip_follow_up_tag
+from speech import Selection, resolve
 
 log = logging.getLogger("vauxr.realtime")
 
@@ -107,6 +108,7 @@ class RealtimeSession:
         # Pause changes diagnostic policy but does not supersede a delivered
         # idle transition; speech, resume and newer ends do supersede it.
         self._audio_activity_generation = 0
+        self._speech_selection: Selection | None = None
         self._turn_generation = 0
         self._runner_task: asyncio.Task | None = None
         self._backstop_task: asyncio.Task | None = None
@@ -204,18 +206,17 @@ class RealtimeSession:
             LLMUserAggregatorParams,
         )
         from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+        from pipecat.services.tts_service import TextAggregationMode
         from pipecat.transports.base_transport import TransportParams
         from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
         from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
+        from device_settings import get_segmentation
         from realtime_llm import ChannelLLMService
         from realtime_turn import (
             SuppressibleVADUserTurnStartStrategy,
             VADStopUserTurnStopStrategy,
         )
-        from pipecat.services.tts_service import TextAggregationMode
-
-        from device_settings import get_segmentation
         from realtime_wyoming import WyomingSTTService, WyomingTTSService
 
         self._connection = connection
@@ -228,12 +229,13 @@ class RealtimeSession:
             params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
         )
 
-        stt = WyomingSTTService()
+        stt = WyomingSTTService(selection=self._require_speech_selection)
         # Per-device segmentation: sentence mode lets pipecat's TTS aggregator cut
         # on sentence boundaries; otherwise TOKEN mode and the upstream
         # IdleSegmenter (in ChannelLLMService) owns segmentation.
         seg = get_segmentation(self.device_id)
         tts = WyomingTTSService(
+            selection=self._require_speech_selection,
             text_aggregation_mode=(
                 TextAggregationMode.SENTENCE if seg.sentence else TextAggregationMode.TOKEN
             )
@@ -313,7 +315,7 @@ class RealtimeSession:
             ``min_volume`` gate). Purely diagnostic — passes frames through.
 
             If ``VAUXR_RECORD_DIR`` is set, also writes the decoded inbound PCM to
-            a per-session WAV in that directory so the exact audio Silero/Whisper
+            a per-session WAV in that directory so the exact audio VAD/STT
             see can be played back and inspected for static/clipping/level.
             """
 
@@ -450,6 +452,8 @@ class RealtimeSession:
                         log.info("realtime[%s]: VAD speech START", session.device_id)
                         # A real turn-level start opened a turn — its transcript
                         # may now be relayed to the device.
+                        if not await session._snapshot_speech_selection():
+                            return
                         session._turn_generation += 1
                         session._turn_active = True
                         session._touch_activity()
@@ -531,6 +535,26 @@ class RealtimeSession:
         self._touch_activity()
         self._backstop_task = asyncio.create_task(self._safety_backstop())
 
+    def _require_speech_selection(self) -> Selection:
+        """Never re-resolve a rejected turn when its buffered audio reaches STT."""
+        if self._speech_selection is None:
+            raise ValueError("Speech turn has no selection snapshot")
+        return self._speech_selection
+
+    async def _snapshot_speech_selection(self) -> bool:
+        self._speech_selection = None
+        try:
+            self._speech_selection = resolve(self.device_id)
+        except (KeyError, ValueError):
+            self._turn_active = False
+            await _send_json(_device_ws(self.device_id), {
+                "type": "error", "code": "SPEECH_UNAVAILABLE",
+                "message": "Selected speech provider is not configured",
+            })
+            await self._send_audio_end(False)
+            return False
+        return True
+
     def _touch_activity(self) -> None:
         """Mark a sign of life so the inactivity backstop holds off."""
         self._last_activity = time.monotonic()
@@ -568,7 +592,7 @@ class RealtimeSession:
         if not self._closed:
             await self._send_audio_end(False)
 
-    async def seed_buffered_turn(self, pcm: bytes) -> None:
+    async def seed_buffered_turn(self, pcm: bytes, selection: Selection | None = None) -> None:
         """Transcribe cold-wake WS audio and seed one turn into Pipecat."""
         if self._closed:
             return
@@ -597,7 +621,8 @@ class RealtimeSession:
         try:
             from wyoming_stt import transcribe
 
-            text = await transcribe([pcm])
+            self._speech_selection = selection or resolve(self.device_id)
+            text = await transcribe([pcm], backend=self._speech_selection.stt)
         except Exception as e:  # noqa: BLE001
             log.error("realtime[%s]: buffered transcribe failed: %s", self.device_id, e)
             await self._release_failed_turn("transcribe failed")
@@ -621,6 +646,7 @@ class RealtimeSession:
 
     async def seed_text_turn(self, text: str) -> None:
         """Seed a canned user utterance into Pipecat (no STT)."""
+        selected = resolve(self.device_id)
         text = (text or "").strip()
         if not text:
             await self._release_failed_turn("empty text")
@@ -643,6 +669,7 @@ class RealtimeSession:
             )
             await self._release_failed_turn("peer not live")
             return
+        self._speech_selection = selected
         await self._seed_user_text(text)
 
     async def _seed_user_text(self, text: str) -> None:
@@ -939,6 +966,7 @@ class RealtimeManager:
         self._sessions: dict[str, RealtimeSession] = {}
         self._preroll: dict[str, bytearray] = {}
         self._cold_wait: set[str] = set()
+        self._speech_preroll: dict[str, Selection] = {}
         self._conversation_log: dict[str, list[dict[str, str]]] = {}
         self._offer_locks: dict[str, asyncio.Lock] = {}
         self._handler: Any = None
@@ -987,7 +1015,8 @@ class RealtimeManager:
 
     # --- pre-roll buffering (cold wake: WS audio until voice.end) ---
 
-    def begin_preroll(self, device_id: str) -> None:
+    def begin_preroll(self, device_id: str, selection: Selection | None = None) -> None:
+        self._speech_preroll[device_id] = selection or resolve(device_id)
         self._preroll[device_id] = bytearray()
         self._cold_wait.add(device_id)
         log.info("realtime[%s]: cold pre-roll capture armed", device_id)
@@ -1067,7 +1096,7 @@ class RealtimeManager:
                 await _send_json(ws, {"type": "audio.end", "follow_up": False})
                 registry.set_state(device_id, "idle")
                 return
-            await session.seed_buffered_turn(pcm)
+            await session.seed_buffered_turn(pcm, self._speech_preroll.pop(device_id, None))
             return
 
         # WS-only fallback when WebRTC is not connected at end-of-speech.
@@ -1077,6 +1106,7 @@ class RealtimeManager:
             registry.set_state(device_id, "idle")
             return
 
+        selection = self._speech_preroll.pop(device_id, None)
         from pipeline import run_voice_turn
 
         abort = asyncio.Event()
@@ -1093,6 +1123,7 @@ class RealtimeManager:
                 channel_server,
                 abort,
                 output_sample_rate,
+                selection=selection,
             )
             # Sustained WS fallback: while WebRTC never takes over, the device keeps
             # sending voice.end per turn. Re-arm cold-wait + pre-roll so follow-up WS
@@ -1125,6 +1156,7 @@ class RealtimeManager:
         if session is not None:
             await session.close()
         self._preroll.pop(device_id, None)
+        self._speech_preroll.pop(device_id, None)
         self._cold_wait.discard(device_id)
         ws = _device_ws(device_id)
         if ws is not None:
@@ -1136,6 +1168,7 @@ class RealtimeManager:
         if session is not None:
             await session.close()
         self._preroll.pop(device_id, None)
+        self._speech_preroll.pop(device_id, None)
         self._cold_wait.discard(device_id)
         registry.set_state(device_id, "idle")
 

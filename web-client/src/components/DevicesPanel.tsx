@@ -1,3 +1,4 @@
+import SpeechSettings from "./SpeechSettings";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deriveHttpUrl, useHttpApi } from "../hooks/useHttpApi";
 import { type ApiWebhook, useWebhooks } from "../hooks/useWebhooks";
@@ -236,6 +237,7 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
                 saveStatus={saveStatus[d.id]}
                 api={api}
                 addLog={addLog}
+                token={token}
                 httpBase={baseUrl}
                 webhooks={webhooks}
               />
@@ -255,11 +257,13 @@ interface DeviceCardProps {
   saveStatus?: SaveStatus;
   api: ReturnType<typeof useHttpApi>;
   addLog: (dir: LogEntry["dir"], text: string) => void;
+  token: string;
   httpBase: string;
   webhooks: ApiWebhook[];
 }
 
 function DeviceCard({
+  token,
   device,
   expanded,
   onToggle,
@@ -382,6 +386,7 @@ function DeviceCard({
 
       {expanded && (
         <div id={panelId} className="space-y-4 border-t border-white/5 px-3 py-3">
+          <SpeechSettings baseUrl={httpBase} token={token} deviceId={device.id} />
           <section aria-label="Device configuration" className="space-y-3">
             <div className="card-section-title">Config</div>
             <div className="flex flex-wrap items-end gap-3">
