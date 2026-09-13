@@ -121,6 +121,13 @@ async def test_http_management_auth_validation_and_isolation(store, monkeypatch)
         monkeypatch.setattr(channel_registry, "validate_channel_token", AsyncMock(return_value=object()))
         r = await client.get("/api/speech", headers={"Authorization": "Bearer channel-test"})
         assert r.status == 401
+        # Only owner sessions manage speech; paired roles and legacy tokens do not.
+        for token, status in (("speech-test", 403), ("integration-test", 403), ("channel-test", 401)):
+            for path in ("/api/speech", "/api/devices/a/speech"):
+                for method in ("GET", "PATCH"):
+                    r = await client.request(method, path, headers={"Authorization": f"Bearer {token}"},
+                                             json={"tts_backend": "piper"})
+                    assert r.status == status
 
 
 async def test_midturn_stt_to_multiple_tts_segments(store, monkeypatch):
@@ -494,3 +501,50 @@ async def test_speech_owner_mutations_require_csrf_and_live_session(store, monke
         assert store.resolve("a").tts.id == "kokoro"
         client.app[OWNER].console_claim(recover=True)
         assert (await client.get(path, headers=headers)).status == 401
+
+
+@pytest.mark.parametrize("tls", [False, True])
+async def test_speech_owner_transport_and_csrf_before_provider_io(store, monkeypatch, tls):
+    import speech_http
+    from http_server import make_http_app
+    from owner_http import COOKIE, LAN_COOKIE, OWNER
+
+    origin = "https://owner.example" if tls else "http://192.168.10.20:8080"
+    monkeypatch.delenv("OWNER_HTTPS_ORIGIN", raising=False)
+    if not tls:
+        monkeypatch.delenv("OWNER_TRUSTED_PROXIES", raising=False)
+    monkeypatch.setenv("OWNER_HTTPS_ORIGIN" if tls else "OWNER_HTTP_ORIGIN", origin)
+    ready = AsyncMock(return_value="ready")
+    monkeypatch.setattr(speech_http, "readiness", ready)
+    async with TestClient(TestServer(make_http_app())) as client:
+        owner = client.app[OWNER]
+        claim = owner.claim(owner.console_claim())
+        owner.acknowledge(claim["save_acknowledgement"], True)
+        cookie, session = owner.login(claim["operator_token"])
+        headers = {"Host": origin.split("://")[1], "Origin": origin,
+                   "Cookie": f"{COOKIE if tls else LAN_COOKIE}={cookie}", "X-CSRF-Token": session.csrf}
+        if tls:
+            headers["X-Forwarded-Proto"] = "https"
+        for path in ("/api/speech", "/api/devices/a/speech"):
+            for method in ("GET", "HEAD", "PATCH"):
+                response = await client.request(method, path, headers=headers, json={"tts_backend": "kokoro"})
+                assert response.status == 200
+                assert response.headers["Cache-Control"] == "no-store"
+                assert "Access-Control-Allow-Origin" not in response.headers
+            before = store.path.read_bytes()
+            ready.reset_mock()
+            for overrides in ({"Host": "evil.example"}, {"Origin": "http://evil.example"},
+                              {"X-CSRF-Token": "wrong"}, {"X-CSRF-Token": ""},
+                              {"Origin": ""}, {"X-Forwarded-Proto": "http"}):
+                response = await client.patch(path, headers={**headers, **overrides}, json={"tts_backend": "piper"})
+                assert response.status == 403
+            # The generated operator token itself never substitutes for a cookie.
+            response = await client.patch(path, headers={"Authorization": f"Bearer {claim['operator_token']}"},
+                                          json={"tts_backend": "piper"})
+            assert response.status == 401
+            assert store.path.read_bytes() == before
+            ready.assert_not_called()
+        owner.logout(cookie)
+        ready.reset_mock()
+        assert (await client.get("/api/speech", headers=headers)).status == 401
+        ready.assert_not_called()
