@@ -40,12 +40,23 @@ fail startup and console setup. Missing proxy trust permits only direct TLS;
 it never admits plaintext. TLS failure never selects LAN or retries HTTP.
 
 Both origin settings require one canonical ASCII origin: lowercase DNS name or
-canonical IP literal (bracketed IPv6), optional numeric port, no trailing slash,
+canonical IP literal (bracketed IPv6), optional non-default numeric port, no trailing slash,
 path, userinfo, query, fragment, zone ID or whitespace. Host must match the exact
 configured authority, including an explicitly configured port. All owner requests
 must use the configured scheme. LAN rejects `Forwarded` and every
 `X-Forwarded-Proto` header; it accepts only direct HTTP. No auth environment
 variable is required to start the server. Startup never prints credentials.
+
+Noncanonical configuration fails server startup and console claim/recovery; it is
+not normalized. Omit default ports: use `http://voice.lan`, not
+`http://voice.lan:80`, and `https://voice.lan`, not `https://voice.lan:443`.
+Use four-component decimal IPv4, for example `http://127.0.0.1:8080` or
+`https://127.0.0.1:8080`; shortened `127.1`, integer `2130706433`, octal
+`0177.0.0.1`, and hexadecimal `0x7f000001` spellings are rejected in both modes.
+DNS names with numeric final labels are also rejected because browsers interpret
+them as IPv4. Configure the same canonical origin in the server and console
+environments. Request headers are never normalized: equivalent spellings still
+fail exact Host/Origin matching. Invalid TLS origins never fall back to LAN.
 
 The server currently exposes HTTP listeners. In TLS mode configure
 `OWNER_TRUSTED_PROXIES` as comma-separated IP networks (prefer exact /32 or /128
