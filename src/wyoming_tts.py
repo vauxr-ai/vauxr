@@ -12,9 +12,8 @@ import logging
 import math
 import struct
 from collections.abc import AsyncIterator, Callable
-from typing import Any
 
-from config import get_config
+from speech import Selection, resolve
 from wyoming_stt import WyomingEvent, encode_event, parse_wyoming_events
 
 log = logging.getLogger("vauxr.wyoming_tts")
@@ -90,6 +89,7 @@ class _Aborted(Exception):
 async def synthesize(
     text: str,
     *,
+    selection: Selection | None = None,
     target_rate: int | None = None,
     abort_event: asyncio.Event | None = None,
     on_sample_rate: Callable[[int], None] | None = None,
@@ -99,15 +99,15 @@ async def synthesize(
     `abort_event` mirrors the AbortSignal used by the Node port — the
     generator stops mid-stream when it fires.
     """
-    cfg = get_config()
-    host, port = cfg.piper.host, cfg.piper.port
+    selection = selection or resolve()
+    host, port = selection.tts.host, selection.tts.port
 
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=30)
 
     try:
         writer.write(
             encode_event(
-                WyomingEvent(type="synthesize", data={"text": text, "voice": {"name": cfg.piper.voice}})
+                WyomingEvent(type="synthesize", data={"text": text, "voice": {"name": selection.voice_id}})
             )
         )
         await writer.drain()
@@ -121,9 +121,9 @@ async def synthesize(
             if abort_event is not None and abort_event.is_set():
                 raise _Aborted()
 
-            data = await reader.read(8192)
+            data = await asyncio.wait_for(reader.read(8192), timeout=30)
             if not data:
-                break
+                raise RuntimeError("TTS connection closed before audio-stop")
             buf += data
             events, buf = parse_wyoming_events(buf)
 

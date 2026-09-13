@@ -15,15 +15,17 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
-import channel_registry, device_registry as registry
+import channel_registry
+import device_registry as registry
 from auth import validate_token
 from channel_server import ChannelServer
 from config import get_config
+from device_settings import realtime_policy_extras
 from http_server import attach_http_routes, cors_middleware, serve_static
 from openclaw_client import OpenClawClient
-from device_settings import realtime_policy_extras
 from pipeline import run_voice_turn
 from protocol import encode_text_message, parse_text_message
+from speech import Selection, get_store, resolve
 
 log = logging.getLogger("vauxr.server")
 
@@ -40,6 +42,7 @@ class ConnectionCtx:
     device_id: str | None = None
     audio_chunks: list[bytes] = field(default_factory=list)
     output_sample_rate: int | None = None
+    speech_selection: Selection | None = None
     # Realtime (WebRTC) hybrid: armed on realtime.start, cleared on
     # realtime.media_ready (device has switched mic to the WebRTC track).
     realtime: bool = False
@@ -231,6 +234,13 @@ async def _voice_start(
 
     ctx.device_id = device_id
     ctx.audio_chunks = []
+    try:
+        ctx.speech_selection = resolve(device_id)
+    except (KeyError, ValueError):
+        await send_json(ws, {"type": "error", "code": "SPEECH_UNAVAILABLE",
+                             "message": "Selected speech provider is not configured"})
+        ctx.state = ConnectionState.IDLE
+        return
     ctx.state = ConnectionState.LISTENING
     registry.register(device_id, ws=ws, name=msg.get("name") or device_id)
     rate = registry.apply_output_sample_rate(device_id, msg)
@@ -292,6 +302,7 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
     ctx.state = ConnectionState.PROCESSING
     registry.set_state(ctx.device_id, "processing")
     device_id = ctx.device_id
+    selection = ctx.speech_selection
     chunks = ctx.audio_chunks
     total = sum(len(c) for c in chunks)
     log.info("voice.end from %s: %d chunks, %d bytes", device_id, len(chunks), total)
@@ -312,6 +323,7 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
                 state.channel_server,
                 abort,
                 ctx.output_sample_rate,
+                selection=selection,
             )
         except Exception as e:  # noqa: BLE001
             log.error("Pipeline error for %s: %s", device_id, e)
@@ -396,8 +408,15 @@ async def _realtime_start(
 
     # Cold wake: arm WS pre-roll and wait for the device-VAD voice.end marker.
     # A stale session from a dropped peer must be cleared first.
+    try:
+        selection = resolve(device_id)
+    except (KeyError, ValueError):
+        ctx.realtime = False
+        await send_json(ws, {"type": "error", "code": "SPEECH_UNAVAILABLE",
+                             "message": "Selected speech provider is not configured"})
+        return
     await manager.stop(device_id)
-    manager.begin_preroll(device_id)
+    manager.begin_preroll(device_id, selection)
     registry.set_state(device_id, "listening")
     await send_json(ws, {"type": "ready"})
     log.info("realtime.start from %s — cold pre-roll armed", device_id)
@@ -521,6 +540,7 @@ def make_app() -> web.Application:
 async def _startup(app: web.Application) -> None:
     state: AppState = app[APP_STATE]
     cfg = get_config()
+    get_store()  # Validate the server-owned speech registry before accepting turns.
     # Load channel registry.
     channel_registry.load()
     log.info("channel registry loaded")

@@ -38,7 +38,7 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 @pytest.fixture
 async def setup(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[TestClient]:
     # Stub STT / TTS / OpenClaw.
-    async def fake_transcribe(_chunks, sample_rate=16000):
+    async def fake_transcribe(_chunks, sample_rate=16000, **kwargs):
         return "what is the weather"
 
     async def fake_synth(text: str, **_k):

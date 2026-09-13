@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from config import get_config
+from speech import Backend, resolve
 
 log = logging.getLogger("vauxr.wyoming_stt")
 
@@ -95,13 +95,14 @@ async def transcribe(
     chunks: list[bytes],
     sample_rate: int = 16000,
     timeout: float = 30.0,
+    *,
+    backend: Backend | None = None,
 ) -> str:
     """Send audio chunks to whisper, return the first transcript text."""
-    cfg = get_config()
-    host = cfg.whisper.host
-    port = cfg.whisper.port
+    backend = backend or resolve().stt
+    host, port = backend.host, backend.port
 
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
 
     try:
         writer.write(

@@ -217,7 +217,7 @@ describe("DevicesPanel", () => {
 
       await waitFor(() => {
         const patchCall = fetchSpy.mock.calls.find(
-          (c) => typeof c[0] === "string" && (c[0] as string).includes("/api/devices/d1"),
+          (c) => typeof c[0] === "string" && (c[0] as string).endsWith("/api/devices/d1"),
         );
         expect(patchCall).toBeDefined();
         const init = patchCall![1] as RequestInit;
@@ -247,7 +247,7 @@ describe("DevicesPanel", () => {
 
       await waitFor(() => {
         const patchCall = fetchSpy.mock.calls.find(
-          (c) => typeof c[0] === "string" && (c[0] as string).includes("/api/devices/d1"),
+          (c) => typeof c[0] === "string" && (c[0] as string).endsWith("/api/devices/d1"),
         );
         expect(patchCall).toBeDefined();
         const init = patchCall![1] as RequestInit;
@@ -317,7 +317,7 @@ describe("DevicesPanel", () => {
 
       await waitFor(() => {
         const patchCall = fetchSpy.mock.calls.find(
-          (c) => typeof c[0] === "string" && (c[0] as string).includes("/api/devices/d1"),
+          (c) => typeof c[0] === "string" && (c[0] as string).endsWith("/api/devices/d1"),
         );
         expect(patchCall).toBeDefined();
         expect(JSON.parse((patchCall![1] as RequestInit).body as string)).toEqual({ name: "Den" });
