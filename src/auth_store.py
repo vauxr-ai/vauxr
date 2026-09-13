@@ -1,4 +1,4 @@
-"""Shared credential, owner and enrollment snapshot (schema versions 1 through 4).
+"""Shared credential, owner and enrollment snapshot (schema versions 1 through 5).
 
 Only high-entropy generated bearer tokens are supported by this verifier schema.
 No plaintext credentials, legacy-token imports, or automatic enrollment.
@@ -20,6 +20,7 @@ from pathlib import Path
 
 from auth_policy import Principal, Role
 from enrollment_schema import validate_enrollment
+from integration_schema import validate_integration
 from lifecycle_schema import has_capacity, validate_lifecycle
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
@@ -129,6 +130,7 @@ class CredentialStore:
         self.owner: dict = {}
         self.enrollment: dict = {}
         self.lifecycle: dict = {}
+        self.integration: dict = {}
         self._lock = threading.RLock()
         self._transaction_active = False
         self.load()
@@ -146,10 +148,20 @@ class CredentialStore:
             if subjects.setdefault(record.subject, record.role) != record.role:
                 raise ValueError("Ambiguous principal identity")
 
+    @staticmethod
+    def _validate_integrations(state: dict, records: tuple[Credential, ...]) -> None:
+        by_id = {r.id: r for r in records}
+        for row in state.get("requests", {}).values():
+            if row["credential_id"]:
+                record = by_id.get(row["credential_id"])
+                if record is None or (record.role, record.subject) != (Role.INTEGRATION, row["channel_id"]):
+                    raise ValueError("Invalid integration credential binding")
+
     def load(self) -> None:
         self.owner = {}
         self.enrollment = {}
         self.lifecycle = {}
+        self.integration = {}
         self.records = ()  # A failed reload never leaves stale access active.
         if not self.path.exists():
             return
@@ -162,10 +174,11 @@ class CredentialStore:
                 or set(data) != ({1: {"version", "credentials"},
                                   2: {"version", "credentials", "owner"},
                                   3: {"version", "credentials", "owner", "enrollment"},
-                                  4: {"version", "credentials", "owner", "enrollment", "lifecycle"}}
+                                  4: {"version", "credentials", "owner", "enrollment", "lifecycle"},
+                                  5: {"version", "credentials", "owner", "enrollment", "lifecycle", "integration"}}
                                  .get(data.get("version"), set()))
                 or type(data["version"]) is not int
-                or data["version"] not in (1, 2, 3, 4)
+                or data["version"] not in (1, 2, 3, 4, 5)
             ):
                 raise ValueError
             records = tuple(Credential(**{**row, "role": Role(row["role"])}) for row in data["credentials"])
@@ -173,6 +186,10 @@ class CredentialStore:
             validate_owner_state(data.get("owner", {}))
             validate_enrollment(data.get("enrollment", {}))
             validate_lifecycle(data.get("lifecycle", {}))
+            validate_integration(data.get("integration", {}))
+            if data["version"] == 5 and not data["integration"]:
+                raise ValueError("Invalid integration state")
+            self._validate_integrations(data.get("integration", {}), records)
             if not has_capacity(data.get("lifecycle", {}), [r.verifier for r in records]):
                 raise ValueError("Missing revocation headroom")
             if data["version"] == 4 and not data["lifecycle"]:
@@ -187,6 +204,7 @@ class CredentialStore:
         self.owner = owner
         self.enrollment = data.get("enrollment", {})
         self.lifecycle = data.get("lifecycle", {})
+        self.integration = data.get("integration", {})
         self.records = records
 
     @contextmanager
@@ -249,6 +267,8 @@ class CredentialStore:
         validate_owner_state(self.owner)
         validate_enrollment(self.enrollment)
         validate_lifecycle(self.lifecycle)
+        validate_integration(self.integration)
+        self._validate_integrations(self.integration, records)
         if not has_capacity(self.lifecycle, [r.verifier for r in records]):
             from enrollment import EnrollmentError
 
@@ -258,6 +278,9 @@ class CredentialStore:
             payload.update(version=3, enrollment=self.enrollment)
         if self.lifecycle:
             payload.update(version=4, enrollment=self.enrollment, lifecycle=self.lifecycle)
+        if self.integration:
+            payload.update(version=5, enrollment=self.enrollment, lifecycle=self.lifecycle,
+                           integration=self.integration)
         try:
             atomic_private_json(self.path, payload)
         except OSError:
@@ -293,6 +316,9 @@ class CredentialStore:
 
         if not record.enabled or record.verifier in self.lifecycle.get("blocked", []):
             return False
+        for row in self.integration.get("requests", {}).values():
+            if row["credential_id"] == record.id and row["state"] != "completed":
+                return False
         for row in self.lifecycle.get("operations", {}).values():
             if (row["state"] == "delivered" and row["overlap_until"] <= time.time()
                     and record.id in row["old_ids"]):

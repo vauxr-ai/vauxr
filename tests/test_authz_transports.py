@@ -15,7 +15,7 @@ from auth_policy import HTTP_OPERATIONS, WS_OPERATIONS, Role
 from http_server import _require_auth, make_http_app
 from realtime_app import _offer_handler
 from server import make_app
-from tests.auth_helpers import owner_headers, seed
+from tests.auth_helpers import TRANSPORT_HEADERS, owner_headers, seed
 from tests.test_announce import FakeWs
 
 
@@ -68,7 +68,9 @@ ROUTES = [
 async def test_http_matrix(method, path, grants, outcome, role, key):
     async with TestClient(TestServer(make_http_app())) as client:
         response = await client.request(
-            method, path, headers=owner_headers(client) if role == "owner" else {"Authorization": f"Bearer {role}-secret"}, json={}
+            method, path,
+            headers=owner_headers(client) if role == "owner" else {**TRANSPORT_HEADERS, "Authorization": f"Bearer {role}-secret"},
+            json={},
         )
         assert response.status == (outcome if key in grants else (401 if key == "-" else 403))
         text = await response.text()
@@ -100,7 +102,8 @@ def test_route_inventory_complete():
         for method, path, _, _ in ROUTES
     }
     expected |= {("GET", "/api/auth/{action}"), ("POST", "/api/auth/{action}"),
-                 ("POST", "/api/enrollment/v1/{action}"), ("POST", "/api/lifecycle/v1/{action}")}
+                 ("POST", "/api/enrollment/v1/{action}"), ("POST", "/api/lifecycle/v1/{action}"),
+                 ("POST", "/api/integrations/v1/{action}")}
     assert actual == expected
     assert len(HTTP_OPERATIONS) == len(ROUTES)
 
@@ -139,7 +142,7 @@ async def test_integration_control_and_update_initiation(command, params):
     async with TestClient(TestServer(make_http_app())) as client:
         response = await client.post(
             "/api/devices/speaker/command",
-            headers={"Authorization": "Bearer integration-secret"},
+            headers={**TRANSPORT_HEADERS, "Authorization": "Bearer integration-secret"},
             json={"command": command, "params": params},
         )
         assert response.status == 200
@@ -213,7 +216,7 @@ async def test_disabled_record_rejected_on_existing_socket_and_http():
         store.replace(tuple(replace(r, enabled=False) for r in store.records))
         await ws.send_json({"type": "device.button"})
         assert (await ws.receive_json(timeout=2))["code"] == "UNAUTHORIZED"
-        response = await client.get("/api/devices", headers={"Authorization": "Bearer integration-secret"})
+        response = await client.get("/api/devices", headers={**TRANSPORT_HEADERS, "Authorization": "Bearer integration-secret"})
         assert response.status == 401
 
 
@@ -258,7 +261,7 @@ async def test_auth_denials_log_no_client_values(caplog):
     caplog.set_level(logging.INFO)
     async with TestClient(TestServer(make_app())) as client:
         await client.get("/api/devices", headers={"Authorization": "Bearer LEAK_SECRET"})
-        await client.patch("/api/devices/LEAK_SECRET", headers={"Authorization": "Bearer integration-secret"})
+        await client.patch("/api/devices/LEAK_SECRET", headers={**TRANSPORT_HEADERS, "Authorization": "Bearer integration-secret"})
         async with client.ws_connect("/ws") as ws:
             await ws.send_json({"type": "hello", "device_id": "LEAK_SECRET", "token": "LEAK_SECRET"})
             await ws.receive_json(timeout=2)
@@ -270,7 +273,7 @@ async def test_auth_denials_log_no_client_values(caplog):
 
 @pytest.mark.parametrize("token", ["owner-secret", "device-secret", "legacy-shared-token", None, ["invalid"]])
 async def test_channel_rejects_wrong_principal(token):
-    async with TestClient(TestServer(make_app())) as client, client.ws_connect("/channel") as ws:
+    async with TestClient(TestServer(make_app())) as client, client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as ws:
         await ws.send_json({"type": "channel.auth", "token": token})
         assert (await ws.receive_json(timeout=2))["code"] in {"UNAUTHORIZED", "FORBIDDEN"}
         assert (await ws.receive(timeout=2)).type == WSMsgType.CLOSE
@@ -298,7 +301,7 @@ async def test_inactive_channel_cannot_inject_voice_response():
     from server import APP_STATE
 
     app[APP_STATE].channel_server = cs
-    async with TestClient(TestServer(app)) as client, client.ws_connect("/channel") as ws:
+    async with TestClient(TestServer(app)) as client, client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as ws:
         await ws.send_json({"type": "channel.auth", "token": "idle-channel-secret"})
         assert (await ws.receive_json(timeout=2))["type"] == "channel.ready"
         await ws.send_json(
@@ -408,7 +411,7 @@ async def test_reissued_channel_rejects_existing_connection_in_both_directions(r
     )
     app = make_app()
     app[APP_STATE].channel_server = cs
-    async with TestClient(TestServer(app)) as client, client.ws_connect("/channel") as ws:
+    async with TestClient(TestServer(app)) as client, client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as ws:
         await ws.send_json({"type": "channel.auth", "token": "channel-secret"})
         assert (await ws.receive_json(timeout=2))["type"] == "channel.ready"
         assert cs.is_active_connected()
@@ -420,7 +423,7 @@ async def test_reissued_channel_rejects_existing_connection_in_both_directions(r
         assert (await ws.receive_json(timeout=2))["code"] == "UNAUTHORIZED"
         assert (await ws.receive(timeout=2)).type == WSMsgType.CLOSE
         assert delivered == []
-        async with client.ws_connect("/channel") as fresh:
+        async with client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as fresh:
             await fresh.send_json({"type": "channel.auth", "token": "replacement-secret"})
             assert (await fresh.receive_json(timeout=2))["type"] == "channel.ready"
             assert cs.is_active_connected()
@@ -450,7 +453,7 @@ async def test_lifecycle_revoke_closes_idle_socket_before_owner_response(role):
         path = "/channel"
         frame = {"type": "channel.auth", "token": token}
     app = make_app()
-    async with TestClient(TestServer(app)) as client, client.ws_connect(path) as ws:
+    async with TestClient(TestServer(app)) as client, client.ws_connect(path, headers=TRANSPORT_HEADERS) as ws:
         await ws.send_json(frame)
         await ws.receive_json(timeout=2)
         response = await client.post(

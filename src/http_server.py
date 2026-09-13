@@ -24,8 +24,9 @@ from auth_policy import HTTP_OPERATIONS, UNSHIPPED, Operation, Principal, Role, 
 from config import get_config
 from device_config import VALID_FOLLOW_UP_MODES, parse_button_actions
 from enrollment_http import attach_enrollment
+from integration_http import attach_integration
 from lifecycle_http import attach_lifecycle
-from owner_http import attach_owner, cookie_name, owner_middleware, session_principal
+from owner_http import ORIGIN, attach_owner, cookie_name, owner_middleware, secure_request, session_principal
 from protocol import encode_text_message
 
 if TYPE_CHECKING:
@@ -84,6 +85,10 @@ def _require_auth(handler: Handler) -> Handler:
     @wraps(handler)
     async def wrapped(request: web.Request) -> web.StreamResponse:
         principal = _http_principal(request)
+        if (principal is not None and principal.role == Role.INTEGRATION
+                and request.app[ORIGIN].startswith("https://") and not secure_request(request)):
+            audit_denial(True)
+            return web.json_response({"error": "forbidden"}, status=403)
         operation = HTTP_OPERATIONS.get(handler.__name__)
         if not allowed(principal, operation):
             audit_denial(principal is not None)
@@ -105,7 +110,7 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
     else:
         resp = await handler(request)
     # Same-origin owner API never enables credentialed cross-origin access.
-    if (not request.path.startswith(("/api/auth/", "/api/enrollment/", "/api/lifecycle/"))
+    if (not request.path.startswith(("/api/auth/", "/api/enrollment/", "/api/lifecycle/", "/api/integrations/"))
             and cookie_name(request) not in request.cookies):
         resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
@@ -481,6 +486,7 @@ def attach_http_routes(app: web.Application) -> None:
     attach_owner(app)
     attach_enrollment(app)
     attach_lifecycle(app)
+    attach_integration(app)
     async def _options(_r: web.Request) -> web.Response:
         return web.Response(status=204)
 

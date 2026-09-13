@@ -11,6 +11,7 @@ configured LAN HTTP or HTTPS origin/Host boundary and explicit local-console pro
 | POST /api/auth/claim, /api/auth/save, /api/auth/login | owner contract v1 | selected-mode transport + exact Host/Origin + JSON + durable rate limits; console claim/save proof or operator verifier |
 | POST /api/auth/logout | owner contract v1 | owner session + selected-mode transport + exact Host/Origin + CSRF |
 | POST /api/enrollment/v1/{action} | enrollment v1 | configured HTTP/HTTPS; signed client proof or fresh owner/integration control; [exact actions and roles](enrollment-v1.md) |
+| POST /api/integrations/v1/{action} | integration enrollment v1 | exact configured HTTP/HTTPS Host/Origin; owner cookie + CSRF for list/approve/deny; request-secret client delivery/save ACK; [contract](integration-v1.md) |
 | POST /api/lifecycle/v1/{action} | lifecycle v1 | configured HTTP/HTTPS; owner controls, subject-only delivery/ACK; [exact fields and roles](lifecycle-v1.md) |
 | GET /api/devices | devices.list | owner/integration |
 | PATCH /api/devices/{device_id} | device.configure | owner, including button mapping |
@@ -58,7 +59,7 @@ permitted to owner/integration, not to device credentials.
 
 | Channel WS message/path | Policy operation | Constraints |
 | --- | --- | --- |
-| channel.auth | channel.connect | integration subject references a routing channel; 10s auth timeout |
+| channel.auth | channel.connect | integration subject references a routing channel; 10s auth timeout; reject query/foreign Origin; HTTPS mode requires exact Host and trusted TLS boundary |
 | channel.response.delta / .end / .error | voice.respond | current socket for active bound channel; existing device listener |
 | channel.transcript (server outbound) | internal voice routing | selected current authenticated integration only |
 | other client messages | none | denied; never dispatch commands/configuration |

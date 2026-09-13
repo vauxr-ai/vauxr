@@ -555,6 +555,13 @@ async def device_ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 @transport_boundary
 async def channel_ws_handler(request: web.Request) -> web.WebSocketResponse:
+    from owner_http import ORIGIN, secure_request
+
+    origin = request.app[ORIGIN]
+    if (request.query_string or len(request.headers.getall("Origin", [])) > 1
+            or request.headers.get("Origin", origin) != origin
+            or (origin.startswith("https://") and not secure_request(request))):
+        raise web.HTTPForbidden()
     state: AppState = request.app[APP_STATE]
     ws = web.WebSocketResponse()
     await ws.prepare(request)

@@ -107,6 +107,10 @@ def attach_lifecycle(app: web.Application) -> None:
         while True:
             try:
                 application[LIFECYCLE].sweep()
+                from integration_http import INTEGRATION
+
+                if INTEGRATION in application:
+                    application[INTEGRATION].sweep()
             except (OSError, ValueError):
                 pass  # Failed load clears credentials; transport checks fail closed.
             try:

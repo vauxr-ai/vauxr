@@ -469,6 +469,64 @@ async def test_foundation_owner_bearer_never_bypasses_recovery():
             assert response.status == 401
 
 
+@pytest.mark.parametrize("role", [Role.DEVICE, Role.INTEGRATION])
+async def test_owner_http_session_independent_of_reissued_client(role):
+    async with TestClient(TestServer(make_http_app())) as client:
+        owner = client.app[OWNER]
+        token = claim_saved(owner)
+        cookie, _ = owner.login(token)
+        headers = {**HEADERS, "Cookie": f"{COOKIE}={cookie}"}
+        store = owner.store
+        old = Credential("client", role, "speaker", verifier("synthetic-old-client"))
+        with store.transaction():
+            store.replace((old,))
+        stale = store.authenticate("synthetic-old-client")
+        assert store.current(stale)
+        # Owner policy principals are never current paired-client bearer identities.
+        principal, _ = owner.session(cookie)
+        assert principal.credential_generation == ""
+        assert not store.current(principal)
+        assert (await client.get("/api/channels", headers=headers)).status == 200
+        with store.transaction():
+            store.replace(())
+        restarted = CredentialStore(store.path)
+        with restarted.transaction():
+            restarted.replace((Credential(old.id, role, old.subject, verifier("synthetic-new-client")),))
+        # Session lookup reloads the shared schema-2 store without changing its epoch.
+        assert (await client.get("/api/channels", headers=headers)).status == 200
+        assert not store.current(stale)
+        fresh = store.authenticate("synthetic-new-client")
+        assert store.current(fresh)
+        assert not CredentialStore(store.path).current(stale)
+        for bearer, expected in [("synthetic-old-client", 401),
+                                 ("synthetic-new-client", 200 if role == Role.INTEGRATION else 403)]:
+            response = await client.get("/api/devices", headers={**HEADERS, "Authorization": f"Bearer {bearer}"})
+            assert response.status == expected
+        OwnerAuth(CredentialStore(store.path)).console_claim(recover=True)
+        assert (await client.get("/api/channels", headers=headers)).status == 401
+        assert store.current(fresh)
+        assert not store.current(stale)
+
+
+async def test_owner_http_previous_environment_token_cannot_revive_session(monkeypatch):
+    monkeypatch.setenv("OPERATOR_TOKEN", TOKEN_A)
+    async with TestClient(TestServer(make_http_app())) as client:
+        owner = client.app[OWNER]
+        response = await client.post("/api/auth/login", headers=HEADERS, json={"operator_token": TOKEN_A})
+        assert response.status == 200
+        headers = {**HEADERS, "Cookie": f"{COOKIE}={response.cookies[COOKIE].value}"}
+        assert (await client.get("/api/devices", headers=headers)).status == 200
+        # Keep the old session unexamined while the durable authority changes A -> B -> A.
+        for token in (TOKEN_B, TOKEN_A):
+            OwnerAuth(CredentialStore(owner.store.path), token).initialize()
+        assert (await client.get("/api/devices", headers=headers)).status == 401
+        assert (await client.get("/api/auth/session", headers=headers)).status == 401
+        response = await client.post("/api/auth/login", headers=HEADERS, json={"operator_token": TOKEN_A})
+        assert response.status == 200
+        fresh = {**HEADERS, "Cookie": f"{COOKIE}={response.cookies[COOKIE].value}"}
+        assert (await client.get("/api/devices", headers=fresh)).status == 200
+
+
 async def test_owner_http_storage_failure_redacts_exception(caplog):
     async with TestClient(TestServer(make_http_app())) as client:
         with patch.object(auth_store, "atomic_private_json", side_effect=OSError(TOKEN_A)):

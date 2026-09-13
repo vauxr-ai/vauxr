@@ -203,7 +203,8 @@ class ChannelServer:
                 teardown.append(auth_connections.Teardown(conn.ws.close))
                 if self._connections.get(channel.id) is conn:
                     self._connections.pop(channel.id, None)
-                    if channel_registry.get_active() == channel:
+                    active = channel_registry.get_active()
+                    if active is not None and active.id == channel.id:
                         for device_id, listener in list(self._response_listeners.items()):
                             async def notify(device_id=device_id, listener=listener) -> None:
                                 listener["on_error"](device_id, "integration_revoked")
@@ -230,6 +231,10 @@ class ChannelServer:
             # different conn and doesn't clear our slot.
             await existing.ws.close()
 
+        # Replacement close yields: revoke/rotation may retire this principal meanwhile.
+        if not current(principal) or conn.ws.closed:
+            await conn.ws.close()
+            return
         self._connections[channel.id] = conn
         await _send_json(
             conn.ws,
