@@ -15,13 +15,15 @@ from auth_policy import HTTP_OPERATIONS, WS_OPERATIONS, Role
 from http_server import _require_auth, make_http_app
 from realtime_app import _offer_handler
 from server import make_app
-from tests.auth_helpers import seed
+from tests.auth_helpers import owner_headers, seed
 from tests.test_announce import FakeWs
 
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
     config.reset_config()
+    monkeypatch.setenv("OWNER_HTTPS_ORIGIN", "https://owner.example")
+    monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("DEVICE_TOKEN", "legacy-shared-token")
     monkeypatch.setenv("OPENCLAW_URL", "")
@@ -66,7 +68,7 @@ ROUTES = [
 async def test_http_matrix(method, path, grants, outcome, role, key):
     async with TestClient(TestServer(make_http_app())) as client:
         response = await client.request(
-            method, path, headers={"Authorization": f"Bearer {role}-secret"}, json={}
+            method, path, headers=owner_headers(client) if role == "owner" else {"Authorization": f"Bearer {role}-secret"}, json={}
         )
         assert response.status == (outcome if key in grants else (401 if key == "-" else 403))
         text = await response.text()
@@ -97,6 +99,7 @@ def test_route_inventory_complete():
         )
         for method, path, _, _ in ROUTES
     }
+    expected |= {("GET", "/api/auth/{action}"), ("POST", "/api/auth/{action}")}
     assert actual == expected
     assert len(HTTP_OPERATIONS) == len(ROUTES)
 
@@ -109,7 +112,7 @@ async def test_unknown_handler_and_api_fallback_deny():
     app = web.Application()
     app.router.add_post("/future", future_admin)
     async with TestClient(TestServer(app)) as client:
-        assert (await client.post("/future", headers={"Authorization": "Bearer owner-secret"})).status == 403
+        assert (await client.post("/future", headers={"Authorization": "Bearer owner-secret"})).status == 401
     async with TestClient(TestServer(make_http_app())) as client:
         assert (await client.get("/api/future")).status == 404
         assert (await client.get("/api/devices?token=owner-secret")).status == 401
@@ -158,7 +161,7 @@ async def test_sensitive_metadata_projection():
     device.config["token"] = "DEVICE_SECRET"
     async with TestClient(TestServer(make_http_app())) as client:
         for path in ["/api/webhooks", "/api/devices", "/api/channels"]:
-            response = await client.get(path, headers={"Authorization": "Bearer owner-secret"})
+            response = await client.get(path, headers=owner_headers(client))
             assert response.status == 200
             assert "SECRET" not in await response.text()
 
@@ -209,7 +212,7 @@ async def test_disabled_record_rejected_on_existing_socket_and_http():
         store.replace(tuple(replace(r, enabled=False) for r in store.records))
         await ws.send_json({"type": "device.button"})
         assert (await ws.receive_json(timeout=2))["code"] == "UNAUTHORIZED"
-        response = await client.get("/api/devices", headers={"Authorization": "Bearer owner-secret"})
+        response = await client.get("/api/devices", headers={"Authorization": "Bearer integration-secret"})
         assert response.status == 401
 
 

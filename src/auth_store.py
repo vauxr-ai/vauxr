@@ -4,12 +4,17 @@ Only high-entropy generated bearer tokens are supported by this verifier schema.
 No plaintext credentials, legacy-token imports, or automatic enrollment.
 """
 
+import fcntl
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import tempfile
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -64,10 +69,59 @@ def verifier(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def validate_owner_state(state: object) -> None:
+    """Reject corrupt owner metadata before publishing any credential snapshot."""
+    if state == {}:
+        return  # Foundation v1, before owner startup migration.
+    if not isinstance(state, dict):
+        raise ValueError("Invalid owner state")  # noqa: TRY004
+    required = {"version", "mode", "generation"}
+    optional = {"verifier", "claim", "claim_expires", "claim_attempts", "pending", "attempts"}
+    if (not required <= state.keys() or not state.keys() <= required | optional
+            or type(state["version"]) is not int or state["version"] != 1
+            or state["mode"] not in ("unclaimed", "recovery", "generated", "environment")
+            or not isinstance(state["generation"], str)
+            or not re.fullmatch(r"[0-9a-f]{32}", state["generation"])):
+        raise ValueError("Invalid owner state")
+
+    def digest(value: object) -> bool:
+        return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+    def timestamp(value: object) -> bool:
+        return type(value) in (int, float) and math.isfinite(value) and value >= 0
+
+    active = state["mode"] in ("generated", "environment")
+    if active:
+        if not digest(state.get("verifier")) or state.keys() - (required | {"verifier", "attempts"}):
+            raise ValueError("Invalid owner state")
+    elif "verifier" in state:
+        raise ValueError("Invalid owner state")
+    if "claim" in state and (not digest(state["claim"]) or "pending" in state
+                             or "claim_expires" not in state or "claim_attempts" not in state):
+        raise ValueError("Invalid owner state")
+    if "claim_expires" in state and not timestamp(state["claim_expires"]):
+        raise ValueError("Invalid owner state")
+    if "claim_attempts" in state and (type(state["claim_attempts"]) is not int
+                                      or not 0 <= state["claim_attempts"] <= 5):
+        raise ValueError("Invalid owner state")
+    if "pending" in state:
+        pending = state["pending"]
+        if (not isinstance(pending, dict) or pending.keys() != {"verifier", "ack", "expires"}
+                or not digest(pending["verifier"]) or not digest(pending["ack"])
+                or not timestamp(pending["expires"])):
+            raise ValueError("Invalid owner state")
+    attempts = state.get("attempts", [])
+    if not isinstance(attempts, list) or len(attempts) > 10 or not all(timestamp(at) for at in attempts):
+        raise ValueError("Invalid owner state")
+
+
 class CredentialStore:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.records: tuple[Credential, ...] = ()
+        self.owner: dict = {}
+        self._lock = threading.RLock()
+        self._transaction_active = False
         self.load()
 
     @staticmethod
@@ -84,6 +138,7 @@ class CredentialStore:
                 raise ValueError("Ambiguous principal identity")
 
     def load(self) -> None:
+        self.owner = {}
         self.records = ()  # A failed reload never leaves stale access active.
         if not self.path.exists():
             return
@@ -92,16 +147,56 @@ class CredentialStore:
                 os.fchmod(stream.fileno(), 0o600)
                 data = json.load(stream)
             if (
-                set(data) != {"version", "credentials"}
+                not isinstance(data, dict)
+                or (set(data) != {"version", "credentials"} if data.get("version") == 1
+                 else set(data) != {"version", "credentials", "owner"})
                 or type(data["version"]) is not int
-                or data["version"] != 1
+                or data["version"] not in (1, 2)
             ):
                 raise ValueError
             records = tuple(Credential(**{**row, "role": Role(row["role"])}) for row in data["credentials"])
             self._validate(records)
+            validate_owner_state(data.get("owner", {}))
         except (ValueError, TypeError, KeyError):
             raise ValueError("Invalid credential store") from None
+        owner = data.get("owner", {})
+        if not isinstance(owner, dict):
+            raise ValueError("Invalid credential store")  # noqa: TRY004
+        self.owner = owner
         self.records = records
+
+    @contextmanager
+    def transaction(self) -> Iterator["CredentialStore"]:
+        """Serialize read/modify/durable-write across console and server processes.
+
+        Downstream writers MUST build snapshots inside this boundary.
+        """
+        with self._lock:
+            if self._transaction_active:
+                yield self
+                return
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(self.path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                self.load()
+                self._transaction_active = True
+                yield self
+            finally:
+                self._transaction_active = False
+                os.close(fd)
+
+    def save_owner(self, owner: dict) -> None:
+        if not self._transaction_active:
+            raise RuntimeError("Owner writes require a store transaction")
+        validate_owner_state(owner)
+        self.owner = owner
+        try:
+            self.replace(self.records)
+        except BaseException:
+            self.load()
+            raise
 
     def replace(self, records: tuple[Credential, ...]) -> None:
         """Internal durable schema boundary, not an owner or enrollment API."""
@@ -116,7 +211,9 @@ class CredentialStore:
             ):
                 raise ValueError("Credential IDs are immutable; replacement requires a new ID")
         try:
-            atomic_private_json(self.path, {"version": 1, "credentials": [asdict(r) for r in records]})
+            atomic_private_json(
+                self.path, {"version": 2, "credentials": [asdict(r) for r in records], "owner": self.owner}
+            )
         except OSError:
             # A directory fsync can fail after rename. Never retain a different
             # authorization snapshot from the file that is now visible.

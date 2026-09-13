@@ -14,10 +14,12 @@ import webhooks
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     cfg_mod.reset_config()
+    monkeypatch.setenv("OWNER_HTTPS_ORIGIN", "https://owner.example")
+    monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
     monkeypatch.setenv("DEVICE_TOKEN", "tok")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    from tests.auth_helpers import seed
     from auth_policy import Role
+    from tests.auth_helpers import seed
     seed("tok", Role.OWNER, "owner")
     webhooks.reset_for_tests()
     webhooks.load()
@@ -141,6 +143,7 @@ from collections.abc import AsyncIterator
 from aiohttp.test_utils import TestClient, TestServer
 
 from http_server import make_http_app
+from tests.auth_helpers import owner_headers
 
 
 @pytest.fixture
@@ -151,14 +154,14 @@ async def client() -> AsyncIterator[TestClient]:
         yield c
 
 
-def _auth() -> dict[str, str]:
-    return {"Authorization": "Bearer tok"}
+def _auth(client) -> dict[str, str]:
+    return owner_headers(client)
 
 
 async def test_http_create_list_delete_webhook(client: TestClient) -> None:
     res = await client.post(
         "/api/webhooks",
-        headers=_auth(),
+        headers=_auth(client),
         json={"name": "HA", "url": "http://ha.local/hook", "authorization": "Bearer s"},
     )
     assert res.status == 201
@@ -168,20 +171,20 @@ async def test_http_create_list_delete_webhook(client: TestClient) -> None:
     assert "authorization" not in body
     wid = body["id"]
 
-    listed = await (await client.get("/api/webhooks", headers=_auth())).json()
+    listed = await (await client.get("/api/webhooks", headers=_auth(client))).json()
     assert len(listed) == 1
     assert listed[0]["id"] == wid
 
-    res = await client.delete(f"/api/webhooks/{wid}", headers=_auth())
+    res = await client.delete(f"/api/webhooks/{wid}", headers=_auth(client))
     assert res.status == 200
-    listed = await (await client.get("/api/webhooks", headers=_auth())).json()
+    listed = await (await client.get("/api/webhooks", headers=_auth(client))).json()
     assert listed == []
 
 
 async def test_http_create_webhook_rejects_bad_url(client: TestClient) -> None:
     res = await client.post(
         "/api/webhooks",
-        headers=_auth(),
+        headers=_auth(client),
         json={"name": "x", "url": "not-a-url"},
     )
     assert res.status == 400
@@ -190,7 +193,7 @@ async def test_http_create_webhook_rejects_bad_url(client: TestClient) -> None:
 async def test_http_create_webhook_with_body(client: TestClient) -> None:
     res = await client.post(
         "/api/webhooks",
-        headers=_auth(),
+        headers=_auth(client),
         json={
             "name": "Lights low",
             "url": "http://ha.local:8123/api/services/scene/turn_on",
@@ -203,7 +206,7 @@ async def test_http_create_webhook_with_body(client: TestClient) -> None:
 
     res = await client.patch(
         f"/api/webhooks/{body['id']}",
-        headers=_auth(),
+        headers=_auth(client),
         json={"body": None},
     )
     assert res.status == 200
@@ -214,7 +217,7 @@ async def test_http_create_webhook_with_body(client: TestClient) -> None:
 async def test_http_create_webhook_rejects_bad_body(client: TestClient) -> None:
     res = await client.post(
         "/api/webhooks",
-        headers=_auth(),
+        headers=_auth(client),
         json={"name": "x", "url": "http://ok.example/h", "body": ["nope"]},
     )
     assert res.status == 400
@@ -223,7 +226,7 @@ async def test_http_create_webhook_rejects_bad_body(client: TestClient) -> None:
 async def test_http_duplicate_webhook(client: TestClient, tmp_path: Path) -> None:
     res = await client.post(
         "/api/webhooks",
-        headers=_auth(),
+        headers=_auth(client),
         json={
             "name": "HA",
             "url": "http://ha.local/hook",
@@ -235,7 +238,7 @@ async def test_http_duplicate_webhook(client: TestClient, tmp_path: Path) -> Non
     src = await res.json()
     assert "authorization" not in src
 
-    res = await client.post(f"/api/webhooks/{src['id']}/duplicate", headers=_auth())
+    res = await client.post(f"/api/webhooks/{src['id']}/duplicate", headers=_auth(client))
     assert res.status == 201
     clone = await res.json()
     assert clone["name"] == "HA copy"
@@ -251,5 +254,5 @@ async def test_http_duplicate_webhook(client: TestClient, tmp_path: Path) -> Non
 
 
 async def test_http_duplicate_webhook_404(client: TestClient) -> None:
-    res = await client.post("/api/webhooks/wh_missing/duplicate", headers=_auth())
+    res = await client.post("/api/webhooks/wh_missing/duplicate", headers=_auth(client))
     assert res.status == 404

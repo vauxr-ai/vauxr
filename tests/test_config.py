@@ -76,8 +76,7 @@ def test_load_config_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_load_config_missing_device_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DEVICE_TOKEN", raising=False)
-    with pytest.raises(RuntimeError, match="DEVICE_TOKEN"):
-        cfg_mod.load_config()
+    assert cfg_mod.load_config().device.token == ""
 
 
 def test_parse_wyoming_url_without_tcp_prefix(monkeypatch: pytest.MonkeyPatch) -> None:

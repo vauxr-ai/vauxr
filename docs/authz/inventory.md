@@ -2,10 +2,14 @@
 
 Both :8765 and :8080 serve the same application and policy. HTTP-only test apps use
 the same guard. HEAD on GET resources inherits their authorization. OPTIONS is public
-preflight (204, no state changes). There is no public credential bootstrap route.
+preflight (204, no state changes). Owner bootstrap is separately guarded by the configured HTTPS/origin boundary
+and explicit local-console proof; see [owner-v1.md](owner-v1.md).
 
 | HTTP method/path | Policy operation | Boundary |
 | --- | --- | --- |
+| GET /api/auth/status, /api/auth/session | owner contract v1 | HTTPS boundary; session requires cookie |
+| POST /api/auth/claim, /api/auth/save, /api/auth/login | owner contract v1 | HTTPS + exact Origin + JSON + durable rate limits; console claim/save proof or operator verifier |
+| POST /api/auth/logout | owner contract v1 | owner session + HTTPS + Origin + CSRF |
 | GET /api/devices | devices.list | owner/integration |
 | PATCH /api/devices/{device_id} | device.configure | owner, including button mapping |
 | POST /api/devices/{device_id}/announce | device.announce | owner/integration |
@@ -27,7 +31,7 @@ preflight (204, no state changes). There is no public credential bootstrap route
 | GET /{tail:.*} | explicit public static boundary | web-client/dist only; /api paths return 404 |
 | Any new registered handler without boundary declaration | none | denied by middleware |
 
-No firmware publication/upload, pairing, owner management, generic configuration,
+No firmware publication/upload, pairing, generic configuration,
 credential disclosure, or playback URL endpoint currently exists. Their policy
 operations are reserved, not aliases for generic server administration.
 
