@@ -25,14 +25,13 @@ TLS for the API/control plane does not remove WebRTC ICE/NAT requirements.
    chain and hostname against an already trusted public/private root or a
    physical bootstrap trust anchor. It then sends an enrollment request over
    that authenticated channel.
-3. **Owner approval and speaker pairing are separate questions.** The owner
-   must approve a requested enrollment through an authenticated control
-   surface. Separately, a speaker may need a physical pairing interaction or a
-   spoken/displayed matching code to associate it with that approval. This
-   record does not require a physical button on the server, choose either
-   interaction, or define a custom enrollment-credential format. Any code is
-   short lived, single use, and rate limited; it does not replace TLS server
-   validation.
+3. **Owner approval and speaker pairing are separate questions.** An owner or
+   an authorized OpenClaw integration must approve a requested device pairing
+   through an authenticated control surface. Speaker pairing requires both a
+   bounded physical pairing window and a matching spoken code. This record does
+   not require a physical button on the server or define a custom
+   enrollment-credential format. The pairing code is short lived, single use,
+   and rate limited; it does not replace TLS server validation.
 4. **Device identity is distinct.** The eventual enrollment contract needs a
    device-generated identity and replay protection bound to owner approval and
    verified server identity. Its exact credential/attestation and response
@@ -47,8 +46,9 @@ TLS for the API/control plane does not remove WebRTC ICE/NAT requirements.
    the retiring root only after fleet confirmation. Leaf renewal must preserve
    the validated name and issuer path.
 
-This contract deliberately leaves authorization roles, owner login, device
-certificate format, and endpoint enforcement to #46--#49.
+This contract deliberately leaves authorization roles, exact owner/operator
+login and token format, device certificate format, and endpoint enforcement to
+#46--#49.
 
 ## Options
 
@@ -69,13 +69,30 @@ service. This avoids asking every consumer to own DNS while retaining ordinary
 browser/phone trust and avoids making the certificate key a fleet-shared Vauxr
 secret. It is distinct from a tunnel: API/control traffic remains LAN-local.
 
-Proposed user-facing setup, subject to validation: (1) connect the gateway to
-the LAN, (2) use the Vauxr app's local discovery to start setup, (3) approve
-the displayed gateway/name association in the authenticated app, (4) open the
-shown HTTPS name on the same LAN, and (5) pair a speaker with the product's
-separately designed physical/code interaction. The implementation must prove
-that the name resolves locally and that real browsers retain stock trust before
-this can be presented as a supported flow.
+Proposed **web-first** setup, subject to validation: (1) connect the gateway to
+the LAN; (2) use the gateway's local console to display a short-lived,
+single-use claim code; (3) in the Vauxr web UI, enter that code to claim the
+install and complete owner authentication; (4) after claim, generate and use
+the eventual operator-token login defined by the shared auth contract; (5)
+open the install's HTTPS name on the same LAN; and (6) pair a speaker only
+during a physical pairing window while matching its spoken code, with approval
+by the owner or an authorized OpenClaw integration.
+
+The local-console claim proves temporary access to the gateway's setup surface;
+it is neither owner authentication nor TLS server authentication. Conversely,
+the HTTPS reachability bootstrap (public certificate, install name, and local
+DNS resolution) establishes a trusted path to the local gateway but does not
+authenticate an owner. These two bootstraps must remain independently designed
+and tested. This flow assumes a web UI, not a native Vauxr app.
+
+The implementation must prove that the install name resolves locally, real
+browsers retain stock trust, and the chosen local-console exposure cannot be
+abused before this can be presented as a supported flow. In particular, the
+design has not resolved LAN DNS deployment or clients/routers that apply DNS
+rebinding protection to a public install name resolving to a private LAN IP.
+The proof must cover representative browser, OS, router, and resolver behavior
+and document the supported remediation; no bypass or certificate-warning
+clickthrough is an acceptable remediation.
 
 Service/cost responsibility under that default: Vauxr operates/finances the
 parent domain, authoritative DNS, DNS-01 authorization service, issuance and
@@ -113,7 +130,8 @@ synthetic credential only after a successful handshake. On failure paths it
 does **not** attempt an application write; MemoryBIO.pending measures BIO
 buffering and is not evidence that a peer received or did not receive
 plaintext. It does not prove public-CA issuance, DNS ownership, local DNS
-resolution, clean browser/phone acceptance, ESP32 firmware acceptance,
-trusted-time bootstrap, client root installation, NAT/ICE operation, or
-production server configuration. Those are explicit follow-ons before this
-architecture can be selected or shipped.
+resolution or DNS-rebinding-filter behavior, clean browser/phone acceptance,
+local-console claim abuse resistance, owner/operator authentication, ESP32
+firmware acceptance, trusted-time bootstrap, client root installation, NAT/ICE
+operation, or production server configuration. Those are explicit follow-ons
+before this architecture can be selected or shipped.
