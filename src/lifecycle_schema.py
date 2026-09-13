@@ -6,6 +6,7 @@ import re
 from enrollment_schema import hex_string, timestamp
 
 LIMIT = 1024
+OPERATION_LIMIT = 3 * LIMIT
 TOMBSTONE_LIMIT = 65536
 STATES = {"queued", "pending", "delivered", "acknowledged", "completed", "expired", "revoked"}
 TERMINAL = {"completed", "expired", "revoked"}
@@ -27,7 +28,8 @@ def validate_lifecycle(state: object) -> None:
                 or len(set(blocked)) != len(blocked) or not all(hex_string(v, 64) for v in blocked)):
             raise ValueError
         for name in ("operations", "bindings", "recovery"):
-            if not isinstance(state[name], dict) or len(state[name]) > LIMIT:
+            limit = OPERATION_LIMIT if name == "operations" else LIMIT
+            if not isinstance(state[name], dict) or len(state[name]) > limit:
                 raise ValueError
         for key, row in state["operations"].items():
             if (not hex_string(key, 32) or row.keys() != {
@@ -67,3 +69,18 @@ def validate_lifecycle(state: object) -> None:
                 raise ValueError
     except (KeyError, TypeError, ValueError, AttributeError):
         raise ValueError("Invalid lifecycle state") from None
+
+
+def has_capacity(state: dict, digests: list[str]) -> bool:
+    """Reserve one tombstone per admitted verifier and one revoke per liability.
+
+    A revoke adds one operation but removes at least one unblocked verifier or
+    unfinished operation. Thus it cannot increase either reserved-space total.
+    All snapshot writers (including future enrollment) must preserve this bound.
+    """
+    blocked = set(state.get("blocked", []))
+    unblocked = set(digests) - blocked
+    operations = state.get("operations", {})
+    unfinished = sum(row["state"] not in TERMINAL for row in operations.values())
+    return (len(digests) <= LIMIT and len(blocked | set(digests)) <= TOMBSTONE_LIMIT
+            and len(operations) + len(unblocked) + unfinished <= OPERATION_LIMIT)

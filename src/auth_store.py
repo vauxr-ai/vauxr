@@ -20,7 +20,7 @@ from pathlib import Path
 
 from auth_policy import Principal, Role
 from enrollment_schema import validate_enrollment
-from lifecycle_schema import validate_lifecycle
+from lifecycle_schema import has_capacity, validate_lifecycle
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 
@@ -173,6 +173,8 @@ class CredentialStore:
             validate_owner_state(data.get("owner", {}))
             validate_enrollment(data.get("enrollment", {}))
             validate_lifecycle(data.get("lifecycle", {}))
+            if not has_capacity(data.get("lifecycle", {}), [r.verifier for r in records]):
+                raise ValueError("Missing revocation headroom")
             if data["version"] == 4 and not data["lifecycle"]:
                 raise ValueError("Invalid lifecycle state")
             if data["version"] == 3 and not data["enrollment"]:
@@ -247,6 +249,10 @@ class CredentialStore:
         validate_owner_state(self.owner)
         validate_enrollment(self.enrollment)
         validate_lifecycle(self.lifecycle)
+        if not has_capacity(self.lifecycle, [r.verifier for r in records]):
+            from enrollment import EnrollmentError
+
+            raise EnrollmentError("capacity")
         payload = {"version": 2, "credentials": [asdict(r) for r in records], "owner": self.owner}
         if self.enrollment:
             payload.update(version=3, enrollment=self.enrollment)

@@ -174,10 +174,14 @@ class Lifecycle:
         matching = [r for r in records if (r.role, r.subject) == (body["role"], body["subject"])]
         if not matching:
             raise EnrollmentError("not_found")
-        if len(state["operations"]) >= LIMIT:
-            raise EnrollmentError("capacity")
         active = [r for r in state["operations"].values() if r["subject"] == body["subject"]
                   and r["state"] not in TERMINAL]
+        # General history stops at LIMIT. The reserved tail only admits revokes
+        # which remove a liability; retries keep their original durable ID forever.
+        if len(state["operations"]) >= LIMIT and not (
+            action == "revoke" and (active or any(r.verifier not in state["blocked"] for r in matching))
+        ):
+            raise EnrollmentError("capacity")
         if action == "rotate" and (active or not any(self.store.usable(r) for r in matching)):
             raise EnrollmentError("conflict")
         # Integration recovery needs its own participation proof in package #51.

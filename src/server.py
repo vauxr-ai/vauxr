@@ -166,16 +166,20 @@ async def _authorize_message(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg:
         ctx.principal = principal
         ctx.device_id = resource
 
-        async def close_revoked() -> None:
-            live = registry.get(ctx.device_id)
-            if live is None or live.ws is ws:
-                registry.abort_active_turn(ctx.device_id)
-                registry.unregister(ctx.device_id, ws)
-                if ctx.realtime:
-                    from realtime_session import get_manager
+        teardown: list[auth_connections.Teardown] = []
 
-                    await get_manager().stop(ctx.device_id)
-            await ws.close()
+        async def close_revoked() -> None:
+            if not teardown:
+                teardown.append(auth_connections.Teardown(ws.close))
+                live = registry.get(ctx.device_id)
+                if live is None or live.ws is ws:
+                    registry.abort_active_turn(ctx.device_id)
+                    registry.unregister(ctx.device_id, ws)
+                    if ctx.realtime:
+                        from realtime_session import get_manager
+
+                        teardown.append(auth_connections.Teardown(lambda: get_manager().stop(ctx.device_id)))
+            await auth_connections.run_teardowns(teardown)
 
         ctx.authority = auth_connections.retain(principal, close_revoked)
     return True

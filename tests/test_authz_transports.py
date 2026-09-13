@@ -465,7 +465,8 @@ async def test_lifecycle_revoke_closes_idle_socket_before_owner_response(role):
         assert not app[LIFECYCLE].store.authenticate(token)
 
 
-async def test_realtime_offer_revoked_during_await_is_closed(monkeypatch):
+@pytest.mark.parametrize("close_fails", [False, True])
+async def test_realtime_offer_revoked_during_await_is_closed(monkeypatch, close_fails):
     from unittest.mock import AsyncMock
 
     import realtime_session
@@ -474,7 +475,7 @@ async def test_realtime_offer_revoked_during_await_is_closed(monkeypatch):
 
     app = make_http_app()
     app.router.add_post("/api/offer", _offer_handler)
-    stop = AsyncMock()
+    stop = AsyncMock(side_effect=[ValueError("synthetic close"), None] if close_fails else None)
 
     class Manager:
         def can_accept_offer(self, identity):
@@ -499,8 +500,13 @@ async def test_realtime_offer_revoked_during_await_is_closed(monkeypatch):
         response = await client.post("/api/offer", json={
             "type": "offer", "sdp": "synthetic", "device_id": "speaker", "token": "device-secret",
         })
-        assert response.status == 401
+        assert response.status == (503 if close_fails else 401)
         stop.assert_awaited_once_with("speaker")
+        if close_fails:
+            import auth_connections
+
+            await auth_connections.disconnect_stale(app[LIFECYCLE].store)
+            assert stop.await_count == 2
 
 
 async def test_integration_revocation_stops_media_without_plugin_socket(monkeypatch):
@@ -575,3 +581,69 @@ async def test_realtime_media_retains_integration_generation(monkeypatch):
         await auth_connections.disconnect_stale(app[LIFECYCLE].store)
         stop.assert_awaited_once_with("speaker")
         assert auth.authenticate("device-secret")
+
+
+@pytest.mark.parametrize("role", ["device", "integration"])
+async def test_lifecycle_http_teardown_timeout_and_maintenance_retry(monkeypatch, role):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    import auth_connections
+    from lifecycle_http import LIFECYCLE, MEDIA_TEARDOWN
+
+    subject = "speaker"
+    token = "device-secret"
+    if role == "integration":
+        channel, _ = await channel_registry.create("Teardown failure")
+        channel_registry.activate(channel.id)
+        subject = channel.id
+        token = "synthetic-hanging-integration"
+        seed(token, Role.INTEGRATION, subject)
+    monkeypatch.setattr(auth_connections, "CLOSE_SECONDS", 0.02)
+    app = make_http_app()
+    finish = asyncio.Event()
+    calls = 0
+
+    async def hang():
+        nonlocal calls
+        calls += 1
+        try:
+            await finish.wait()
+        except asyncio.CancelledError:
+            await finish.wait()
+
+    async with TestClient(TestServer(app)) as client:
+        headers = owner_headers(client)
+        healthy = AsyncMock()
+        retry = AsyncMock(side_effect=[ValueError("synthetic"), None])
+        retained = [auth_connections.retain(auth.authenticate(token), callback)
+                    for callback in (hang, retry, healthy)]
+        # The independent orphan-media cleanup must run even when sockets fail.
+        app[MEDIA_TEARDOWN].close = AsyncMock()
+        app[MEDIA_TEARDOWN].close.side_effect = ValueError("synthetic media")
+        body = {"operation_id": "1" * 32, "role": role, "subject": subject}
+        try:
+            response = await asyncio.wait_for(client.post(
+                "/api/lifecycle/v1/revoke", headers=headers, json=body), 0.5)
+            assert response.status == 503
+            assert await response.json() == {"error": "transport_teardown_unavailable"}
+            assert not app[LIFECYCLE].store.authenticate(token)
+            healthy.assert_awaited_once()
+            app[MEDIA_TEARDOWN].close.assert_awaited()
+            app[MEDIA_TEARDOWN].close.side_effect = None
+            # Leave it stuck through a maintenance pass, then allow closure.
+            await asyncio.sleep(1.1)
+            assert retry.await_count == 2
+            assert calls == 1
+            assert app[MEDIA_TEARDOWN].close.await_count >= 2
+            finish.set()
+            async with asyncio.timeout(2):
+                while any(connection in auth_connections._connections for connection in retained):
+                    await asyncio.sleep(0.02)
+            response = await client.post("/api/lifecycle/v1/revoke", headers=headers, json=body)
+            assert response.status == 200
+            assert (await response.json())["state"] == "revoked"
+        finally:
+            finish.set()
+            for connection in retained:
+                auth_connections.release(connection)

@@ -28,6 +28,7 @@ from typing import Any
 
 from aiohttp import web
 
+import auth_connections
 import device_registry as registry
 from config import get_config
 from device_config import barge_in_enabled
@@ -114,6 +115,7 @@ class RealtimeSession:
         # backstop. Seeded when the pipeline starts.
         self._last_activity = time.monotonic()
         self._closed = False
+        self._close_attempts: list[auth_connections.Teardown] | None = None
         # Set once the pipeline is built and the WebRTC client is connected.
         self._pipeline_ready = asyncio.Event()
         # Deferred audio.end queue, in turn order. Each entry is (follow_up,
@@ -911,24 +913,21 @@ class RealtimeSession:
         registry.set_state(self.device_id, "idle")
 
     async def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        log.info("realtime[%s]: closing session", self.device_id)
-        self._cancel_drain_timer()
-        if self._backstop_task is not None:
-            self._backstop_task.cancel()
-        try:
+        if self._close_attempts is None:
+            self._closed = True
+            log.info("realtime[%s]: closing session", self.device_id)
+            self._cancel_drain_timer()
+            if self._backstop_task is not None:
+                self._backstop_task.cancel()
+            self._close_attempts = []
             if self._task is not None:
-                await self._task.cancel()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
+                self._close_attempts.append(auth_connections.Teardown(self._task.cancel))
             if self._connection is not None:
-                await self._connection.disconnect()
-        except Exception:  # noqa: BLE001
-            pass
-        get_manager().forget(self.device_id)
+                self._close_attempts.append(auth_connections.Teardown(self._connection.disconnect))
+        await auth_connections.run_teardowns(self._close_attempts)
+        manager = get_manager()
+        if manager._sessions.get(self.device_id) is self:
+            manager.forget(self.device_id)
 
 
 class RealtimeManager:
@@ -1133,8 +1132,11 @@ class RealtimeManager:
 
     async def stop_all(self) -> None:
         """Retire media and armed wakes when their active integration is revoked."""
-        for device_id in set(self._sessions) | set(self._preroll):
-            await self.stop(device_id)
+        results = await asyncio.gather(*(self.stop(device_id)
+                                         for device_id in set(self._sessions) | set(self._preroll)),
+                                       return_exceptions=True)
+        if any(isinstance(result, BaseException) for result in results):
+            raise RuntimeError("transport_teardown_unavailable")
 
     async def stop(self, device_id: str) -> None:
         session = self._sessions.get(device_id)

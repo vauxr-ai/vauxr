@@ -117,7 +117,15 @@ async def _offer_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "realtime offer failed"}, status=500)
 
     if not current(principal) or (dependencies and not any(current(p) for p in dependencies)):
-        await manager.stop(device_id)
+        # Retain the failed admission too: teardown may hang or raise, and must
+        # remain visible to lifecycle HTTP/maintenance until it actually finishes.
+        for authority in (principal, *dependencies):
+            if not current(authority):
+                auth_connections.retain(authority, lambda: manager.stop(device_id))
+        try:
+            await auth_connections.disconnect_stale(get_store())
+        except RuntimeError:
+            return web.json_response({"error": "transport_teardown_unavailable"}, status=503)
         return web.json_response({"error": "unauthorized"}, status=401)
     if answer is None:
         await manager.abort_wake(device_id)
