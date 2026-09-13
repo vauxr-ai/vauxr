@@ -10,6 +10,7 @@ and explicit local-console proof; see [owner-v1.md](owner-v1.md).
 | GET /api/auth/status, /api/auth/session | owner contract v1 | HTTPS boundary; session requires cookie |
 | POST /api/auth/claim, /api/auth/save, /api/auth/login | owner contract v1 | HTTPS + exact Origin + JSON + durable rate limits; console claim/save proof or operator verifier |
 | POST /api/auth/logout | owner contract v1 | owner session + HTTPS + Origin + CSRF |
+| POST /api/enrollment/v1/{action} | enrollment v1 | configured HTTPS; signed client proof or fresh owner/integration control; [exact actions and roles](enrollment-v1.md) |
 | GET /api/devices | devices.list | owner/integration |
 | PATCH /api/devices/{device_id} | device.configure | owner, including button mapping |
 | POST /api/devices/{device_id}/announce | device.announce | owner/integration |
@@ -31,7 +32,7 @@ and explicit local-console proof; see [owner-v1.md](owner-v1.md).
 | GET /{tail:.*} | explicit public static boundary | web-client/dist only; /api paths return 404 |
 | Any new registered handler without boundary declaration | none | denied by middleware |
 
-No firmware publication/upload, pairing, generic configuration,
+No firmware publication/upload, generic configuration,
 credential disclosure, or playback URL endpoint currently exists. Their policy
 operations are reserved, not aliases for generic server administration.
 

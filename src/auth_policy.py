@@ -98,11 +98,9 @@ _OWNER = frozenset(
     }
 )
 
-# Contracts only: no setup, pairing or lifecycle implementation in this package.
+# Reserved operations without a shipping handler. Enrollment v1 ships pairing separately.
 UNSHIPPED = frozenset(
     {
-        Operation.PAIR_INITIATE,
-        Operation.PAIR_APPROVE,
         Operation.PLAYBACK,
         Operation.FIRMWARE_PUBLISH,
         Operation.SERVER_MANAGE,
@@ -145,7 +143,7 @@ def audit_denial(authenticated: bool) -> None:
 
 @dataclass(frozen=True)
 class PairApprovalResult:
-    """Future enrollment service returns ONLY this projection to the approver."""
+    """Enrollment service returns ONLY this projection to the approver."""
 
     status: str
     device_id: str

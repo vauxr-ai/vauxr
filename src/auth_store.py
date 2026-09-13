@@ -1,4 +1,4 @@
-"""Version 1 credential schema; provisioning/lifecycle are separate packages.
+"""Shared credential, owner and enrollment snapshot (schema versions 1 through 3).
 
 Only high-entropy generated bearer tokens are supported by this verifier schema.
 No plaintext credentials, legacy-token imports, or automatic enrollment.
@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from auth_policy import Principal, Role
+from enrollment_schema import validate_enrollment
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 
@@ -125,6 +126,7 @@ class CredentialStore:
         self.path = path
         self.records: tuple[Credential, ...] = ()
         self.owner: dict = {}
+        self.enrollment: dict = {}
         self._lock = threading.RLock()
         self._transaction_active = False
         self.load()
@@ -144,6 +146,7 @@ class CredentialStore:
 
     def load(self) -> None:
         self.owner = {}
+        self.enrollment = {}
         self.records = ()  # A failed reload never leaves stale access active.
         if not self.path.exists():
             return
@@ -154,20 +157,25 @@ class CredentialStore:
             if (
                 not isinstance(data, dict)
                 or (set(data) != {"version", "credentials"} if data.get("version") == 1
-                 else set(data) != {"version", "credentials", "owner"})
+                 else set(data) != ({"version", "credentials", "owner", "enrollment"}
+                                   if data.get("version") == 3 else {"version", "credentials", "owner"}))
                 or type(data["version"]) is not int
-                or data["version"] not in (1, 2)
+                or data["version"] not in (1, 2, 3)
             ):
                 raise ValueError
             records = tuple(Credential(**{**row, "role": Role(row["role"])}) for row in data["credentials"])
             self._validate(records)
             validate_owner_state(data.get("owner", {}))
+            validate_enrollment(data.get("enrollment", {}))
+            if data["version"] == 3 and not data["enrollment"]:
+                raise ValueError("Invalid enrollment state")
         except (ValueError, TypeError, KeyError):
             raise ValueError("Invalid credential store") from None
         owner = data.get("owner", {})
         if not isinstance(owner, dict):
             raise ValueError("Invalid credential store")  # noqa: TRY004
         self.owner = owner
+        self.enrollment = data.get("enrollment", {})
         self.records = records
 
     @contextmanager
@@ -203,6 +211,18 @@ class CredentialStore:
             self.load()
             raise
 
+    def save_enrollment(self, enrollment: dict, records: tuple[Credential, ...] | None = None) -> None:
+        """Commit consumption and issuance together; preserve owner and other clients."""
+        if not self._transaction_active:
+            raise RuntimeError("Enrollment writes require a store transaction")
+        validate_enrollment(enrollment)
+        self.enrollment = enrollment
+        try:
+            self.replace(self.records if records is None else records)
+        except BaseException:
+            self.load()
+            raise
+
     def replace(self, records: tuple[Credential, ...]) -> None:
         """Internal durable schema boundary, not an owner or enrollment API."""
         self._validate(records)
@@ -215,10 +235,13 @@ class CredentialStore:
                 record.verifier,
             ):
                 raise ValueError("Credential IDs are immutable; replacement requires a new ID")
+        validate_owner_state(self.owner)
+        validate_enrollment(self.enrollment)
+        payload = {"version": 2, "credentials": [asdict(r) for r in records], "owner": self.owner}
+        if self.enrollment:
+            payload.update(version=3, enrollment=self.enrollment)
         try:
-            atomic_private_json(
-                self.path, {"version": 2, "credentials": [asdict(r) for r in records], "owner": self.owner}
-            )
+            atomic_private_json(self.path, payload)
         except OSError:
             # A directory fsync can fail after rename. Never retain a different
             # authorization snapshot from the file that is now visible.

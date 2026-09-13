@@ -1,3 +1,7 @@
+> Enrollment #48 extends the shared snapshot to schema 3 and preserves this owner
+> namespace. See [enrollment-v1.md](enrollment-v1.md) for migration/rollback and
+> pending-enrollment invalidation on owner recovery.
+
 # Owner authentication contract v1 (#47)
 
 This package is stacked on authorization foundation **8451b39 / unmerged PR55**.
