@@ -155,7 +155,8 @@ class OwnerAuth:
                     token, state.get("verifier")):
                 raise OwnerError("invalid_login")
             now = time.time()
-            self.sessions = {key: value for key, value in self.sessions.items() if value.expires > now}
+            self.sessions = {key: value for key, value in self.sessions.items()
+                             if value.expires > now and value.generation == state["generation"]}
             if len(self.sessions) >= 100:
                 raise OwnerError("rate_limited")
             cookie = secrets.token_urlsafe(32)
