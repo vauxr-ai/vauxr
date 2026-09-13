@@ -502,7 +502,7 @@ async def test_owner_http_session_independent_of_reissued_client(role):
         assert not CredentialStore(store.path).current(stale)
         for bearer, expected in [("synthetic-old-client", 401),
                                  ("synthetic-new-client", 200 if role == Role.INTEGRATION else 403)]:
-            response = await client.get("/api/devices", headers={"Authorization": f"Bearer {bearer}"})
+            response = await client.get("/api/devices", headers={**HEADERS, "Authorization": f"Bearer {bearer}"})
             assert response.status == expected
         OwnerAuth(CredentialStore(store.path)).console_claim(recover=True)
         assert (await client.get("/api/channels", headers=headers)).status == 401

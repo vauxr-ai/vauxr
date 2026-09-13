@@ -34,8 +34,7 @@ from openclaw_client import OpenClawClient
 from owner_http import owner_middleware
 from pipeline import run_voice_turn
 from protocol import encode_text_message, parse_text_message
-from speech import Selection, resolve
-from speech import get_store as get_speech_store
+from speech import Selection, get_store as get_speech_store, resolve
 
 log = logging.getLogger("vauxr.server")
 
@@ -556,6 +555,13 @@ async def device_ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 @transport_boundary
 async def channel_ws_handler(request: web.Request) -> web.WebSocketResponse:
+    from owner_http import ORIGIN, secure_request
+
+    origin = request.app[ORIGIN]
+    if (request.query_string or len(request.headers.getall("Origin", [])) > 1
+            or request.headers.get("Origin", origin) != origin
+            or (origin.startswith("https://") and not secure_request(request))):
+        raise web.HTTPForbidden()
     state: AppState = request.app[APP_STATE]
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -586,8 +592,8 @@ def make_app() -> web.Application:
 async def _startup(app: web.Application) -> None:
     state: AppState = app[APP_STATE]
     cfg = get_config()
-    get_speech_store()  # Validate the server-owned speech registry before accepting turns.
     get_store().load()
+    get_speech_store()  # Validate the speech registry before accepting turns.
     # Load channel registry.
     channel_registry.load()
     log.info("channel registry loaded")

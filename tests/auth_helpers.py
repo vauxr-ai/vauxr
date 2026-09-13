@@ -4,6 +4,9 @@ from auth import get_store
 from auth_policy import Role
 from auth_store import Credential, verifier
 
+TRANSPORT_HEADERS = {"Host": "owner.example", "Origin": "https://owner.example",
+                     "X-Forwarded-Proto": "https"}
+
 
 def seed(token: str, role: Role, subject: str) -> None:
     store = get_store()

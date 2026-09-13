@@ -14,7 +14,7 @@ stay in realtime mode or return the device to silent wake-waiting.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from loguru import logger
@@ -26,7 +26,7 @@ from pipecat.frames.frames import (
     LLMFullResponseStartFrame,
     LLMTextFrame,
 )
-from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.llm_service import LLMService
 from pipecat.services.settings import LLMSettings
 
@@ -86,6 +86,26 @@ def _count_user_messages(context: Any) -> int:
     return sum(1 for m in messages if m.get("role") == "user")
 
 
+class OutputDrainTap(FrameProcessor):
+    """Observe ends after TTS serialization and the transport's audio queue.
+
+    Pipecat 1.9 preserves the original LLM end frame through both queues.
+    Interrupted/dropped markers deliberately retain authority until teardown.
+    """
+
+    def __init__(self, consumed: Callable[[], Awaitable[bool]], **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._consumed = consumed
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if direction == FrameDirection.DOWNSTREAM and isinstance(frame, LLMFullResponseEndFrame):
+            drained = frame.metadata.pop("vauxr_output_drained", None)
+            if drained is not None and await self._consumed():
+                await drained()
+        await self.push_frame(frame, direction)
+
+
 class ChannelLLMService(LLMService):
     """Route LLM turns through the active vauxr channel plugin."""
 
@@ -95,7 +115,7 @@ class ChannelLLMService(LLMService):
         device_id: str,
         channel_server: ChannelServer,
         on_turn_complete: TurnCompleteCb | None = None,
-        turn_complete_factory: Callable[[], TurnCompleteCb] | None = None,
+        turn_complete_factory: Callable[[], TurnCompleteCb | Awaitable[TurnCompleteCb | None]] | None = None,
         on_turn_skipped: TurnSkippedCb | None = None,
         **kwargs,
     ) -> None:
@@ -157,9 +177,6 @@ class ChannelLLMService(LLMService):
             return
         self._last_user_msg_count = user_count
 
-        on_turn_complete = (
-            self._turn_complete_factory() if self._turn_complete_factory else self._on_turn_complete
-        )
         await self.push_frame(LLMFullResponseStartFrame())
         await self.start_processing_metrics()
 
@@ -173,6 +190,16 @@ class ChannelLLMService(LLMService):
 
         def on_error(_run_id: str, message: str) -> None:
             queue.put_nowait(("error", message))
+
+        on_turn_complete = (
+            self._turn_complete_factory() if self._turn_complete_factory else self._on_turn_complete
+        )
+        if asyncio.iscoroutine(on_turn_complete):
+            on_turn_complete = await on_turn_complete
+            if on_turn_complete is None:
+                await self.stop_processing_metrics()
+                await self.push_frame(LLMFullResponseEndFrame())
+                return  # The owning media session was retired before routing.
 
         listener = {"on_delta": on_delta, "on_end": on_end, "on_error": on_error}
         self._channel_server.add_response_listener(self._device_id, listener)
@@ -265,7 +292,11 @@ class ChannelLLMService(LLMService):
                     seg_out.put_nowait(None)
                 await pump
             await self.stop_processing_metrics()
-            await self.push_frame(LLMFullResponseEndFrame())
+            end = LLMFullResponseEndFrame()
+            drained = getattr(on_turn_complete, "output_drained", None)
+            if drained is not None:
+                end.metadata["vauxr_output_drained"] = drained
+            await self.push_frame(end)
 
         if error:
             logger.error("ChannelLLM error for {}: {}", self._device_id, error)

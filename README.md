@@ -34,11 +34,16 @@ cd vauxr
 cp .env.example .env
 ```
 
-2. Edit `.env` — only one value required:
+2. Set the exact LAN owner origin in `.env` (use your server address):
 
 ```env
-DEVICE_TOKEN=your-device-shared-secret
+OWNER_HTTP_ORIGIN=http://192.168.1.20:8080
 ```
+
+No auth token is required at startup. Complete the explicit console claim/save
+setup in [owner authentication v1](docs/authz/owner-v1.md). Legacy `DEVICE_TOKEN`
+grants no access. HTTP/WS is the LAN default; optional HTTPS/WSS requires strict
+certificate validation and never falls back to plaintext.
 
 3. Prepare the persistent directory and start the stack:
 
@@ -66,10 +71,20 @@ openclaw plugins install clawhub:@vauxr/openclaw
 
 The plugin wires OpenClaw to your Vauxr server and exposes device announcements and controls as agent tools. See the [vauxr-openclaw README](https://github.com/vauxr-ai/vauxr-openclaw) for configuration.
 
+Integration clients use [integration enrollment v1](docs/authz/integration-v1.md):
+request access, have the owner approve the displayed code, then automatically
+receive and durably save a one-time credential before acknowledging it. The
+credential grants device listing, announcements, control, firmware update initiation,
+physical-device pairing initiation/approval and its own channel voice responses.
+It excludes owner and credential management. Rotation/revoke use the separate
+[lifecycle v1](docs/authz/lifecycle-v1.md) owner controls and leave device credentials
+independent. Client UI and real plugin persistence acceptance are separate work.
+
 ## Persistent data
 
 Vauxr bind-mounts `./data` beside this Compose file into `/data`. This directory
-holds device settings (`devices.json`), webhooks (`webhooks.json`), channels
+holds the private authorization snapshot (`authz.json`, schema 5 after integration
+enrollment), device settings (`devices.json`), webhooks (`webhooks.json`), channels
 (`channels.json`), routing (`config.json`), and the direct-connection identity
 (`vauxr-identity.json`) when those features are used. It is ignored by Git;
 back it up securely because it can contain credentials and private keys.
@@ -92,7 +107,11 @@ Vauxr is backend-agnostic. If you're not using OpenClaw, connect your own LLM or
 
 ## HTTP API
 
-All endpoints require `Authorization: Bearer <channel-token>` — a `vx_ch_…` token issued by `POST /api/channels`. This is what the OpenClaw plugin uses.
+Authorization is per operation; see the [route inventory](docs/authz/inventory.md).
+Integrations send `Authorization: Bearer <vx_int_credential>` after enrollment/save
+ACK. Owner operations require the owner session cookie and, for mutations, exact
+Origin plus CSRF. Device credentials grant only their device transport and firmware
+read access. Enrollment and lifecycle use their versioned contracts below.
 
 **Devices**
 
@@ -104,15 +123,15 @@ All endpoints require `Authorization: Bearer <channel-token>` — a `vx_ch_…` 
 | `POST` | `/api/devices/{id}/command` | Send control command (`set_volume`, `mute`, `unmute`, `reboot`, `ota`, `set_barge_in`) |
 | `GET` | `/firmware/{name}.bin` | Serve an app image from `DATA_DIR/firmware/` for device HTTP OTA |
 
-**Channels** — routing-channel CRUD. One channel is active at a time and receives the device's transcript.
+**Channels** — owner-controlled routing metadata. One channel is active at a time and receives the device's transcript.
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/channels` | List channels (including the virtual `openclaw-direct` when `OPENCLAW_URL` is set) |
-| `POST` | `/api/channels` | Create a channel; returns a `vx_ch_…` token (shown once) |
+| `POST` | `/api/channels` | Legacy credential creation unavailable (owner 501); use integration enrollment v1 |
 | `POST` | `/api/channels/{id}/activate` | Make this channel the active routing target |
-| `POST` | `/api/channels/{id}/rotate` | Issue a new token for the channel; the old one stops working immediately |
-| `DELETE` | `/api/channels/{id}` | Remove a channel (built-in channels can't be deleted) |
+| `POST` | `/api/channels/{id}/rotate` | Legacy rotation unavailable (owner 501); use lifecycle v1 |
+| `DELETE` | `/api/channels/{id}` | Legacy credential deletion unavailable (owner 501); use lifecycle v1 revoke |
 
 **Webhooks** — named HTTP endpoints configured in Settings, then selected per device gesture.
 
@@ -124,7 +143,7 @@ All endpoints require `Authorization: Bearer <channel-token>` — a `vx_ch_…` 
 | `DELETE` | `/api/webhooks/{id}` | Delete a webhook |
 | `POST` | `/api/webhooks/{id}/duplicate` | Clone a webhook (copies url, authorization, and body; unique `{name} copy` / `{name} copy N`) |
 
-A Postman collection is included at `postman/vauxr.postman_collection.json` covering devices, announce, control (including `ota` and `set_barge_in`), channels, webhooks, and firmware download. Run the Channels folder top-to-bottom to exercise create → activate → rotate → channel-token-auth → delete; run Webhooks the same way so Create captures `webhook_id`.
+A Postman collection is included at `postman/vauxr.postman_collection.json` covering devices, announce, control (including `ota` and `set_barge_in`), channels, webhooks, and firmware download. Its legacy channel-token workflow is superseded by integration enrollment v1 and lifecycle v1; it is not the current authentication contract.
 
 ## Architecture
 

@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import replace
+from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp import WSMsgType, web
@@ -15,12 +16,14 @@ from auth_policy import HTTP_OPERATIONS, WS_OPERATIONS, Role
 from http_server import _require_auth, make_http_app
 from realtime_app import _offer_handler
 from server import make_app
-from tests.auth_helpers import owner_headers, seed
+from tests.auth_helpers import TRANSPORT_HEADERS, owner_headers, seed
 from tests.test_announce import FakeWs
 
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
+    import speech_http
+    monkeypatch.setattr(speech_http, "readiness", AsyncMock(return_value="unavailable"))
     config.reset_config()
     monkeypatch.setenv("OWNER_HTTPS_ORIGIN", "https://owner.example")
     monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
@@ -43,6 +46,10 @@ def isolated(monkeypatch, tmp_path):
 
 # Expected authorization and concrete endpoint outcome, including owner-only and unshipped routes.
 ROUTES = [
+    ("GET", "/api/speech", "o", 200),
+    ("PATCH", "/api/speech", "o", 200),
+    ("GET", "/api/devices/missing/speech", "o", 200),
+    ("PATCH", "/api/devices/missing/speech", "o", 200),
     ("GET", "/api/devices", "oi", 200),
     ("PATCH", "/api/devices/missing", "o", 404),
     ("POST", "/api/devices/missing/announce", "oi", 404),
@@ -69,7 +76,7 @@ async def test_http_matrix(method, path, grants, outcome, role, key):
     async with TestClient(TestServer(make_http_app())) as client:
         response = await client.request(
             method, path,
-            headers=owner_headers(client) if role == "owner" else {"Authorization": f"Bearer {role}-secret"},
+            headers=owner_headers(client) if role == "owner" else {**TRANSPORT_HEADERS, "Authorization": f"Bearer {role}-secret"},
             json={},
         )
         assert response.status == (outcome if key in grants else (401 if key == "-" else 403))
@@ -102,11 +109,11 @@ def test_route_inventory_complete():
         for method, path, _, _ in ROUTES
     }
     expected |= {("GET", "/api/auth/{action}"), ("POST", "/api/auth/{action}"),
-                 ("POST", "/api/enrollment/v1/{action}"), ("POST", "/api/lifecycle/v1/{action}")}
-    expected |= {(method, path) for method in ("GET", "PATCH")
-                 for path in ("/api/speech", "/api/devices/{device_id}/speech")}
+                 ("POST", "/api/enrollment/v1/{action}"), ("POST", "/api/lifecycle/v1/{action}"),
+                 ("POST", "/api/integrations/v1/{action}")}
     assert actual == expected
-    assert len(HTTP_OPERATIONS) == len(ROUTES)
+    # Speech uses one injected boundary for four path/method combinations.
+    assert len(HTTP_OPERATIONS) + 4 == len(ROUTES)
 
 
 async def test_unknown_handler_and_api_fallback_deny():
@@ -143,7 +150,7 @@ async def test_integration_control_and_update_initiation(command, params):
     async with TestClient(TestServer(make_http_app())) as client:
         response = await client.post(
             "/api/devices/speaker/command",
-            headers={"Authorization": "Bearer integration-secret"},
+            headers={**TRANSPORT_HEADERS, "Authorization": "Bearer integration-secret"},
             json={"command": command, "params": params},
         )
         assert response.status == 200
@@ -217,7 +224,7 @@ async def test_disabled_record_rejected_on_existing_socket_and_http():
         store.replace(tuple(replace(r, enabled=False) for r in store.records))
         await ws.send_json({"type": "device.button"})
         assert (await ws.receive_json(timeout=2))["code"] == "UNAUTHORIZED"
-        response = await client.get("/api/devices", headers={"Authorization": "Bearer integration-secret"})
+        response = await client.get("/api/devices", headers={**TRANSPORT_HEADERS, "Authorization": "Bearer integration-secret"})
         assert response.status == 401
 
 
@@ -262,7 +269,7 @@ async def test_auth_denials_log_no_client_values(caplog):
     caplog.set_level(logging.INFO)
     async with TestClient(TestServer(make_app())) as client:
         await client.get("/api/devices", headers={"Authorization": "Bearer LEAK_SECRET"})
-        await client.patch("/api/devices/LEAK_SECRET", headers={"Authorization": "Bearer integration-secret"})
+        await client.patch("/api/devices/LEAK_SECRET", headers={**TRANSPORT_HEADERS, "Authorization": "Bearer integration-secret"})
         async with client.ws_connect("/ws") as ws:
             await ws.send_json({"type": "hello", "device_id": "LEAK_SECRET", "token": "LEAK_SECRET"})
             await ws.receive_json(timeout=2)
@@ -274,7 +281,7 @@ async def test_auth_denials_log_no_client_values(caplog):
 
 @pytest.mark.parametrize("token", ["owner-secret", "device-secret", "legacy-shared-token", None, ["invalid"]])
 async def test_channel_rejects_wrong_principal(token):
-    async with TestClient(TestServer(make_app())) as client, client.ws_connect("/channel") as ws:
+    async with TestClient(TestServer(make_app())) as client, client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as ws:
         await ws.send_json({"type": "channel.auth", "token": token})
         assert (await ws.receive_json(timeout=2))["code"] in {"UNAUTHORIZED", "FORBIDDEN"}
         assert (await ws.receive(timeout=2)).type == WSMsgType.CLOSE
@@ -302,7 +309,7 @@ async def test_inactive_channel_cannot_inject_voice_response():
     from server import APP_STATE
 
     app[APP_STATE].channel_server = cs
-    async with TestClient(TestServer(app)) as client, client.ws_connect("/channel") as ws:
+    async with TestClient(TestServer(app)) as client, client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as ws:
         await ws.send_json({"type": "channel.auth", "token": "idle-channel-secret"})
         assert (await ws.receive_json(timeout=2))["type"] == "channel.ready"
         await ws.send_json(
@@ -412,7 +419,7 @@ async def test_reissued_channel_rejects_existing_connection_in_both_directions(r
     )
     app = make_app()
     app[APP_STATE].channel_server = cs
-    async with TestClient(TestServer(app)) as client, client.ws_connect("/channel") as ws:
+    async with TestClient(TestServer(app)) as client, client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as ws:
         await ws.send_json({"type": "channel.auth", "token": "channel-secret"})
         assert (await ws.receive_json(timeout=2))["type"] == "channel.ready"
         assert cs.is_active_connected()
@@ -424,7 +431,7 @@ async def test_reissued_channel_rejects_existing_connection_in_both_directions(r
         assert (await ws.receive_json(timeout=2))["code"] == "UNAUTHORIZED"
         assert (await ws.receive(timeout=2)).type == WSMsgType.CLOSE
         assert delivered == []
-        async with client.ws_connect("/channel") as fresh:
+        async with client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as fresh:
             await fresh.send_json({"type": "channel.auth", "token": "replacement-secret"})
             assert (await fresh.receive_json(timeout=2))["type"] == "channel.ready"
             assert cs.is_active_connected()
@@ -454,7 +461,7 @@ async def test_lifecycle_revoke_closes_idle_socket_before_owner_response(role):
         path = "/channel"
         frame = {"type": "channel.auth", "token": token}
     app = make_app()
-    async with TestClient(TestServer(app)) as client, client.ws_connect(path) as ws:
+    async with TestClient(TestServer(app)) as client, client.ws_connect(path, headers=TRANSPORT_HEADERS) as ws:
         await ws.send_json(frame)
         await ws.receive_json(timeout=2)
         response = await client.post(
@@ -516,30 +523,38 @@ async def test_integration_revocation_stops_media_without_plugin_socket(monkeypa
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    import realtime_session
+    import auth_connections
+    from channel_server import ChannelServer, _Connection
 
     channel, _ = await channel_registry.create("Orphaned media")
     channel_registry.activate(channel.id)
     seed("media-integration-secret", Role.INTEGRATION, channel.id)
+    server = ChannelServer()
+    conn = _Connection(SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock()))
+    await server._handle_auth(conn, "media-integration-secret")
+    abort = asyncio.Event()
+    close_peer = AsyncMock()
+    server.retain_media_turn(channel.id, abort, close_peer)
+    auth_connections.release(conn.authority)
+    server._connections.pop(channel.id)
     app = make_http_app()
-    stop_all = AsyncMock()
-    monkeypatch.setattr(realtime_session, "get_manager", lambda: SimpleNamespace(stop_all=stop_all))
-    async with TestClient(TestServer(app)) as client:
-        headers = owner_headers(client)
-        entry = device_registry.register("speaker", FakeWs())
-        abort = asyncio.Event()
-        entry.abort_event = abort
-        cfg = config.get_config()
-        realtime_cfg = replace(cfg, realtime=replace(cfg.realtime, enabled=True))
-        monkeypatch.setattr(config, "get_config", lambda: realtime_cfg)
-        response = await client.post(
-            "/api/lifecycle/v1/revoke", headers=headers,
-            json={"operation_id": "1" * 32, "role": "integration", "subject": channel.id},
-        )
-        assert response.status == 200
-        assert abort.is_set()
-        stop_all.assert_awaited()
-        assert auth.authenticate("device-secret")
+    try:
+        async with TestClient(TestServer(app)) as client:
+            headers = owner_headers(client)
+            entry = device_registry.register("speaker", FakeWs())
+            replacement_abort = asyncio.Event()
+            entry.abort_event = replacement_abort
+            response = await client.post(
+                "/api/lifecycle/v1/revoke", headers=headers,
+                json={"operation_id": "1" * 32, "role": "integration", "subject": channel.id},
+            )
+            assert response.status == 200
+            assert abort.is_set()
+            assert not replacement_abort.is_set()
+            close_peer.assert_awaited()
+            assert auth.authenticate("device-secret")
+    finally:
+        server.release_media_turn(abort)
 
 
 async def test_realtime_media_retains_integration_generation(monkeypatch):
@@ -591,7 +606,7 @@ async def test_lifecycle_http_teardown_timeout_and_maintenance_retry(monkeypatch
     from unittest.mock import AsyncMock
 
     import auth_connections
-    from lifecycle_http import LIFECYCLE, MEDIA_TEARDOWN
+    from lifecycle_http import LIFECYCLE
 
     subject = "speaker"
     token = "device-secret"
@@ -620,9 +635,9 @@ async def test_lifecycle_http_teardown_timeout_and_maintenance_retry(monkeypatch
         retry = AsyncMock(side_effect=[ValueError("synthetic"), None])
         retained = [auth_connections.retain(auth.authenticate(token), callback)
                     for callback in (hang, retry, healthy)]
-        # The independent orphan-media cleanup must run even when sockets fail.
-        app[MEDIA_TEARDOWN].close = AsyncMock()
-        app[MEDIA_TEARDOWN].close.side_effect = ValueError("synthetic media")
+        # Retained orphan-media cleanup must run even when sockets fail.
+        media_close = AsyncMock(side_effect=ValueError("synthetic media"))
+        retained.append(auth_connections.retain(auth.authenticate(token), media_close))
         body = {"operation_id": "1" * 32, "role": role, "subject": subject}
         try:
             response = await asyncio.wait_for(client.post(
@@ -631,13 +646,13 @@ async def test_lifecycle_http_teardown_timeout_and_maintenance_retry(monkeypatch
             assert await response.json() == {"error": "transport_teardown_unavailable"}
             assert not app[LIFECYCLE].store.authenticate(token)
             healthy.assert_awaited_once()
-            app[MEDIA_TEARDOWN].close.assert_awaited()
-            app[MEDIA_TEARDOWN].close.side_effect = None
+            media_close.assert_awaited()
+            media_close.side_effect = None
             # Leave it stuck through a maintenance pass, then allow closure.
             await asyncio.sleep(1.1)
             assert retry.await_count == 2
             assert calls == 1
-            assert app[MEDIA_TEARDOWN].close.await_count >= 2
+            assert media_close.await_count >= 2
             finish.set()
             async with asyncio.timeout(2):
                 while any(connection in auth_connections._connections for connection in retained):

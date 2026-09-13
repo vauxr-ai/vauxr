@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, TypedDict
 
 from aiohttp import WSMsgType, web
@@ -55,6 +55,9 @@ class ChannelServer:
     def __init__(self) -> None:
         self._connections: dict[str, _Connection] = {}
         self._response_listeners: dict[str, DeviceResponseListener] = {}
+        self._response_channels: dict[str, str] = {}
+        self._media_turns: dict[asyncio.Event, str] = {}
+        self._media_authorities: dict[asyncio.Event, auth_connections.Connection] = {}
 
     # --- Pipeline-facing API ---
 
@@ -98,8 +101,36 @@ class ChannelServer:
         log.info("Sent transcript")
         return True
 
+    def retain_media_turn(
+        self, channel_id: str, abort: asyncio.Event,
+        close: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        """Keep exact turn authority until all queued media has completed."""
+        if abort in self._media_turns:
+            raise ValueError("media turn already retained")
+        self._media_turns[abort] = channel_id
+        conn = self._connections.get(channel_id)
+        if conn is not None and conn.principal is not None:
+            async def close_revoked() -> None:
+                # A completed entry may already be in a teardown snapshot.
+                if abort not in self._media_turns:
+                    return
+                abort.set()
+                if close is not None:
+                    await close()
+
+            # This authority belongs to the media, not the socket. Socket close,
+            # routing fallback and replacement turns must not release it.
+            self._media_authorities[abort] = auth_connections.retain(conn.principal, close_revoked)
+
+    def release_media_turn(self, abort: asyncio.Event) -> None:
+        self._media_turns.pop(abort, None)
+        auth_connections.release(self._media_authorities.pop(abort, None))
+
     def add_response_listener(self, device_id: str, listener: DeviceResponseListener) -> None:
         self._response_listeners[device_id] = listener
+        active = channel_registry.get_active()
+        self._response_channels[device_id] = active.id if active else ""
 
     def remove_response_listener(
         self, device_id: str, listener: DeviceResponseListener | None = None
@@ -110,6 +141,7 @@ class ChannelServer:
         if listener is not None and self._response_listeners.get(device_id) is not listener:
             return
         self._response_listeners.pop(device_id, None)
+        self._response_channels.pop(device_id, None)
 
     def get_response_listener(self, device_id: str) -> DeviceResponseListener | None:
         return self._response_listeners.get(device_id)
@@ -203,22 +235,13 @@ class ChannelServer:
                 teardown.append(auth_connections.Teardown(conn.ws.close))
                 if self._connections.get(channel.id) is conn:
                     self._connections.pop(channel.id, None)
-                    if channel_registry.get_active() == channel:
-                        for device_id, listener in list(self._response_listeners.items()):
-                            async def notify(device_id=device_id, listener=listener) -> None:
-                                listener["on_error"](device_id, "integration_revoked")
+                    dependents = {device_id: listener for device_id, listener in self._response_listeners.items()
+                                  if self._response_channels.get(device_id) == channel.id}
+                    for device_id, listener in dependents.items():
+                        async def notify(device_id=device_id, listener=listener) -> None:
+                            listener["on_error"](device_id, "integration_revoked")
 
-                            teardown.append(auth_connections.Teardown(notify))
-                        import device_registry
-                        from config import get_config
-
-                        for device in device_registry.get_all():
-                            device_registry.abort_active_turn(device.id)
-                            if get_config().realtime.enabled:
-                                from realtime_session import get_manager
-
-                                teardown.append(auth_connections.Teardown(
-                                    lambda device_id=device.id: get_manager().stop(device_id)))
+                        teardown.append(auth_connections.Teardown(notify))
             await auth_connections.run_teardowns(teardown)
 
         conn.authority = auth_connections.retain(principal, close_revoked)
@@ -230,6 +253,10 @@ class ChannelServer:
             # different conn and doesn't clear our slot.
             await existing.ws.close()
 
+        # Replacement close yields: revoke/rotation may retire this principal meanwhile.
+        if not current(principal) or conn.ws.closed:
+            await conn.ws.close()
+            return
         self._connections[channel.id] = conn
         await _send_json(
             conn.ws,
@@ -241,7 +268,8 @@ class ChannelServer:
         active = channel_registry.get_active()
         authenticated = current(conn.principal)
         if (not authenticated or not allowed(conn.principal, Operation.VOICE_RESPONSE)
-                or conn.channel is None or active is None or active.id != conn.channel.id
+                or conn.channel is None or conn.principal.subject != conn.channel.id
+                or active is None or active.id != conn.channel.id
                 or self._connections.get(conn.channel.id) is not conn
                 or not isinstance(msg.get("type"), str)
                 or msg.get("type") not in {
@@ -264,6 +292,11 @@ class ChannelServer:
         if listener is None:
             channel_name = conn.channel.name if conn.channel else "?"
             log.warning("%s: no listener for %s (%s)", channel_name, device_id, msg_type)
+            return
+
+        if self._response_channels.get(device_id) != conn.channel.id:
+            audit_denial(True)
+            log.warning("Ignoring response from channel other than listener origin")
             return
 
         if msg_type == "channel.response.delta":
