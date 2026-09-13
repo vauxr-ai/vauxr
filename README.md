@@ -63,98 +63,12 @@ respectively, into their own `/data` directories for model caches.
 
 ### Migrating existing installations
 
-Changing mounts does not copy old named-volume data. Use a maintenance window
-on the Docker host and the same Docker context/daemon throughout. Keep original
-volumes and backups; do not run `docker compose down -v` or prune volumes.
-For existing installations, use this procedure instead of initializing data again
-with the Quick Start commands.
+Migration is only needed when changing existing named volumes to the new bind mounts—not when updating the Docker image alone. Copy Vauxr's data into `./data/`, Piper's cache into `./data/piper/`, and Whisper's cache into `./data/whisper/`. Keep the old volumes and a backup until everything works; never use `docker compose down -v` during migration.
 
-1. **Identify the sources before changing anything.** List containers, including
-   stopped ones, then inspect each relevant container by its exact ID:
-
-   ```bash
-   docker context show
-   docker ps -a --format '{{.ID}} {{.Names}}'
-   docker inspect --format '{{json .Config.Labels}}' CONTAINER_ID
-   docker inspect --format '{{json .Mounts}}' CONTAINER_ID
-   docker volume ls
-   docker volume inspect EXACT_VOLUME_NAME
-   ```
-
-   Before recreation, record the `Type`, `Name`, `Source` and `Destination` of
-   each service's `/data` mount, plus the separate `/data/firmware` and
-   `/data/recordings` binds. The `/data` mount's `Name` identifies its actual
-   named volume; a `bind` instead identifies an existing host directory.
-
-   **If containers were already recreated**, their current binds do not identify
-   the old volumes or prove that migration happened. Inspect surviving volumes
-   and their Compose project/volume labels, old deployment configuration and
-   backups. Both `vauxr_{vauxr,piper,whisper}-data` and
-   `vauxr-local_{vauxr,piper,whisper}-data` may exist (or another project prefix).
-   Select each exact Vauxr, Piper and Whisper source explicitly from deployment
-   evidence and, if needed, read-only content inspection. Never choose by prefix,
-   newest timestamp, or the mere presence of one candidate. If ownership of the
-   data is unclear, leave it intact until you can establish the correct source.
-
-2. **Stop all consumers before backing up or copying.** Prepare the copy image
-   and private staging directories described below first. Inspect mounts of all
-   containers from `docker ps -a`, including other Compose projects, for the
-   selected volumes and overlapping source/destination host paths. Disable
-   restart automation and host writers, stop every consumer by exact ID with
-   `docker stop --time=-1 CONTAINER_ID`, and verify each is stopped with
-   `docker inspect --format '{{.State.Status}}' CONTAINER_ID`. Keep them stopped
-   through copying and verification; do not recreate the old containers yet.
-
-3. **Back up populated destinations and copy into fresh staging.** Securely
-   back up the entire existing `./data`, including any new identity/settings or
-   caches created after recreation. Use a unique backup location outside the
-   destination; never overwrite an earlier backup or merge into populated data.
-   Keep the original source volumes/binds unchanged. Allow space for the backup
-   and complete copies.
-
-   An example manual archive copy for **one explicitly selected named volume**
-   into a new, empty staging directory follows. Replace both placeholders; inspect
-   the exact volume first, since a mistyped name can create an empty volume.
-   Repeat separately for the selected Vauxr, Piper and Whisper volumes:
-
-   ```bash
-   docker run --rm --network none --user 0 \
-     --mount type=volume,src=EXACT_VOLUME_NAME,dst=/source,readonly \
-     --mount type=bind,src=/ABSOLUTE/EMPTY/STAGING_DIRECTORY,dst=/target \
-     debian:bookworm-slim cp -a /source/. /target/
-   ```
-
-   Paths must be visible to the selected daemon. For an existing Vauxr bind,
-   use its inspected absolute path as a read-only `type=bind` source instead.
-   Perform backups and subsequent assembly with the same archive-preserving
-   method: preserve numeric ownership, modes, timestamps, links and supported
-   ACLs/extended attributes, and resolve any copy/metadata errors before continuing.
-   Run copies as root **inside that daemon's namespace**, including for rootless
-   Docker; do not apply a blanket host `chown` or switch daemons.
-
-4. **Assemble and verify the replacement before publishing it.** In a fresh
-   private directory, place the selected Vauxr data at the root and the selected
-   model caches under `piper/` and `whisper/`. Exclude Vauxr's top-level
-   `firmware/` and `recordings/` entries from this assembled copy: their original
-   host directories and separate Compose binds must stay intact. Retain any
-   hidden underlying entries in the original/backup. Resolve any existing
-   Vauxr `piper/` or `whisper/` entries explicitly rather than silently merging
-   them with the selected caches. Compare source and copied contents and metadata,
-   including identity/settings and model files. Only after all copies succeed,
-   retain the old `./data` under a unique secure backup name and put the verified
-   assembled directory at `./data`, preserving metadata including the Vauxr
-   source root directory ownership and mode.
-
-5. **Recreate and check.** With the intended Compose project and file selected,
-   run `docker compose up -d --force-recreate vauxr piper whisper` only after
-   successful copying and publication. This also applies to already-bound
-   containers, which may still reference the replaced directory. Recreate any
-   other affected consumers with their intended mounts before resuming writers.
-   Inspect the resulting mounts and check saved settings, channel authentication,
-   ownership, both model services' health and a voice turn. On failure, stop all
-   consumers again and preserve partial copies; restore the intact backup or
-   the previous Compose mounts using the recorded exact volume names before
-   recreating. Retain originals and backups until recovery is verified.
+1. **Find the old volumes.** Inspect the services' `/data` mounts with `docker inspect vauxr piper whisper`. If containers were already recreated, use `docker volume ls` and your previous configuration to identify the sources; don't guess between `vauxr_*` and `vauxr-local_*`.
+2. **Stop the services.** Run `docker compose stop vauxr piper whisper`, and stop any other containers sharing those volumes or data directories.
+3. **Back up and copy.** Back up any existing `./data/`, then copy the selected sources into a fresh directory with the layout above, preserving ownership and permissions. Leave the separate `./firmware/` and `./recordings/` mounts unchanged. Check that settings and model files copied successfully before replacing `./data/` with the prepared directory.
+4. **Restart and verify.** Run `docker compose up -d --force-recreate vauxr piper whisper`, then check saved devices, channels, and a voice interaction. If anything fails, stop the services and restore the backup or previous volume mounts.
 
 ## Connecting to OpenClaw
 
