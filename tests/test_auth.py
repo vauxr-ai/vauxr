@@ -3,6 +3,7 @@
 import json
 import os
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -87,7 +88,8 @@ def test_persistence_restart_permissions_and_redaction(tmp_path):
     assert "generated-test-secret" not in path.read_text()
     assert record().verifier not in repr(record())
     restarted = CredentialStore(path)
-    assert restarted.authenticate("generated-test-secret") == Principal(Role.DEVICE, "speaker", "speaker-id")
+    assert restarted.authenticate("generated-test-secret") == store.authenticate("generated-test-secret")
+    assert restarted.current(store.authenticate("generated-test-secret"))
     os.chmod(path, 0o644)
     restarted.load()
     assert path.stat().st_mode & 0o777 == 0o600
@@ -136,6 +138,7 @@ def test_ambiguous_and_rebound_credentials_rejected(tmp_path):
         (record(), replace(record(), id="second")),
         (replace(record(), subject="victim"),),
         (replace(record(), role=Role.OWNER),),
+        (replace(record(), verifier=verifier("replacement-secret")),),
         (record(), record(Role.INTEGRATION, "speaker", "another-token")),
     ]:
         with pytest.raises(ValueError):
@@ -166,3 +169,47 @@ def test_directory_sync_failure_does_not_retain_stale_grant(tmp_path, monkeypatc
         store.replace((replace(record(), enabled=False),))
     assert store.authenticate("generated-test-secret") is None
     assert CredentialStore(store.path).authenticate("generated-test-secret") is None
+
+
+@pytest.mark.parametrize("role", list(Role))
+@pytest.mark.parametrize("restart", [False, True])
+def test_removed_id_reissued_with_new_verifier_never_revives_principal(
+    tmp_path: Path, role: Role, restart: bool
+) -> None:
+    store = CredentialStore(tmp_path / "authz.json")
+    original = record(role=role)
+    store.replace((original,))
+    old = store.authenticate("generated-test-secret")
+    assert old is not None and store.current(old)
+    store.replace(())
+    assert not store.current(old)
+    if restart:
+        store = CredentialStore(store.path)
+    store.replace((replace(original, verifier=verifier("replacement-secret")),))
+    for snapshot in (store, CredentialStore(store.path)):
+        new = snapshot.authenticate("replacement-secret")
+        assert new is not None and snapshot.current(new)
+        assert new != old
+        assert not snapshot.current(old)
+        assert snapshot.authenticate("generated-test-secret") is None
+        assert not snapshot.current(replace(new, credential_generation=""))
+        assert not snapshot.current(replace(new, credential_generation=old.credential_generation))
+        assert snapshot.authenticate(new.credential_generation) is None
+        assert original.verifier not in repr(old)
+        assert old.credential_generation not in repr(old)
+
+
+def test_generation_is_credential_identity_not_enable_or_session_epoch(tmp_path: Path) -> None:
+    store = CredentialStore(tmp_path / "authz.json")
+    store.replace((record(),))
+    principal = store.authenticate("generated-test-secret")
+    assert principal is not None
+    assert principal.credential_generation != record().verifier
+    store.replace((replace(record(), enabled=False),))
+    assert not store.current(principal)
+    store.replace((record(),))
+    assert store.current(principal)
+    store.replace(())
+    store = CredentialStore(store.path)
+    store.replace((record(),))
+    assert store.current(principal)  # Restoring the exact credential restores its identity.
