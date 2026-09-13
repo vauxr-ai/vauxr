@@ -56,7 +56,8 @@
   "transport_policy": {
     "default": "http/ws",
     "optional": "https/wss",
-    "origin_setting": "OWNER_ORIGIN",
+    "origin_setting": "OWNER_HTTP_ORIGIN",
+    "https_origin_setting": "OWNER_HTTPS_ORIGIN",
     "https_certificate_requirements": [
       "trusted_chain",
       "hostname_or_ip_san",

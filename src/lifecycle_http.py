@@ -11,7 +11,7 @@ from auth_policy import Principal, Role
 from enrollment import EnrollmentError
 from enrollment_http import ENROLLMENT, unique_object
 from lifecycle import Lifecycle
-from owner_http import ORIGIN, OWNER, cookie_name, secure_request
+from owner_http import ORIGIN, OWNER, cookie_name, secure_request, session_principal
 
 LIFECYCLE = web.AppKey("lifecycle", Lifecycle)
 MEDIA_TEARDOWN = web.AppKey("lifecycle_media_teardown", Teardown)
@@ -41,8 +41,7 @@ async def lifecycle_endpoint(request: web.Request) -> web.Response:
 
         def resolve() -> Principal | None:
             if cookie:
-                result = request.app[OWNER].session(cookie)
-                return result[0] if result else None
+                return session_principal(request)
             principal = service.store.authenticate(header[7:] if header.startswith("Bearer ") else None)
             return principal if principal and principal.role != Role.OWNER else None
 
