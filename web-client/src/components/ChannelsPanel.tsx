@@ -27,7 +27,8 @@ const subtleBtn =
   "focus-ring inline-flex items-center gap-1.5 rounded-md bg-white/5 px-2.5 py-1.5 text-xs font-medium text-zinc-300 hover:bg-white/10";
 
 export default function ChannelsPanel({ wsUrl, token, wsState, addLog }: Props) {
-  const httpUrl = deriveHttpUrl(wsUrl);
+  // Owner administration is same-origin and can work before voice connects.
+  const httpUrl = wsUrl ? deriveHttpUrl(wsUrl) : window.location.origin;
   const api = useChannels(httpUrl, token);
 
   const [channels, setChannels] = useState<ApiChannel[]>([]);

@@ -46,7 +46,7 @@ describe("useHttpApi", () => {
   }
 
   describe("listDevices", () => {
-    it("calls GET /api/devices with correct Authorization header", async () => {
+    it("calls GET /api/devices with same-origin cookie authority", async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ devices: [] }),
@@ -56,13 +56,12 @@ describe("useHttpApi", () => {
       await result.current.listDevices();
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `${BASE_URL}/api/devices`,
+        `/api/devices`,
         expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: `Bearer ${TOKEN}`,
-          }),
+          credentials: "same-origin",
         }),
       );
+      expect(new Headers(mockFetch.mock.calls[0][1].headers).has("Authorization")).toBe(false);
     });
 
     it("returns parsed device array on 200", async () => {
@@ -115,7 +114,7 @@ describe("useHttpApi", () => {
       await result.current.announce("dev-1", "Hello world");
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `${BASE_URL}/api/devices/dev-1/announce`,
+        `/api/devices/dev-1/announce`,
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({ text: "Hello world" }),
@@ -157,7 +156,7 @@ describe("useHttpApi", () => {
       await result.current.command("dev-1", "mute");
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `${BASE_URL}/api/devices/dev-1/command`,
+        `/api/devices/dev-1/command`,
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({ command: "mute" }),
@@ -175,7 +174,7 @@ describe("useHttpApi", () => {
       await result.current.command("dev-1", "set_volume", { volume: 75 });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `${BASE_URL}/api/devices/dev-1/command`,
+        `/api/devices/dev-1/command`,
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({ command: "set_volume", params: { volume: 75 } }),

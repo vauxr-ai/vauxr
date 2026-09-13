@@ -1,4 +1,5 @@
 import SpeechSettings from "./SpeechSettings";
+import { ownerFetch } from "../auth/api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deriveHttpUrl, useHttpApi } from "../hooks/useHttpApi";
 import { type ApiWebhook, useWebhooks } from "../hooks/useWebhooks";
@@ -100,12 +101,8 @@ function formatLastSeen(iso: string): string {
 }
 
 export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
-  const baseUrl = deriveHttpUrl(wsUrl);
-  const baseUrlRef = useRef(baseUrl);
-  const tokenRef = useRef(token);
-  baseUrlRef.current = baseUrl;
-  tokenRef.current = token;
-
+  // Device administration is owner-session based, not contingent on a voice socket.
+  const baseUrl = wsUrl ? deriveHttpUrl(wsUrl) : window.location.origin;
   const api = useHttpApi(baseUrl, token);
   const { listWebhooks } = useWebhooks(baseUrl, token);
 
@@ -116,11 +113,8 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const refresh = useCallback(async () => {
-    if (!baseUrlRef.current || !tokenRef.current) return;
     try {
-      const res = await fetch(`${baseUrlRef.current}/api/devices`, {
-        headers: { Authorization: `Bearer ${tokenRef.current}` },
-      });
+      const res = await ownerFetch("/api/devices");
       if (!res.ok) {
         let msg = res.statusText;
         try {
@@ -154,10 +148,9 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
     async (deviceId: string, patch: Partial<DeviceConfig>, label: string) => {
       setSaveStatus((s) => ({ ...s, [deviceId]: { status: "saving" } }));
       try {
-        const res = await fetch(`${baseUrlRef.current}/api/devices/${encodeURIComponent(deviceId)}`, {
+        const res = await ownerFetch(`/api/devices/${encodeURIComponent(deviceId)}`, {
           method: "PATCH",
           headers: {
-            Authorization: `Bearer ${tokenRef.current}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify(patch),

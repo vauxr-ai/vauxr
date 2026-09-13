@@ -1,4 +1,5 @@
-import { useCallback, useRef } from "react";
+import { ownerFetch } from "../auth/api";
+import { useCallback } from "react";
 
 export interface ApiChannel {
   id: string;
@@ -10,18 +11,12 @@ export interface ApiChannel {
   token?: string;
 }
 
-export function useChannels(baseUrl: string, token: string) {
-  const baseUrlRef = useRef(baseUrl);
-  const tokenRef = useRef(token);
-  baseUrlRef.current = baseUrl;
-  tokenRef.current = token;
-
+export function useChannels(_baseUrl = "", _token = "") {
   const request = useCallback(async (path: string, init?: RequestInit): Promise<Response> => {
-    const res = await fetch(`${baseUrlRef.current}${path}`, {
+    const res = await ownerFetch(path, {
       ...init,
       headers: {
         ...init?.headers,
-        Authorization: `Bearer ${tokenRef.current}`,
         "Content-Type": "application/json",
       },
     });

@@ -1,78 +1,68 @@
-import { render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import App from "./App";
-
-// jsdom doesn't implement these; stub them so layout primitives don't crash.
-beforeAll(() => {
-  if (typeof window.ResizeObserver === "undefined") {
-    // @ts-expect-error mocking out ResizeObserver
-    window.ResizeObserver = class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    };
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import App from './App';
+import { setCsrf } from './auth/api';
+vi.mock('./auth/browser', () => ({retireBrowser: vi.fn(async () => {})}));
+function storage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() { return values.size; },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => { values.delete(key); },
+    setItem: (key, value) => { values.set(key, String(value)); },
+  };
+}
+beforeEach(() => {
+  setCsrf('');
+  for (const name of ['sessionStorage','localStorage']) {
+    const values = new Map<string,string>();
+    vi.stubGlobal(name, {getItem:(k:string)=>values.get(k) ?? null, setItem:(k:string,v:string)=>values.set(k,v), removeItem:(k:string)=>values.delete(k), clear:()=>values.clear(), get length(){return values.size;}});
   }
-  if (typeof window.scrollTo === "undefined") {
-    window.scrollTo = vi.fn();
-  }
-  // jsdom doesn't implement scrollIntoView
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Element.prototype.scrollIntoView = vi.fn();
 });
-
-describe("App shell", () => {
-  it("renders the three-column shell with sidebar, main, and talk panel", () => {
-    render(<App />);
-    expect(screen.getByRole("complementary", { name: /primary navigation/i })).toBeInTheDocument();
-    expect(screen.getByRole("main")).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: /talk panel/i })).toBeInTheDocument();
+function response(body: object, status = 200) { return new Response(JSON.stringify(body), {status}); }
+function mockServer() {
+  let authenticated = false;
+  const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/auth/status') return response({state:'unclaimed', environment_managed:false});
+    if (path === '/api/auth/session') return response(authenticated ? {csrf_token:'csrf'} : {}, authenticated ? 200 : 401);
+    if (path === '/api/auth/claim') return response({operator_token:'generated-only-once', save_acknowledgement:'ack'});
+    if (path === '/api/auth/save') return response({state:'generated'});
+    if (path === '/api/auth/login') { authenticated = true; return response({csrf_token:'csrf'}); }
+    if (path === '/api/auth/logout') { authenticated = false; return response({logged_out:true}); }
+    if (path === '/api/enrollment/v1/list') return response({requests:[]});
+    if (init?.method === 'POST') return response({});
+    return response([]);
   });
-
-  it("defaults to the Connection section", () => {
-    render(<App />);
-    const sidebar = screen.getByRole("complementary", { name: /primary navigation/i });
-    expect(within(sidebar).getByRole("button", { name: /connection/i })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    // Connection section heading lives in the main content
-    const main = screen.getByRole("main");
-    expect(within(main).getByText("Connection")).toBeInTheDocument();
-  });
-
-  it("clicking a nav item swaps the main section content", async () => {
-    const user = userEvent.setup();
-    render(<App />);
-    const sidebar = screen.getByRole("complementary", { name: /primary navigation/i });
-    const main = screen.getByRole("main");
-
-    await user.click(within(sidebar).getByRole("button", { name: /settings/i }));
-    expect(within(main).getByText(/connect to a server to manage webhooks/i)).toBeInTheDocument();
-
-    await user.click(within(sidebar).getByRole("button", { name: /channels/i }));
-    expect(within(main).getByText(/connect to a server to manage channels/i)).toBeInTheDocument();
-
-    await user.click(within(sidebar).getByRole("button", { name: /devices/i }));
-    expect(within(main).getByText(/connect to a server to manage devices/i)).toBeInTheDocument();
-  });
-
-  it("does not include the legacy 'HTTP API' nav entry", () => {
-    render(<App />);
-    const sidebar = screen.getByRole("complementary", { name: /primary navigation/i });
-    expect(within(sidebar).queryByRole("button", { name: /http api/i })).not.toBeInTheDocument();
-  });
-
-  it("renders the resize handle between top and bottom panes", () => {
-    render(<App />);
-    expect(screen.getByRole("separator", { name: /resize/i })).toBeInTheDocument();
-  });
-
-  it("renders the talk panel with the disconnected helper text initially", () => {
-    render(<App />);
-    expect(screen.getByTestId("talk-helper")).toHaveTextContent(/connect/i);
-  });
-
-  it("renders the event log empty-state message in the bottom pane", () => {
-    render(<App />);
-    expect(screen.getByText(/no events yet/i)).toBeInTheDocument();
-  });
+  vi.stubGlobal('fetch', fetcher); return fetcher;
+}
+it('denies administration without an owner session and requires deliberate save before login', async () => {
+  const fetcher = mockServer(); const user = userEvent.setup(); render(<App />);
+  await screen.findByText('Owner state: unclaimed');
+  expect(screen.queryByRole('main')).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText('Operator token or console code'), 'console-code');
+  await user.click(screen.getByText('Submit console setup/recovery code'));
+  await screen.findByText('generated-only-once');
+  expect(fetcher.mock.calls.some(([p]) => p === '/api/auth/save')).toBe(false);
+  expect(localStorage.length).toBe(0); expect(sessionStorage.length).toBe(0);
+  await user.click(screen.getByText('I saved this in my password manager'));
+  await waitFor(() => expect(screen.queryByText('generated-only-once')).not.toBeInTheDocument());
+  expect(screen.queryByRole('main')).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText('Operator token or console code'), 'generated-only-once');
+  await user.click(screen.getByText('Log in with saved operator token'));
+  await screen.findByRole('main');
+  expect(screen.getByText('Browser voice connection')).toBeInTheDocument();
+  const listing = fetcher.mock.calls.find(([p]) => p === '/api/enrollment/v1/list')!;
+  expect(new Headers(listing[1]?.headers).get('Authorization')).toBeNull();
+  expect(new Headers(listing[1]?.headers).get('X-CSRF-Token')).toBe('csrf');
+  await user.click(screen.getByText('Log out on this browser'));
+  await waitFor(() => expect(screen.queryByRole('main')).not.toBeInTheDocument());
+});
+it('shows environment-managed status and no generated setup action', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => path.endsWith('status') ? response({state:'environment',environment_managed:true}) : response({},401)));
+  render(<App />); await screen.findByText(/Environment-managed owner access/);
+  expect(screen.queryByText('Submit console setup/recovery code')).not.toBeInTheDocument();
 });

@@ -1,110 +1,65 @@
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState } from 'react';
+import { browserIdentity, maintainIdentity } from '../auth/browser';
 
-interface Props {
-  connected: boolean;
-  onConnect: (url: string, deviceId: string, token: string) => void;
-  onDisconnect: () => void;
+export function validateVoiceUrl(value: string) {
+  const url = new URL(value);
+  const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  if (url.protocol !== scheme || url.hostname !== location.hostname || url.username || url.password || url.search || url.hash || url.pathname !== '/ws') throw new Error('Use the current server hostname, matching WS/WSS transport and /ws path. No credentials or query strings.');
+  return url.href;
 }
-
-const WS_PORT = 8765;
-const WS_PATH = "/ws";
-
-function defaultServerUrl(): string {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const host = window.location.hostname || "localhost";
-  return `${protocol}//${host}:${WS_PORT}${WS_PATH}`;
-}
-
-const inputClass =
-  "rounded-lg border border-white/5 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-60";
-
-const labelClass =
-  "flex flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500";
-
+interface Props { connected: boolean; onConnect: (url: string, deviceId: string, token: string) => void; onDisconnect: () => void }
 export default function ConfigPanel({ connected, onConnect, onDisconnect }: Props) {
-  const [url, setUrl] = useState(defaultServerUrl);
-  const [deviceId, setDeviceId] = useState("test-web-client");
-  const [token, setToken] = useState("anything-you-want");
-
-  const handleUrlKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !connected) {
-      onConnect(url, deviceId, token);
-    }
-  };
-
-  return (
-    <div className="card p-5">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h2 className="text-base font-semibold text-zinc-100">Connection</h2>
-          <p className="text-xs text-zinc-500">
-            WebSocket bridge to your Vauxr server.
-          </p>
-        </div>
-        <span
-          className={`pill ${
-            connected
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-              : "border-zinc-700/50 bg-zinc-800/50 text-zinc-400"
-          }`}
-        >
-          <span
-            aria-hidden
-            className={`h-1.5 w-1.5 rounded-full ${
-              connected ? "bg-emerald-400" : "bg-zinc-500"
-            }`}
-          />
-          {connected ? "Online" : "Offline"}
-        </span>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-[2fr,1fr,1fr,auto] md:items-end">
-        <label className={labelClass}>
-          Server URL
-          <input
-            className={inputClass}
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={handleUrlKeyDown}
-            disabled={connected}
-          />
-        </label>
-
-        <label className={labelClass}>
-          Device ID
-          <input
-            className={inputClass}
-            value={deviceId}
-            onChange={(e) => setDeviceId(e.target.value)}
-            disabled={connected}
-          />
-        </label>
-
-        <label className={labelClass}>
-          Token
-          <input
-            type="password"
-            className={inputClass}
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            disabled={connected}
-          />
-        </label>
-
-        <button
-          type="button"
-          className={`focus-ring rounded-lg px-5 py-2 text-sm font-semibold transition-colors ${
-            connected
-              ? "bg-red-500/90 text-white hover:bg-red-500"
-              : "bg-indigo-500 text-white hover:bg-indigo-400 shadow-[0_0_20px_-5px_rgba(99,102,241,0.5)]"
-          }`}
-          onClick={() =>
-            connected ? onDisconnect() : onConnect(url, deviceId, token)
-          }
-        >
-          {connected ? "Disconnect" : "Connect"}
-        </button>
-      </div>
-    </div>
-  );
+  const [url, setUrl] = useState(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:8765/ws`);
+  const [message, setMessage] = useState('');
+  const [active, setActive] = useState(false);
+  const release = useRef<() => void>();
+  const stopRequested = useRef(false);
+  const disconnect = useRef(onDisconnect); disconnect.current = onDisconnect;
+  useEffect(() => {
+    const stop = () => { stopRequested.current = true; disconnect.current(); release.current?.(); };
+    const channel = new BroadcastChannel('vauxr-voice'); channel.onmessage = stop;
+    window.addEventListener('voice-stop', stop);
+    window.addEventListener('pagehide', stop);
+    return () => { stop(); channel.close(); window.removeEventListener('voice-stop', stop); window.removeEventListener('pagehide', stop); };
+  }, []);
+  async function connect(recover: boolean) {
+    setMessage('');
+    try {
+      const endpoint = validateVoiceUrl(url);
+      if (!isSecureContext || !navigator.locks || !crypto.subtle) throw new Error('Browser voice requires HTTPS or localhost and Web Locks/WebCrypto support. HTTP administration remains available.');
+      stopRequested.current = false;
+      await navigator.locks.request('vauxr-browser-voice', {ifAvailable: true}, async lock => {
+        if (!lock) throw new Error('Voice is active in another tab. Disconnect it first.');
+        setActive(true);
+        let timer: number | undefined;
+        try {
+          const identity = await browserIdentity(recover);
+          if (stopRequested.current) return;
+          onConnect(endpoint, identity.deviceId, identity.token!);
+          let polling = false;
+          timer = window.setInterval(async () => {
+            if (polling || stopRequested.current) return;
+            polling = true;
+            try {
+              const old = identity.token;
+              await maintainIdentity(identity);
+              if (old !== identity.token && !stopRequested.current) { disconnect.current(); onConnect(endpoint, identity.deviceId, identity.token!); }
+            } catch { setMessage('Browser access could not be verified. Disconnected. Retry after one minute; revoked or lost credentials require explicit recovery.'); disconnect.current(); release.current?.(); }
+            finally { polling = false; }
+          }, 60000 + Math.random()*5000);
+          await new Promise<void>(resolve => { release.current = resolve; });
+          // Let a running durable-save/ACK finish before releasing logout's lock.
+          while (polling) await new Promise(resolve => setTimeout(resolve, 25));
+        } finally { window.clearInterval(timer); release.current = undefined; setActive(false); }
+      });
+    } catch (e) { setMessage(e instanceof Error ? e.message : 'Browser enrollment failed.'); }
+  }
+  return <div className="card space-y-4 p-5">
+    <h2>Browser voice connection</h2>
+    <p>Connect enrolls this browser through your owner session as a separate scoped device. Its key and credential stay in this browser profile's IndexedDB; one tab uses voice at a time. Reload requires Connect. Logout revokes browser access and clears its credential; recovery reuses its saved key.</p>
+    <label>Voice WebSocket URL<input className="block w-full bg-zinc-800 p-2" value={url} disabled={active} onChange={e => setUrl(e.target.value)} /></label>
+    <p>{connected ? 'Connected' : active ? 'Connecting or disconnected transport; disconnect before retrying.' : 'Disconnected'}</p>
+    {message && <p role="alert">{message}</p>}
+    {active ? <button onClick={() => { stopRequested.current = true; onDisconnect(); release.current?.(); }}>Disconnect</button> : <><button onClick={() => connect(false)}>Connect browser voice</button>{' '}<button onClick={() => { if (window.confirm('Retire this browser identity’s current access and re-enroll with its saved key?')) void connect(true); }}>Recover browser identity</button></>}
+  </div>;
 }

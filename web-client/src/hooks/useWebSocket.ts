@@ -51,8 +51,8 @@ export function useWebSocket(opts: UseWebSocketOpts) {
       tokenRef.current = token;
 
       ws.onopen = () => {
-        setState("connected");
-        addLog("sys", "WebSocket open");
+        ws.send(JSON.stringify({ type: "hello", device_id: deviceId, token, caps: [] }));
+        addLog("sys", "WebSocket open; authenticating scoped browser device");
       };
 
       ws.onmessage = (ev) => {
@@ -72,8 +72,9 @@ export function useWebSocket(opts: UseWebSocketOpts) {
         }
         try {
           const msg = JSON.parse(ev.data as string);
-          addLog("rx", JSON.stringify(msg));
+          addLog("rx", `Server message: ${typeof msg.type === "string" ? msg.type.replace(/[^a-zA-Z._-]/g, "").slice(0, 40) : "unknown"}`);
           switch (msg.type) {
+            case "hello":
             case "ready":
               setState("connected");
               opts.onReady();
@@ -100,14 +101,15 @@ export function useWebSocket(opts: UseWebSocketOpts) {
               break;
           }
         } catch {
-          addLog("rx", `(unparseable): ${ev.data}`);
+          addLog("rx", "Unparseable server message");
         }
       };
 
       ws.onclose = () => {
+        if (wsRef.current !== ws) return;
         setState("disconnected");
         addLog("sys", "WebSocket closed");
-        wsRef.current = null;
+        if (wsRef.current === ws) { wsRef.current = null; tokenRef.current = ""; }
       };
 
       ws.onerror = () => {
@@ -120,6 +122,7 @@ export function useWebSocket(opts: UseWebSocketOpts) {
   const disconnect = useCallback(() => {
     wsRef.current?.close();
     wsRef.current = null;
+    tokenRef.current = "";
     setState("disconnected");
   }, []);
 
