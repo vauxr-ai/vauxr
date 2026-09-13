@@ -37,7 +37,7 @@ DEVICE_TOKEN=your-device-shared-secret
 3. Prepare the persistent directory and start the stack:
 
 ```bash
-mkdir -p data
+mkdir -p data/piper data/whisper
 docker compose build vauxr
 docker compose run --rm --no-deps --user 0 vauxr \
   sh -c 'chown 100:101 /data && chmod 700 /data'
@@ -50,51 +50,6 @@ do not use host `chown 100:101` for a rootless deployment.
 
 Use the web client or HTTP API at `http://your-server-ip:8080`. Voice devices connect to `ws://your-server-ip:8765`.
 
-## Persistent data
-
-Vauxr bind-mounts `./data` beside this Compose file into `/data`. This directory
-holds device settings (`devices.json`), webhooks (`webhooks.json`), channels
-(`channels.json`), routing (`config.json`), and the direct-connection identity
-(`vauxr-identity.json`) when those features are used. It is ignored by Git;
-back it up securely because it can contain credentials and private keys.
-Recordings and firmware retain their separate `./recordings` and `./firmware`
-mounts. Whisper and Piper retain their named model-cache volumes.
-
-### Existing installations
-
-Earlier versions used the Docker-managed `vauxr-data` volume. Switching to
-`./data` does not migrate its contents automatically. Before recreating Vauxr:
-
-1. Using the Docker daemon that owns the old container, stop only Vauxr:
-   `docker stop vauxr`.
-2. Copy its actual data into a new private staging directory on the Docker host:
-
-   ```bash
-   (umask 077; mkdir ./data-migration)
-   docker cp vauxr:/data/. ./data-migration/
-   ```
-
-3. Back up any existing repo `./data` folder, then move `./data-migration` to
-   `./data`. Keep the old named volume for rollback. Recordings and firmware
-   use separate mounts; leave their existing host directories intact.
-4. With the destination daemon selected, initialize ownership and start only
-   Vauxr (after building the image if necessary):
-
-   ```bash
-   docker compose run --rm --no-deps --user 0 vauxr \
-     sh -c 'chown -R 100:101 /data && chmod 700 /data'
-   docker compose up -d --no-deps vauxr
-   ```
-
-Verify saved settings, channel authentication, and voice before removing old
-storage. To roll back, stop the new container and restore the previous volume
-mount. Do not run `docker compose down -v` during migration.
-
-Bind paths refer to the Docker host, not a remote client's filesystem. For a
-rootful-to-rootless move, copy from the old daemon first and ensure the new
-account can access the destination repo. Keep staging copies and backups out
-of Git; they may contain secrets.
-
 ## Connecting to OpenClaw
 
 The recommended path is the [vauxr-openclaw](https://github.com/vauxr-ai/vauxr-openclaw) channel plugin, installed from [ClaWHub](https://clawhub.ai):
@@ -104,6 +59,26 @@ openclaw plugins install clawhub:@vauxr/openclaw
 ```
 
 The plugin wires OpenClaw to your Vauxr server and exposes device announcements and controls as agent tools. See the [vauxr-openclaw README](https://github.com/vauxr-ai/vauxr-openclaw) for configuration.
+
+## Persistent data
+
+Vauxr bind-mounts `./data` beside this Compose file into `/data`. This directory
+holds device settings (`devices.json`), webhooks (`webhooks.json`), channels
+(`channels.json`), routing (`config.json`), and the direct-connection identity
+(`vauxr-identity.json`) when those features are used. It is ignored by Git;
+back it up securely because it can contain credentials and private keys.
+Recordings and firmware retain their separate `./recordings` and `./firmware`
+mounts. Whisper and Piper bind-mount `./data/whisper` and `./data/piper`,
+respectively, into their own `/data` directories for model caches.
+
+### Migrating existing installations
+
+Migration is only needed when changing existing named volumes to the new bind mounts—not when updating the Docker image alone. Copy Vauxr's data into `./data/`, Piper's cache into `./data/piper/`, and Whisper's cache into `./data/whisper/`. Keep the old volumes and a backup until everything works; never use `docker compose down -v` during migration.
+
+1. **Find the old volumes.** Inspect the services' `/data` mounts with `docker inspect vauxr piper whisper`. If containers were already recreated, use `docker volume ls` and your previous configuration to identify the sources; don't guess between `vauxr_*` and `vauxr-local_*`.
+2. **Stop the services.** Run `docker compose stop vauxr piper whisper`, and stop any other containers sharing those volumes or data directories.
+3. **Back up and copy.** Back up any existing `./data/`, then copy the selected sources into a fresh directory with the layout above, preserving ownership and permissions. Leave the separate `./firmware/` and `./recordings/` mounts unchanged. Check that settings and model files copied successfully before replacing `./data/` with the prepared directory.
+4. **Restart and verify.** Run `docker compose up -d --force-recreate vauxr piper whisper`, then check saved devices, channels, and a voice interaction. If anything fails, stop the services and restore the backup or previous volume mounts.
 
 ## Connecting to other backends
 
