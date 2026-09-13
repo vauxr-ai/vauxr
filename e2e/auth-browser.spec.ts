@@ -307,9 +307,43 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
   await expect(
     page.getByText("Connected", { exact: true }).first(),
   ).toBeVisible();
+  // Hold tab B's successful session body until tab A's logout broadcast arrives.
+  await tab.addInitScript(() => {
+    const originalFetch = window.fetch;
+    (window as any).delayedSession = {};
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      if (args[0] === "/api/auth/session" && response.ok) {
+        const body = await response.json();
+        (window as any).delayedSession.ready = true;
+        response.json = async () => {
+          await new Promise<void>((resolve) => {
+            (window as any).delayedSession.release = resolve;
+          });
+          (window as any).delayedSession.consumed = true;
+          return body;
+        };
+      }
+      return response;
+    };
+    const channel = new BroadcastChannel("vauxr-owner");
+    channel.onmessage = () => { (window as any).delayedSession.logout = true; };
+  });
+  await tab.reload();
+  await expect.poll(() => tab.evaluate(() => Boolean((window as any).delayedSession.release))).toBe(true);
   await page.getByText("Log out on this browser").click();
   await expect(page.getByRole("main")).toHaveCount(0);
   await expect(tab.getByRole("main")).toHaveCount(0);
+  await expect.poll(() => tab.evaluate(() => (window as any).delayedSession.logout)).toBe(true);
+  await tab.evaluate(async () => {
+    (window as any).delayedSession.release();
+    // Flush promise continuations and React's render before checking for resurrection.
+    await new Promise(requestAnimationFrame);
+    await new Promise(requestAnimationFrame);
+  });
+  expect(await tab.evaluate(() => (window as any).delayedSession.consumed)).toBe(true);
+  await expect(tab.getByRole("main")).toHaveCount(0);
+
   expect(
     await page.evaluate(
       async () =>

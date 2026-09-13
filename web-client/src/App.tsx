@@ -35,6 +35,7 @@ function OwnerApp() {
   const [followUpListening, setFollowUpListening] = useState(false);
   const talkingRef = useRef(false);
   const captureReadyRef = useRef(false);
+  const captureGeneration = useRef(0);
   const [wsUrl, setWsUrl] = useState("");
 
   const [deviceId, setDeviceId] = useState("");
@@ -91,6 +92,8 @@ function OwnerApp() {
 
   useEffect(() => {
     const stop = () => {
+      captureGeneration.current++;
+      captureReadyRef.current = false;
       talkingRef.current = false;
       setTalking(false);
       audio.stopCapture();
@@ -105,6 +108,8 @@ function OwnerApp() {
   }, []);
   useEffect(() => {
     if (ws.state === "disconnected") {
+      captureGeneration.current++;
+      captureReadyRef.current = false;
       talkingRef.current = false;
       setTalking(false);
       audio.stopCapture();
@@ -138,6 +143,7 @@ function OwnerApp() {
 
   const startActualTalking = useCallback(async () => {
     if (talkingRef.current) return;
+    const attempt = ++captureGeneration.current;
     talkingRef.current = true;
     captureReadyRef.current = false;
     setTalking(true);
@@ -149,21 +155,17 @@ function OwnerApp() {
         );
       }
       await audio.startCapture();
-      if (!talkingRef.current) {
-        audio.stopCapture();
-        return;
-      }
+      if (attempt !== captureGeneration.current) return;
       captureReadyRef.current = true;
       ws.sendVoiceStart();
       ws.setState("listening");
     } catch (err) {
-      if (!talkingRef.current) {
-        audio.stopCapture();
-        return;
-      }
+      if (attempt !== captureGeneration.current) return;
       const msg = err instanceof Error ? err.message : String(err);
       ws.addLog("sys", `Microphone capture failed: ${msg}`);
       audio.stopCapture();
+      captureGeneration.current++;
+      captureReadyRef.current = false;
       talkingRef.current = false;
       setTalking(false);
       ws.setState("connected");
@@ -172,6 +174,7 @@ function OwnerApp() {
 
   const stopActualTalking = useCallback(() => {
     if (!talkingRef.current) return;
+    captureGeneration.current++;
     talkingRef.current = false;
     setTalking(false);
     audio.stopCapture();

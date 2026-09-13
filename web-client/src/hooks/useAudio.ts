@@ -23,9 +23,8 @@ export function useAudio(arg: ((pcm: Int16Array) => void) | UseAudioOpts) {
   const optsRef = useRef(opts);
   optsRef.current = opts;
 
-  const ctxRef = useRef<AudioContext | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  // Each attempt owns its resources, including those delivered after cancellation.
+  const captureRef = useRef<{ dispose: () => void } | null>(null);
 
   // Playback scheduling
   const playCtxRef = useRef<AudioContext | null>(null);
@@ -35,56 +34,80 @@ export function useAudio(arg: ((pcm: Int16Array) => void) | UseAudioOpts) {
   const volumeRef = useRef(1);
   const mutedRef = useRef(false);
 
-  const startCapture = useCallback(async () => {
-    const ctx = new AudioContext({ sampleRate: MIC_SAMPLE_RATE });
-    ctxRef.current = ctx;
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        sampleRate: MIC_SAMPLE_RATE,
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-      },
-    });
-    streamRef.current = stream;
-
-    await ctx.audioWorklet.addModule(WORKLET_URL);
-    const workletNode = new AudioWorkletNode(ctx, "pcm-capture", {
-      processorOptions: { chunkSize: CHUNK_SAMPLES },
-    });
-    workletNodeRef.current = workletNode;
-
-    workletNode.port.onmessage = (ev: MessageEvent) => {
-      const float32: Float32Array = ev.data;
-      let sumSq = 0;
-      const int16 = new Int16Array(float32.length);
-      for (let i = 0; i < float32.length; i++) {
-        const s = Math.max(-1, Math.min(1, float32[i]));
-        int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        sumSq += s * s;
-      }
-      optsRef.current.onPcmChunk?.(int16);
-      if (optsRef.current.onInputLevel) {
-        const rms = Math.sqrt(sumSq / float32.length);
-        optsRef.current.onInputLevel(rms);
-      }
-    };
-
-    const source = ctx.createMediaStreamSource(stream);
-    source.connect(workletNode);
-    // Don't connect worklet to destination — we don't want to hear ourselves
-  }, []);
-
   const stopCapture = useCallback(() => {
-    workletNodeRef.current?.disconnect();
-    workletNodeRef.current = null;
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-    ctxRef.current?.close();
-    ctxRef.current = null;
+    const capture = captureRef.current;
+    captureRef.current = null;
+    capture?.dispose();
     optsRef.current.onInputLevel?.(0);
   }, []);
+
+  const startCapture = useCallback(async () => {
+    stopCapture();
+    const ctx = new AudioContext({ sampleRate: MIC_SAMPLE_RATE });
+    let stream: MediaStream | undefined;
+    let workletNode: AudioWorkletNode | undefined;
+    let source: MediaStreamAudioSourceNode | undefined;
+    let closed = false;
+    const attempt = {
+      dispose: () => {
+        if (workletNode) workletNode.port.onmessage = null;
+        workletNode?.disconnect();
+        source?.disconnect();
+        stream?.getTracks().forEach((track) => track.stop());
+        stream = undefined;
+        if (!closed) {
+          closed = true;
+          void ctx.close();
+        }
+      },
+    };
+    captureRef.current = attempt;
+    const checkCurrent = () => {
+      if (captureRef.current !== attempt) {
+        throw new DOMException("Capture cancelled", "AbortError");
+      }
+    };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: MIC_SAMPLE_RATE,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
+      checkCurrent();
+      await ctx.audioWorklet.addModule(WORKLET_URL);
+      checkCurrent();
+      workletNode = new AudioWorkletNode(ctx, "pcm-capture", {
+        processorOptions: { chunkSize: CHUNK_SAMPLES },
+      });
+      workletNode.port.onmessage = (ev: MessageEvent) => {
+        if (captureRef.current !== attempt) return;
+        const float32: Float32Array = ev.data;
+        let sumSq = 0;
+        const int16 = new Int16Array(float32.length);
+        for (let i = 0; i < float32.length; i++) {
+          const s = Math.max(-1, Math.min(1, float32[i]));
+          int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          sumSq += s * s;
+        }
+        optsRef.current.onPcmChunk?.(int16);
+        if (optsRef.current.onInputLevel) {
+          const rms = Math.sqrt(sumSq / float32.length);
+          optsRef.current.onInputLevel(rms);
+        }
+      };
+
+      source = ctx.createMediaStreamSource(stream);
+      source.connect(workletNode);
+      // Don't connect worklet to destination — we don't want to hear ourselves.
+    } catch (error) {
+      attempt.dispose();
+      if (captureRef.current === attempt) captureRef.current = null;
+      throw error;
+    }
+  }, [stopCapture]);
 
   const setPlaybackRate = useCallback((rate: number) => {
     if (rate === playRateRef.current) return;

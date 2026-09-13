@@ -17,22 +17,31 @@ export default function OwnerGate({ children }: { children: ReactNode }) {
   }>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const refresh = async () => {
-    setStatus(await jsonResponse(await ownerFetch("/api/auth/status")));
+  // Logout/expiry and newer actions invalidate every earlier auth completion.
+  const generation = useRef(0);
+  const refresh = async (attempt = ++generation.current) => {
+    const status = await jsonResponse(await ownerFetch("/api/auth/status"));
+    if (attempt !== generation.current) return;
+    setStatus(status);
     const res = await ownerFetch("/api/auth/session");
     if (res.ok) {
       const session = await res.json();
+      if (attempt !== generation.current) return;
       setCsrf(session.csrf_token);
       setLoggedIn(true);
     }
   };
   useEffect(() => {
-    void refresh().catch(() =>
+    const attempt = ++generation.current;
+    void refresh(attempt).catch(() => {
+      if (attempt !== generation.current) return;
       setError(
         "Cannot reach the configured owner origin. Check the server Host/origin and transport configuration.",
-      ),
-    );
+      );
+    });
     const expire = () => {
+      generation.current++;
+      loggedInRef.current = false;
       setLoggedIn(false);
       setCsrf("");
       setSecret("");
@@ -49,6 +58,7 @@ export default function OwnerGate({ children }: { children: ReactNode }) {
       });
     }, 60000);
     return () => {
+      generation.current++;
       channel.close();
       clearInterval(timer);
       window.removeEventListener("owner-expired", expire);
@@ -62,12 +72,14 @@ export default function OwnerGate({ children }: { children: ReactNode }) {
     }, 300000);
     return () => clearTimeout(timer);
   }, [pending]);
-  async function run(action: () => Promise<void>) {
+  async function run(action: (attempt: number) => Promise<void>) {
+    const attempt = ++generation.current;
     setBusy(true);
     setError("");
     try {
-      await action();
+      await action(attempt);
     } catch (e) {
+      if (attempt !== generation.current) return;
       setError(e instanceof Error ? e.message : "Request failed.");
     } finally {
       setBusy(false);
@@ -141,14 +153,15 @@ export default function OwnerGate({ children }: { children: ReactNode }) {
                 <button
                   disabled={busy}
                   onClick={() =>
-                    run(async () => {
+                    run(async (attempt) => {
                       await ownerPost("/api/auth/save", {
                         save_acknowledgement: pending.save_acknowledgement,
                         saved: true,
                       });
+                      if (attempt !== generation.current) return;
                       setPending(undefined);
                       setSecret("");
-                      await refresh();
+                      await refresh(attempt);
                     })
                   }
                 >
@@ -168,12 +181,13 @@ export default function OwnerGate({ children }: { children: ReactNode }) {
                 className="space-y-3"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  void run(async () => {
+                  void run(async (attempt) => {
                     const token = secret;
                     setSecret("");
                     const session = await ownerPost("/api/auth/login", {
                       operator_token: token,
                     });
+                    if (attempt !== generation.current) return;
                     setCsrf(session.csrf_token);
                     setLoggedIn(true);
                   });
@@ -197,12 +211,14 @@ export default function OwnerGate({ children }: { children: ReactNode }) {
                     type="button"
                     disabled={busy || !secret}
                     onClick={() =>
-                      run(async () => {
+                      run(async (attempt) => {
                         const code = secret;
                         setSecret("");
-                        setPending(
-                          await ownerPost("/api/auth/claim", { code }),
-                        );
+                        const pending = await ownerPost("/api/auth/claim", {
+                          code,
+                        });
+                        if (attempt !== generation.current) return;
+                        setPending(pending);
                       })
                     }
                   >
