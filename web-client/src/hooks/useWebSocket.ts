@@ -51,11 +51,13 @@ export function useWebSocket(opts: UseWebSocketOpts) {
       tokenRef.current = token;
 
       ws.onopen = () => {
+        if (wsRef.current !== ws) { ws.close(); return; }
         ws.send(JSON.stringify({ type: "hello", device_id: deviceId, token, caps: [] }));
         addLog("sys", "WebSocket open; authenticating scoped browser device");
       };
 
       ws.onmessage = (ev) => {
+        if (wsRef.current !== ws) return;
         if (ev.data instanceof ArrayBuffer) {
           const view = new DataView(ev.data);
           const frameType = view.getUint8(0);

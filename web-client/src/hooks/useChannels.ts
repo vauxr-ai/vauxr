@@ -8,7 +8,6 @@ export interface ApiChannel {
   active: boolean;
   createdAt: string;
   builtin?: boolean;
-  token?: string;
 }
 
 export function useChannels(_baseUrl = "", _token = "") {
@@ -37,27 +36,9 @@ export function useChannels(_baseUrl = "", _token = "") {
     return await res.json();
   }, [request]);
 
-  const createChannel = useCallback(async (name: string, type: string): Promise<ApiChannel> => {
-    const res = await request("/api/channels", {
-      method: "POST",
-      body: JSON.stringify({ name, type }),
-    });
-    return await res.json();
-  }, [request]);
-
-  const deleteChannel = useCallback(async (id: string): Promise<void> => {
-    await request(`/api/channels/${encodeURIComponent(id)}`, { method: "DELETE" });
-  }, [request]);
-
   const activateChannel = useCallback(async (id: string): Promise<void> => {
     await request(`/api/channels/${encodeURIComponent(id)}/activate`, { method: "POST" });
   }, [request]);
 
-  const rotateToken = useCallback(async (id: string): Promise<string> => {
-    const res = await request(`/api/channels/${encodeURIComponent(id)}/rotate`, { method: "POST" });
-    const body = await res.json();
-    return body.token;
-  }, [request]);
-
-  return { listChannels, createChannel, deleteChannel, activateChannel, rotateToken };
+  return { listChannels, activateChannel };
 }

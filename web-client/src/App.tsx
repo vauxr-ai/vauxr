@@ -14,15 +14,27 @@ import SettingsPanel from "./components/SettingsPanel";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAudio } from "./hooks/useAudio";
 
-const CONNECTED_STATES = ["connected", "listening", "processing", "speaking"] as const;
+const CONNECTED_STATES = [
+  "connected",
+  "listening",
+  "processing",
+  "speaking",
+] as const;
 
-export default function App() { return <OwnerGate><OwnerApp /></OwnerGate>; }
+export default function App() {
+  return (
+    <OwnerGate>
+      <OwnerApp />
+    </OwnerGate>
+  );
+}
 
 function OwnerApp() {
   const [transcript, setTranscript] = useState("");
   const [talking, setTalking] = useState(false);
   const [followUpListening, setFollowUpListening] = useState(false);
   const talkingRef = useRef(false);
+  const captureReadyRef = useRef(false);
   const [wsUrl, setWsUrl] = useState("");
 
   const [deviceId, setDeviceId] = useState("");
@@ -46,7 +58,9 @@ function OwnerApp() {
       },
       onAudioFrame: (pcm: ArrayBuffer) => {
         if (pendingLatencyStart.current != null) {
-          setLatencyMs(Math.round(performance.now() - pendingLatencyStart.current));
+          setLatencyMs(
+            Math.round(performance.now() - pendingLatencyStart.current),
+          );
           pendingLatencyStart.current = null;
         }
         ws.setState("speaking");
@@ -76,12 +90,26 @@ function OwnerApp() {
   });
 
   useEffect(() => {
-    const stop = () => { talkingRef.current = false; setTalking(false); audio.stopCapture(); audio.stopPlayback(); ws.disconnect(); };
-    window.addEventListener('voice-stop', stop);
-    return () => { window.removeEventListener('voice-stop', stop); stop(); };
+    const stop = () => {
+      talkingRef.current = false;
+      setTalking(false);
+      audio.stopCapture();
+      audio.stopPlayback();
+      ws.disconnect();
+    };
+    window.addEventListener("voice-stop", stop);
+    return () => {
+      window.removeEventListener("voice-stop", stop);
+      stop();
+    };
   }, []);
   useEffect(() => {
-    if (ws.state === 'disconnected') { talkingRef.current = false; setTalking(false); audio.stopCapture(); audio.stopPlayback(); }
+    if (ws.state === "disconnected") {
+      talkingRef.current = false;
+      setTalking(false);
+      audio.stopCapture();
+      audio.stopPlayback();
+    }
   }, [ws.state]);
 
   // Patch the memoized opts to use live refs
@@ -109,7 +137,9 @@ function OwnerApp() {
   );
 
   const startActualTalking = useCallback(async () => {
+    if (talkingRef.current) return;
     talkingRef.current = true;
+    captureReadyRef.current = false;
     setTalking(true);
     setFollowUpListening(false);
     try {
@@ -119,10 +149,18 @@ function OwnerApp() {
         );
       }
       await audio.startCapture();
-      if (!talkingRef.current) { audio.stopCapture(); return; }
+      if (!talkingRef.current) {
+        audio.stopCapture();
+        return;
+      }
+      captureReadyRef.current = true;
       ws.sendVoiceStart();
       ws.setState("listening");
     } catch (err) {
+      if (!talkingRef.current) {
+        audio.stopCapture();
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       ws.addLog("sys", `Microphone capture failed: ${msg}`);
       audio.stopCapture();
@@ -137,6 +175,8 @@ function OwnerApp() {
     talkingRef.current = false;
     setTalking(false);
     audio.stopCapture();
+    if (!captureReadyRef.current) return;
+    captureReadyRef.current = false;
     ws.sendJson({ type: "voice.end" });
     ws.setState("processing");
     pendingLatencyStart.current = performance.now();
@@ -182,7 +222,9 @@ function OwnerApp() {
     });
   }, [audio]);
 
-  const isConnected = (CONNECTED_STATES as readonly string[]).includes(ws.state);
+  const isConnected = (CONNECTED_STATES as readonly string[]).includes(
+    ws.state,
+  );
   const micUnavailable =
     typeof window !== "undefined" &&
     (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia);
@@ -212,7 +254,14 @@ function OwnerApp() {
           top={
             <div className="flex h-full min-h-0 flex-col gap-5 overflow-y-auto px-6 py-6">
               {micUnavailable && <MicWarning />}
-              <div hidden={activeSection !== "connection"}><ConfigPanel connected={isConnected} onConnect={handleConnect} onDisconnect={ws.disconnect} /><AccessPanel /></div>
+              <div hidden={activeSection !== "connection"}>
+                <ConfigPanel
+                  connected={isConnected}
+                  onConnect={handleConnect}
+                  onDisconnect={ws.disconnect}
+                />
+                <AccessPanel />
+              </div>
               {activeSection !== "connection" && sectionContent}
             </div>
           }
@@ -273,14 +322,7 @@ function renderSection(id: SectionId, props: SectionProps) {
         />
       );
     case "channels":
-      return (
-        <ChannelsPanel
-          wsUrl={props.wsUrl}
-          token={props.wsToken}
-          wsState={props.wsState}
-          addLog={props.addLog}
-        />
-      );
+      return <ChannelsPanel />;
     case "devices":
       return (
         <DevicesPanel
@@ -312,7 +354,8 @@ function MicWarning() {
         browsers block{" "}
         <code className="font-mono text-amber-100">getUserMedia</code> on plain
         HTTP origins like{" "}
-        <code className="font-mono text-amber-100">{window.location.host}</code>. HTTP administration remains available.
+        <code className="font-mono text-amber-100">{window.location.host}</code>
+        . HTTP administration remains available.
       </p>
     </div>
   );
