@@ -1,3 +1,4 @@
+import IntegrationEnrollment from "./IntegrationEnrollment";
 import { useEffect, useState } from "react";
 import { useChannels, type ApiChannel } from "../hooks/useChannels";
 export default function ChannelsPanel() {
@@ -22,6 +23,7 @@ export default function ChannelsPanel() {
         New OpenClaw connections require owner-approved integration enrollment. Manage its
         credentials in Pairing and access.
       </p>
+      <IntegrationEnrollment />
       {error && <p role="alert">{error}</p>}
       <button onClick={refresh}>Refresh channels</button>
       {channels.map((c) => (
