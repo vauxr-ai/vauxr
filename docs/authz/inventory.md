@@ -2,14 +2,14 @@
 
 Both :8765 and :8080 serve the same application and policy. HTTP-only test apps use
 the same guard. HEAD on GET resources inherits their authorization. OPTIONS is public
-preflight (204, no state changes). Owner bootstrap is separately guarded by the configured HTTP/HTTPS origin boundary
-and explicit local-console proof; see [owner-v1.md](owner-v1.md).
+preflight (204, no state changes). Owner bootstrap is separately guarded by the
+configured LAN HTTP or HTTPS origin/Host boundary and explicit local-console proof; see [owner-v1.md](owner-v1.md).
 
 | HTTP method/path | Policy operation | Boundary |
 | --- | --- | --- |
-| GET /api/auth/status, /api/auth/session | owner contract v1 | configured transport boundary; session requires cookie |
-| POST /api/auth/claim, /api/auth/save, /api/auth/login | owner contract v1 | configured transport + exact Origin + JSON + durable rate limits; console claim/save proof or operator verifier |
-| POST /api/auth/logout | owner contract v1 | owner session + configured transport + Origin + CSRF |
+| GET /api/auth/status, /api/auth/session | owner contract v1 | selected-mode transport + exact Host; session requires cookie |
+| POST /api/auth/claim, /api/auth/save, /api/auth/login | owner contract v1 | selected-mode transport + exact Host/Origin + JSON + durable rate limits; console claim/save proof or operator verifier |
+| POST /api/auth/logout | owner contract v1 | owner session + selected-mode transport + exact Host/Origin + CSRF |
 | POST /api/enrollment/v1/{action} | enrollment v1 | configured HTTP/HTTPS; signed client proof or fresh owner/integration control; [exact actions and roles](enrollment-v1.md) |
 | POST /api/lifecycle/v1/{action} | lifecycle v1 | configured HTTP/HTTPS; owner controls, subject-only delivery/ACK; [exact fields and roles](lifecycle-v1.md) |
 | GET /api/devices | devices.list | owner/integration |

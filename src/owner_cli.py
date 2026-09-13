@@ -19,15 +19,13 @@ def main() -> None:
             print(generate_token())
             return
         origin = configured_origin()
-        if not origin:
-            raise ValueError("Configure OWNER_ORIGIN before owner setup")
         service = OwnerAuth(get_store(), environment_token())
         # Do not reconcile environment here: only server startup can observe override removal.
         code = service.console_claim(recover=args.command == "recover")
         if origin.startswith("https://"):
             print(f"First establish browser-trusted HTTPS at {origin}; never bypass a certificate warning.")
         else:
-            print(f"Use the configured home-network origin {origin}; HTTP transport is unencrypted.")
+            print(f"Use the intended LAN endpoint {origin}; HTTP exposes credentials to on-path LAN peers.")
         print("Enter this single-use claim code within 5 minutes in the trusted setup flow:")
         print(code)
     except (ValueError, OSError, OwnerError) as exc:
