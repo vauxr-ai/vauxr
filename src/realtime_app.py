@@ -136,7 +136,10 @@ async def _offer_handler(request: web.Request) -> web.Response:
         async with close_lock:
             if _media_authorities.get(device_id) is authorities:
                 await manager.stop(device_id)
-                _media_authorities.pop(device_id, None)
+                # A replacement offer may register while stop awaits the old
+                # session's cleanup. Only retire this callback's registration.
+                if _media_authorities.get(device_id) is authorities:
+                    _media_authorities.pop(device_id, None)
                 for retained in authorities:
                     auth_connections.release(retained)
 
