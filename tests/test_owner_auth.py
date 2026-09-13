@@ -357,6 +357,51 @@ def test_console_rejects_redirection_and_environment_recovery(tmp_path, monkeypa
     assert "authoritative OPERATOR_TOKEN" in capsys.readouterr().err
 
 
+def test_login_capacity_after_separate_instance_recovery(tmp_path):
+    owner = service(tmp_path)
+    token = claim_saved(owner)
+    cookies = [owner.login(token)[0] for _ in range(100)]
+    old_generation = owner.store.owner["generation"]
+    with pytest.raises(OwnerError, match="^rate_limited$"):
+        owner.login(token)
+
+    console = OwnerAuth(CredentialStore(owner.store.path))
+    code = console.console_claim(recover=True)
+    claimed = owner.claim(code)
+    owner.acknowledge(claimed["save_acknowledgement"], True)
+    assert owner.store.owner["generation"] != old_generation
+    # Leave every stale cookie unexamined until after the fresh login.
+    assert len(owner.sessions) == 100
+    assert all(session.expires > owner_auth.time.time() for session in owner.sessions.values())
+    fresh_cookie, fresh_session = owner.login(claimed["operator_token"])
+    assert len(owner.sessions) == 1
+    assert fresh_session.generation == owner.store.owner["generation"]
+    assert owner.session(fresh_cookie)
+    assert all(owner.session(cookie) is None for cookie in cookies)
+    with pytest.raises(OwnerError, match="^invalid_login$"):
+        owner.login(token)
+
+
+def test_login_capacity_retains_valid_sessions_and_purges_expired(tmp_path, monkeypatch):
+    owner = service(tmp_path)
+    token = claim_saved(owner)
+    now = owner_auth.time.time()
+    monkeypatch.setattr(owner_auth.time, "time", lambda: now)
+    expired_cookie, expired_session = owner.login(token)
+    monkeypatch.setattr(owner_auth.time, "time", lambda: now + 1)
+    valid_cookies = [owner.login(token)[0] for _ in range(99)]
+    with pytest.raises(OwnerError, match="^rate_limited$"):
+        owner.login(token)
+
+    monkeypatch.setattr(owner_auth.time, "time", lambda: expired_session.expires)
+    fresh_cookie, _ = owner.login(token)
+    assert len(owner.sessions) == 100
+    assert owner.session(expired_cookie) is None
+    assert all(owner.session(cookie) for cookie in [*valid_cookies, fresh_cookie])
+    with pytest.raises(OwnerError, match="^rate_limited$"):
+        owner.login(token)
+
+
 def test_session_expiry_and_console_invalidates_all_sessions(tmp_path, monkeypatch):
     owner = service(tmp_path)
     token = claim_saved(owner)
