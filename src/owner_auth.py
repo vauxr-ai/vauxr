@@ -42,13 +42,19 @@ def trusted_origin(value: str, scheme: str = "https") -> str:
         address = ipaddress.ip_address(host)
         canonical_host = f"[{address}]" if address.version == 6 else str(address)
     except ValueError:
+        # Browsers interpret a numeric final label as IPv4, including shortened,
+        # integer, octal and hexadecimal forms. Only ipaddress's canonical dotted
+        # decimal above is allowed; these must never fall through as DNS names.
+        if re.fullmatch(r"(?:[0-9]+|0x[0-9a-f]*)", host.rsplit(".", 1)[-1]):
+            raise ValueError(error) from None
         if len(host) > 253 or not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
                                       for label in host.split(".")):
             raise ValueError(error) from None
         canonical_host = host
     port = parsed.port  # Also rejects invalid/out-of-range ports.
     authority = canonical_host + (f":{port}" if port is not None else "")
-    if parsed.netloc != authority or port == 0:
+    # Browsers omit explicit default ports from both Host and Origin.
+    if parsed.netloc != authority or port in (0, {"http": 80, "https": 443}[scheme]):
         raise ValueError(error)
     return value
 

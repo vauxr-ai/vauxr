@@ -628,6 +628,80 @@ def test_lan_origin_must_be_canonical(value):
         trusted_origin(value, "http")
 
 
+@pytest.mark.parametrize("scheme,default_port", [("http", 80), ("https", 443)])
+@pytest.mark.parametrize("authority", [
+    "voice.lan:{default_port}", "127.0.0.1:{default_port}", "[::1]:{default_port}",
+    "127.1:8080", "127.0.1:8080", "2130706433:8080", "0177.0.0.1:8080",
+    "127.000.0.1:8080", "0x7f000001:8080", "0x7f.0.0.1:8080", "127.0.0.0x1:8080",
+    "voice.123:8080", "voice.0xff:8080", "voice.0x:8080",
+])
+def test_browser_noncanonical_origin_rejected_before_startup_or_console_claim(
+        monkeypatch, tmp_path, capsys, scheme, default_port, authority):
+    import owner_cli
+
+    origin = f"{scheme}://{authority.format(default_port=default_port)}"
+    # A valid LAN fallback must not rescue invalid TLS configuration.
+    monkeypatch.setenv("OWNER_HTTP_ORIGIN", "http://localhost:8080")
+    if scheme == "http":
+        monkeypatch.delenv("OWNER_HTTPS_ORIGIN")
+        monkeypatch.delenv("OWNER_TRUSTED_PROXIES")
+    monkeypatch.setenv(f"OWNER_{scheme.upper()}_ORIGIN", origin)
+    with pytest.raises(ValueError, match="exact canonical"):
+        make_http_app()
+    with pytest.raises(ValueError, match="exact canonical"):
+        owner_auth.configured_origin()
+    monkeypatch.setattr("sys.argv", ["vauxr-owner", "claim"])
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    with pytest.raises(SystemExit) as exc:
+        owner_cli.main()
+    assert exc.value.code == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "exact canonical" in output.err
+    assert not (tmp_path / "authz.json").exists()
+
+
+@pytest.mark.parametrize("scheme,default_port", [("http", 80), ("https", 443)])
+@pytest.mark.parametrize("authority,alternate", [
+    ("voice.lan", "voice.lan:{default_port}"),
+    ("127.0.0.1", "127.0.0.1:{default_port}"),
+    ("[::1]", "[::1]:{default_port}"),
+    ("127.0.0.1:8080", "127.1:8080"),
+    ("127.0.0.1:8080", "2130706433:8080"),
+    ("127.0.0.1:8080", "0177.0.0.1:8080"),
+    ("127.0.0.1:8080", "0x7f000001:8080"),
+    ("voice.lan:443", "voice.lan:80"),
+])
+async def test_canonical_origin_accepts_exact_requests_only(
+        monkeypatch, scheme, default_port, authority, alternate):
+    # Keep a non-default port valid in each mode, even if it is the other's default.
+    if authority == "voice.lan:443" and scheme == "https":
+        authority, alternate = alternate, authority
+    alternate = alternate.format(default_port=default_port)
+    origin = f"{scheme}://{authority}"
+    if scheme == "http":
+        monkeypatch.delenv("OWNER_HTTPS_ORIGIN")
+        monkeypatch.delenv("OWNER_TRUSTED_PROXIES")
+    monkeypatch.setenv(f"OWNER_{scheme.upper()}_ORIGIN", origin)
+    assert owner_auth.configured_origin() == origin
+    headers = {"Host": authority, "Origin": origin}
+    if scheme == "https":
+        headers["X-Forwarded-Proto"] = "https"
+    async with TestClient(TestServer(make_http_app())) as client:
+        owner = client.app[OWNER]
+        code = owner.console_claim()
+        before = dict(owner.store.owner)
+        for changes in ({"Host": alternate}, {"Origin": f"{scheme}://{alternate}"}):
+            response = await client.post("/api/auth/claim", headers={**headers, **changes},
+                                         json={"code": code})
+            assert response.status == 403
+            assert owner.store.owner == before
+        response = await client.post("/api/auth/claim", headers=headers, json={"code": code})
+        assert response.status == 200
+        assert (await response.json())["save_required"] is True
+
+
 @pytest.mark.parametrize("https,proxies", [("", None), ("http://lan:8080", None),
     ("https://lan/", None), (None, "127.0.0.1/32"), (ORIGIN, ""),
     (ORIGIN, "bogus"), (ORIGIN, "127.0.0.1/32,"), (None, "")])
