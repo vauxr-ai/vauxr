@@ -119,6 +119,24 @@ def test_environment_precedence_change_removal_recovery(tmp_path):
     assert removed.login(new["operator_token"])
 
 
+def test_environment_a_b_a_across_restarts_revokes_original_session(tmp_path):
+    """Restoring A's verifier must not restore the original owner session."""
+    original = service(tmp_path, TOKEN_A)
+    cookie, _ = original.login(TOKEN_A)
+
+    # These distinct services model server restarts that update the durable
+    # store. Keep the original process alive to attempt its stale cookie once
+    # A's verifier has been restored.
+    restarted_with_b = service(tmp_path, TOKEN_B)
+    assert restarted_with_b.status()["state"] == "environment"
+    restarted_with_a = service(tmp_path, TOKEN_A)
+    assert restarted_with_a.status()["state"] == "environment"
+
+    assert original.session(cookie) is None
+    fresh_cookie, _ = restarted_with_a.login(TOKEN_A)
+    assert restarted_with_a.session(fresh_cookie)
+
+
 @pytest.mark.parametrize("token", ["", "password", " " + TOKEN_A, TOKEN_A + "\n", "vx_op_" + "!" * 43])
 def test_invalid_explicit_environment(monkeypatch, token):
     monkeypatch.setenv("OPERATOR_TOKEN", token)
@@ -337,6 +355,51 @@ def test_console_rejects_redirection_and_environment_recovery(tmp_path, monkeypa
     with pytest.raises(SystemExit):
         owner_cli.main()
     assert "authoritative OPERATOR_TOKEN" in capsys.readouterr().err
+
+
+def test_login_capacity_after_separate_instance_recovery(tmp_path):
+    owner = service(tmp_path)
+    token = claim_saved(owner)
+    cookies = [owner.login(token)[0] for _ in range(100)]
+    old_generation = owner.store.owner["generation"]
+    with pytest.raises(OwnerError, match="^rate_limited$"):
+        owner.login(token)
+
+    console = OwnerAuth(CredentialStore(owner.store.path))
+    code = console.console_claim(recover=True)
+    claimed = owner.claim(code)
+    owner.acknowledge(claimed["save_acknowledgement"], True)
+    assert owner.store.owner["generation"] != old_generation
+    # Leave every stale cookie unexamined until after the fresh login.
+    assert len(owner.sessions) == 100
+    assert all(session.expires > owner_auth.time.time() for session in owner.sessions.values())
+    fresh_cookie, fresh_session = owner.login(claimed["operator_token"])
+    assert len(owner.sessions) == 1
+    assert fresh_session.generation == owner.store.owner["generation"]
+    assert owner.session(fresh_cookie)
+    assert all(owner.session(cookie) is None for cookie in cookies)
+    with pytest.raises(OwnerError, match="^invalid_login$"):
+        owner.login(token)
+
+
+def test_login_capacity_retains_valid_sessions_and_purges_expired(tmp_path, monkeypatch):
+    owner = service(tmp_path)
+    token = claim_saved(owner)
+    now = owner_auth.time.time()
+    monkeypatch.setattr(owner_auth.time, "time", lambda: now)
+    expired_cookie, expired_session = owner.login(token)
+    monkeypatch.setattr(owner_auth.time, "time", lambda: now + 1)
+    valid_cookies = [owner.login(token)[0] for _ in range(99)]
+    with pytest.raises(OwnerError, match="^rate_limited$"):
+        owner.login(token)
+
+    monkeypatch.setattr(owner_auth.time, "time", lambda: expired_session.expires)
+    fresh_cookie, _ = owner.login(token)
+    assert len(owner.sessions) == 100
+    assert owner.session(expired_cookie) is None
+    assert all(owner.session(cookie) for cookie in [*valid_cookies, fresh_cookie])
+    with pytest.raises(OwnerError, match="^rate_limited$"):
+        owner.login(token)
 
 
 def test_session_expiry_and_console_invalidates_all_sessions(tmp_path, monkeypatch):
