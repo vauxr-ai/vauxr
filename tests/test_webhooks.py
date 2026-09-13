@@ -16,6 +16,9 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     cfg_mod.reset_config()
     monkeypatch.setenv("DEVICE_TOKEN", "tok")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from tests.auth_helpers import seed
+    from auth_policy import Role
+    seed("tok", Role.OWNER, "owner")
     webhooks.reset_for_tests()
     webhooks.load()
     yield
@@ -33,7 +36,7 @@ def test_create_and_list_round_trip() -> None:
     public = webhooks.public_dict(listed[0])
     assert "authorization" not in public
     assert public["has_authorization"] is True
-    assert public["body"] is None
+    assert public["has_body"] is False
 
 
 def test_create_with_body_round_trip(tmp_path: Path) -> None:
@@ -45,7 +48,7 @@ def test_create_with_body_round_trip(tmp_path: Path) -> None:
     )
     assert hook.body == {"entity_id": "scene.lights_low"}
     public = webhooks.public_dict(hook)
-    assert public["body"] == {"entity_id": "scene.lights_low"}
+    assert public["has_body"] is True
     webhooks.reset_for_tests()
     webhooks.load()
     loaded = webhooks.get(hook.id)
@@ -196,7 +199,7 @@ async def test_http_create_webhook_with_body(client: TestClient) -> None:
     )
     assert res.status == 201
     body = await res.json()
-    assert body["body"] == {"entity_id": "scene.lights_low"}
+    assert body["has_body"] is True
 
     res = await client.patch(
         f"/api/webhooks/{body['id']}",
@@ -205,7 +208,7 @@ async def test_http_create_webhook_with_body(client: TestClient) -> None:
     )
     assert res.status == 200
     updated = await res.json()
-    assert updated["body"] is None
+    assert updated["has_body"] is False
 
 
 async def test_http_create_webhook_rejects_bad_body(client: TestClient) -> None:
@@ -236,8 +239,8 @@ async def test_http_duplicate_webhook(client: TestClient, tmp_path: Path) -> Non
     assert res.status == 201
     clone = await res.json()
     assert clone["name"] == "HA copy"
-    assert clone["url"] == src["url"]
-    assert clone["body"] == {"entity_id": "scene.x"}
+    assert clone["has_url"] is True
+    assert clone["has_body"] is True
     assert clone["has_authorization"] is True
     assert "authorization" not in clone
     assert clone["id"] != src["id"]

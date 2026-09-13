@@ -103,8 +103,8 @@ async def _dispatch_webhook(device_id: str, button: str, gesture: str, action: B
                         gesture,
                         resp.status,
                     )
-    except Exception as err:  # noqa: BLE001
-        log.warning("webhook %s (%s) failed: %s", hook.name, hook.id, err)
+    except Exception:  # noqa: BLE001
+        log.warning("webhook dispatch failed")
 
 
 async def _dispatch_announce(device_id: str, text: str) -> None:

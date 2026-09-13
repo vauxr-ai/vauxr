@@ -18,6 +18,9 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path):
     cfg_mod.reset_config()
     monkeypatch.setenv("DEVICE_TOKEN", "http-test-token")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from tests.auth_helpers import seed
+    from auth_policy import Role
+    seed("http-test-token", Role.OWNER, "owner")
     registry.reset()
     yield
     registry.reset()
