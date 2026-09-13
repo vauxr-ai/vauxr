@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -11,13 +11,19 @@ from aiohttp.test_utils import TestClient, TestServer
 import config as cfg_mod
 import device_registry as registry
 from http_server import make_http_app
+from tests.auth_helpers import owner_headers
 
 
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path):
     cfg_mod.reset_config()
+    monkeypatch.setenv("OWNER_HTTPS_ORIGIN", "https://owner.example")
+    monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
     monkeypatch.setenv("DEVICE_TOKEN", "http-test-token")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from auth_policy import Role
+    from tests.auth_helpers import seed
+    seed("http-test-token", Role.OWNER, "owner")
     registry.reset()
     yield
     registry.reset()
@@ -47,7 +53,7 @@ async def test_devices_wrong_bearer(client: TestClient) -> None:
 async def test_devices_empty(client: TestClient) -> None:
     res = await client.get(
         "/api/devices",
-        headers={"Authorization": "Bearer http-test-token"},
+        headers=owner_headers(client),
     )
     assert res.status == 200
     body = await res.json()
@@ -56,12 +62,12 @@ async def test_devices_empty(client: TestClient) -> None:
 
 async def test_devices_lists_registered(client: TestClient) -> None:
     entry = registry.register("kitchen", ws=object(), name="Kitchen")
-    entry.last_seen = datetime(2026, 5, 17, 12, 0, 0, tzinfo=timezone.utc)
+    entry.last_seen = datetime(2026, 5, 17, 12, 0, 0, tzinfo=UTC)
     entry.state = "listening"
 
     res = await client.get(
         "/api/devices",
-        headers={"Authorization": "Bearer http-test-token"},
+        headers=owner_headers(client),
     )
     assert res.status == 200
     body = await res.json()
@@ -91,6 +97,6 @@ async def test_cors_options_preflight(client: TestClient) -> None:
 
 async def test_cors_headers_on_responses(client: TestClient) -> None:
     res = await client.get(
-        "/api/devices", headers={"Authorization": "Bearer http-test-token"}
+        "/api/devices", headers=owner_headers(client)
     )
-    assert res.headers["Access-Control-Allow-Origin"] == "*"
+    assert "Access-Control-Allow-Origin" not in res.headers

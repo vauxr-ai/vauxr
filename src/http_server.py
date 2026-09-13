@@ -1,7 +1,6 @@
 """HTTP API server (`/api/...`) + portal static files.
 
-Port of `src/http-server.ts`. All endpoints share the same Bearer-token
-auth check (device token OR channel token).
+Every protected handler resolves a principal and an explicit policy operation.
 """
 
 from __future__ import annotations
@@ -11,16 +10,22 @@ import logging
 import mimetypes
 import os
 import re
+from collections.abc import Awaitable, Callable
+from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-import channel_registry, device_registry as registry
-from auth import validate_channel_http_token, validate_token
+import channel_registry
+import device_registry as registry
+import webhooks
+from auth import authenticate
+from auth_policy import HTTP_OPERATIONS, UNSHIPPED, Operation, Principal, Role, allowed, audit_denial
 from config import get_config
 from device_config import VALID_FOLLOW_UP_MODES, parse_button_actions
+from enrollment_http import attach_enrollment
+from owner_http import attach_owner, owner_middleware, session_principal
 from protocol import encode_text_message
-import webhooks
 
 if TYPE_CHECKING:
     from channel_server import ChannelServer
@@ -46,24 +51,50 @@ _MIME_TYPES = {
 }
 
 
-async def _bearer_token_valid(request: web.Request) -> bool:
-    header = request.headers.get("Authorization", "")
-    if not header.startswith("Bearer "):
-        return False
-    token = header[len("Bearer ") :]
-    if validate_token(token).ok:
-        return True
-    return (await validate_channel_http_token(token)).ok
+Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 
-def _require_auth(handler):
+def transport_boundary(handler: Handler) -> Handler:
+    """Explicit boundary for handlers that authorize individual socket/media messages."""
+    handler.authz_boundary = True  # type: ignore[attr-defined]
+    return handler
+
+
+@web.middleware
+async def policy_middleware(request: web.Request, handler: Handler) -> web.StreamResponse:
+    if (request.method != "OPTIONS" and handler is not serve_static
+            and not getattr(handler, "authz_boundary", False)):
+        audit_denial(False)
+        return web.json_response({"error": "unauthorized"}, status=401)
+    return await handler(request)
+
+
+def _http_principal(request: web.Request) -> Principal | None:
+    principal = session_principal(request)
+    if principal is None:
+        header = request.headers.get("Authorization", "")
+        principal = authenticate(header[7:] if header.startswith("Bearer ") else None)
+        if principal is not None and principal.role == Role.OWNER:
+            return None
+    return principal
+
+
+def _require_auth(handler: Handler) -> Handler:
+    @wraps(handler)
     async def wrapped(request: web.Request) -> web.StreamResponse:
-        if not await _bearer_token_valid(request):
-            log.info("401 unauthorized %s %s", request.method, request.path)
-            return web.json_response({"error": "unauthorized"}, status=401)
+        principal = _http_principal(request)
+        operation = HTTP_OPERATIONS.get(handler.__name__)
+        if not allowed(principal, operation):
+            audit_denial(principal is not None)
+            status = 401 if principal is None else 403
+            return web.json_response(
+                {"error": "unauthorized" if status == 401 else "forbidden"}, status=status
+            )
+        if operation in UNSHIPPED:
+            return web.json_response({"error": "operation not implemented"}, status=501)
         return await handler(request)
 
-    return wrapped
+    return transport_boundary(wrapped)
 
 
 @web.middleware
@@ -72,7 +103,10 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
         resp: web.StreamResponse = web.Response(status=204)
     else:
         resp = await handler(request)
-    resp.headers["Access-Control-Allow-Origin"] = "*"
+    # Same-origin owner API never enables credentialed cross-origin access.
+    if (not request.path.startswith(("/api/auth/", "/api/enrollment/"))
+            and "__Host-vauxr_owner" not in request.cookies):
+        resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
     resp.headers["Access-Control-Max-Age"] = "86400"
@@ -85,7 +119,8 @@ def _device_dict(d) -> dict[str, Any]:
         "name": d.name,
         "state": d.state,
         "lastSeen": d.last_seen.isoformat().replace("+00:00", "Z"),
-        "config": dict(d.config),
+        "config": {k: v for k, v in d.config.items()
+                   if k in {"name", "voice", "follow_up_mode", "barge_in", "output_sample_rate"}},
     }
     if d.platform:
         out["platform"] = d.platform
@@ -168,7 +203,7 @@ async def announce(request: web.Request) -> web.Response:
         return web.json_response({"error": "missing text"}, status=400)
 
     text: str = body["text"]
-    log.info("announce: synthesizing for %s %r", device_id, text)
+    log.info("announce: synthesizing")
     from button_dispatch import announce_to_device
 
     await announce_to_device(device, text)
@@ -192,6 +227,10 @@ async def device_command(request: web.Request) -> web.Response:
     if cmd not in VALID_COMMANDS:
         return web.json_response({"error": f"unknown command: {cmd}"}, status=400)
 
+    operation = Operation.FIRMWARE_INITIATE if cmd == "ota" else Operation.CONTROL
+    if not allowed(_http_principal(request), operation):
+        audit_denial(True)
+        return web.json_response({"error": "forbidden"}, status=403)
     params = body.get("params")
     if cmd == "ota":
         if not isinstance(params, dict) or not isinstance(params.get("url"), str) or not params["url"]:
@@ -240,41 +279,14 @@ async def list_channels(_request: web.Request) -> web.Response:
 
 @_require_auth
 async def create_channel(request: web.Request) -> web.Response:
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, ValueError):
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if not isinstance(body, dict) or not isinstance(body.get("name"), str):
-        return web.json_response({"error": "missing name"}, status=400)
-    type_ = body.get("type", "openclaw")
-    if type_ != "openclaw":
-        return web.json_response({"error": "invalid type, must be 'openclaw'"}, status=400)
-    channel, token = await channel_registry.create(body["name"], "openclaw")
-    log.info("201 channel created: %s (%s)", channel.name, channel.id)
-    return web.json_response(
-        {
-            "id": channel.id,
-            "name": channel.name,
-            "type": channel.type,
-            "active": channel.active,
-            "createdAt": channel.createdAt,
-            **({"builtin": channel.builtin} if channel.builtin is not None else {}),
-            "token": token,
-        },
-        status=201,
-    )
+    # Replaced by the independently scoped enrollment/lifecycle packages.
+    return web.json_response({"error": "operation not implemented"}, status=501)
 
 
 @_require_auth
 async def delete_channel(request: web.Request) -> web.Response:
-    channel_id = request.match_info["channel_id"]
-    channel = channel_registry.get_by_id(channel_id)
-    if channel is None:
-        return web.json_response({"error": "channel not found"}, status=404)
-    if channel.builtin:
-        return web.json_response({"error": "cannot delete built-in channel"}, status=400)
-    channel_registry.remove(channel_id)
-    return web.json_response({"ok": True})
+    # Replaced by the independently scoped enrollment/lifecycle packages.
+    return web.json_response({"error": "operation not implemented"}, status=501)
 
 
 @_require_auth
@@ -287,18 +299,8 @@ async def activate_channel(request: web.Request) -> web.Response:
 
 @_require_auth
 async def rotate_token(request: web.Request) -> web.Response:
-    channel_id = request.match_info["channel_id"]
-    channel = channel_registry.get_by_id(channel_id)
-    if channel is None:
-        return web.json_response({"error": "channel not found"}, status=404)
-    if channel.builtin:
-        return web.json_response(
-            {"error": "cannot rotate token for built-in channel"}, status=400
-        )
-    token = await channel_registry.rotate_token(channel_id)
-    if token is None:
-        return web.json_response({"error": "channel not found"}, status=404)
-    return web.json_response({"token": token})
+    # Replaced by the independently scoped enrollment/lifecycle packages.
+    return web.json_response({"error": "operation not implemented"}, status=501)
 
 
 # --- WS shim (works with both aiohttp WebSocketResponse and the FakeWs used in tests) ---
@@ -391,7 +393,7 @@ async def update_webhook(request: web.Request) -> web.Response:
     kwargs: dict[str, Any] = {
         "name": fields.get("name"),
         "url": fields.get("url"),
-        "authorization": fields["authorization"] if "authorization" in fields else None,
+        "authorization": fields.get("authorization"),
     }
     if "body" in fields:
         kwargs["body"] = fields["body"]
@@ -425,13 +427,15 @@ async def duplicate_webhook(request: web.Request) -> web.Response:
 
 
 async def serve_static(request: web.Request) -> web.StreamResponse:
+    if request.path == "/api" or request.path.startswith("/api/"):
+        return web.json_response({"error": "not found"}, status=404)
     rel = request.path.lstrip("/")
     base = os.path.join(os.getcwd(), WEB_CLIENT_DIST)
     if not os.path.isdir(base):
         return web.json_response({"error": "not found"}, status=404)
 
     candidate = os.path.normpath(os.path.join(base, rel))
-    if not candidate.startswith(base):
+    if os.path.commonpath((os.path.realpath(base), os.path.realpath(candidate))) != os.path.realpath(base):
         return web.json_response({"error": "not found"}, status=404)
 
     if not os.path.exists(candidate) or os.path.isdir(candidate):
@@ -444,11 +448,9 @@ async def serve_static(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(candidate, headers={"Content-Type": ctype})
 
 
+@_require_auth
 async def serve_firmware(request: web.Request) -> web.StreamResponse:
-    """Serve a .bin from DATA_DIR/firmware/. Unauthenticated on purpose: the
-    device HTTP OTA client has no easy way to attach a Bearer token, and
-    triggering the update still requires an authenticated device.control.
-    """
+    """Authenticated firmware download; publication is a separate owner operation."""
     name = request.match_info["filename"]
     if not _FIRMWARE_NAME.fullmatch(name):
         return web.json_response({"error": "not found"}, status=404)
@@ -466,6 +468,8 @@ async def serve_firmware(request: web.Request) -> web.StreamResponse:
 
 
 def attach_http_routes(app: web.Application) -> None:
+    attach_owner(app)
+    attach_enrollment(app)
     async def _options(_r: web.Request) -> web.Response:
         return web.Response(status=204)
 
@@ -487,8 +491,8 @@ def attach_http_routes(app: web.Application) -> None:
     app.router.add_get("/firmware/{filename}", serve_firmware)
 
 
-def make_http_app(_channel_server: "ChannelServer | None" = None) -> web.Application:
-    app = web.Application(middlewares=[cors_middleware])
+def make_http_app(_channel_server: ChannelServer | None = None) -> web.Application:
+    app = web.Application(middlewares=[owner_middleware, cors_middleware, policy_middleware])
     attach_http_routes(app)
     app.router.add_get("/{tail:.*}", serve_static)
     return app

@@ -15,13 +15,22 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
-import channel_registry, device_registry as registry
-from auth import validate_token
+import channel_registry
+import device_registry as registry
+from auth import authenticate, current, get_store
+from auth_policy import WS_OPERATIONS, Operation, Principal, allowed, audit_denial
 from channel_server import ChannelServer
 from config import get_config
-from http_server import attach_http_routes, cors_middleware, serve_static
-from openclaw_client import OpenClawClient
 from device_settings import realtime_policy_extras
+from http_server import (
+    attach_http_routes,
+    cors_middleware,
+    policy_middleware,
+    serve_static,
+    transport_boundary,
+)
+from openclaw_client import OpenClawClient
+from owner_http import owner_middleware
 from pipeline import run_voice_turn
 from protocol import encode_text_message, parse_text_message
 
@@ -38,6 +47,7 @@ class ConnectionState(str, Enum):
 class ConnectionCtx:
     state: ConnectionState = ConnectionState.IDLE
     device_id: str | None = None
+    principal: Principal | None = None
     audio_chunks: list[bytes] = field(default_factory=list)
     output_sample_rate: int | None = None
     # Realtime (WebRTC) hybrid: armed on realtime.start, cleared on
@@ -75,6 +85,8 @@ async def handle_text(
         await send_json(ws, {"type": "error", "code": "INVALID_MESSAGE", "message": "Invalid JSON"})
         return
 
+    if not await _authorize_message(ws, ctx, msg):
+        return
     msg_type = msg["type"]
     if msg_type == "hello":
         await _hello(ws, ctx, msg)
@@ -119,6 +131,41 @@ async def handle_text(
         )
 
 
+async def _authorize_message(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]) -> bool:
+    operation = WS_OPERATIONS.get(msg.get("type"))
+    principal = authenticate(msg.get("token")) if "token" in msg else ctx.principal
+    resource = msg.get("device_id", ctx.device_id)
+    authenticated = current(principal)
+    valid = (authenticated and allowed(principal, operation, resource=resource)
+             and (ctx.principal is None or principal == ctx.principal)
+             and (ctx.device_id is None or resource == ctx.device_id))
+    if ctx.principal is not None:
+        live = registry.get(ctx.device_id)
+        valid = valid and live is not None and live.ws is ws
+    if not valid:
+        audit_denial(authenticated)
+        await send_json(ws, {"type": "error", "code": "FORBIDDEN" if authenticated else "UNAUTHORIZED",
+                             "message": "Access denied"})
+        await ws.close()
+        return False
+    if ctx.principal is None:
+        if msg.get("type") not in {"hello", "voice.start", "realtime.start"}:
+            audit_denial(True)
+            await send_json(ws, {"type": "error", "code": "FORBIDDEN", "message": "Access denied"})
+            await ws.close()
+            return False
+        live = registry.get(resource)
+        if live is not None and live.ws is not ws and not getattr(live.ws, "closed", False):
+            # A live identity cannot be taken over; retry after the old connection closes.
+            audit_denial(True)
+            await send_json(ws, {"type": "error", "code": "FORBIDDEN", "message": "Access denied"})
+            await ws.close()
+            return False
+        ctx.principal = principal
+        ctx.device_id = resource
+    return True
+
+
 async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]) -> None:
     """Boot-time handshake: device advertises capabilities, server returns policy.
 
@@ -126,12 +173,6 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
     transport to use, and the WebRTC endpoints are all decided here (server-side)
     from config gated by the device's advertised caps.
     """
-    token = msg.get("token")
-    if not isinstance(token, str) or not validate_token(token).ok:
-        await send_json(ws, {"type": "error", "code": "UNAUTHORIZED", "message": "Invalid token"})
-        await ws.close()
-        return
-
     caps = msg.get("caps")
     caps_list = [c for c in caps if isinstance(c, str)] if isinstance(caps, list) else []
     rt = get_config().realtime
@@ -145,8 +186,7 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
             msg.get("device_id"),
         )
 
-    device_id = msg.get("device_id")
-    device_key = device_id if isinstance(device_id, str) else ""
+    device_key = ctx.device_id or ""
 
     # Register on hello so an idle device is visible/commandable (OTA, reboot)
     # without waiting for the first voice turn.
@@ -208,24 +248,7 @@ async def _device_button(state: AppState, ctx: ConnectionCtx, msg: dict[str, Any
 async def _voice_start(
     state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]
 ) -> None:
-    device_id = msg.get("device_id")
-    token = msg.get("token")
-    if not isinstance(device_id, str) or not isinstance(token, str):
-        await send_json(
-            ws,
-            {"type": "error", "code": "INVALID_MESSAGE", "message": "Missing device_id or token"},
-        )
-        return
-
-    auth = validate_token(token)
-    if not auth.ok:
-        await send_json(
-            ws,
-            {"type": "error", "code": "UNAUTHORIZED", "message": auth.reason or "Invalid token"},
-        )
-        await ws.close()
-        return
-
+    device_id = ctx.device_id
     if ctx.device_id:
         registry.abort_active_turn(ctx.device_id)
 
@@ -313,10 +336,10 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
                 abort,
                 ctx.output_sample_rate,
             )
-        except Exception as e:  # noqa: BLE001
-            log.error("Pipeline error for %s: %s", device_id, e)
+        except Exception:  # noqa: BLE001
+            log.error("Pipeline error")
             await send_json(
-                ws, {"type": "error", "code": "PIPELINE_ERROR", "message": str(e)}
+                ws, {"type": "error", "code": "PIPELINE_ERROR", "message": "Pipeline error"}
             )
         finally:
             ctx.state = ConnectionState.IDLE
@@ -340,18 +363,7 @@ async def _realtime_start(
     state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]
 ) -> None:
     """Wake fired: register the device and arm pre-roll capture while WebRTC connects."""
-    device_id = msg.get("device_id")
-    token = msg.get("token")
-    if not isinstance(device_id, str) or not isinstance(token, str):
-        await send_json(
-            ws, {"type": "error", "code": "INVALID_MESSAGE", "message": "Missing device_id or token"}
-        )
-        return
-    if not validate_token(token).ok:
-        await send_json(ws, {"type": "error", "code": "UNAUTHORIZED", "message": "Invalid token"})
-        await ws.close()
-        return
-
+    device_id = ctx.device_id
     # Realtime must actually be reachable server-side before we arm pre-roll: the
     # /api/offer endpoint only exists when REALTIME_ENABLED=1 and REALTIME_HOST is
     # set (same gate _hello uses to advertise the webrtc policy). Arming otherwise
@@ -445,6 +457,10 @@ async def _realtime_stop(ctx: ConnectionCtx) -> None:
 
 
 def handle_binary(ctx: ConnectionCtx, data: bytes) -> None:
+    if (not current(ctx.principal)
+            or not allowed(ctx.principal, Operation.DEVICE_AUDIO, resource=ctx.device_id)):
+        audit_denial(ctx.principal is not None)
+        return
     if len(data) < 3:
         return
     msg_type = data[0]
@@ -461,6 +477,7 @@ def handle_binary(ctx: ConnectionCtx, data: bytes) -> None:
         ctx.audio_chunks.append(payload)
 
 
+@transport_boundary
 async def device_ws_handler(request: web.Request) -> web.WebSocketResponse:
     state: AppState = request.app[APP_STATE]
     ws = web.WebSocketResponse()
@@ -472,6 +489,11 @@ async def device_ws_handler(request: web.Request) -> web.WebSocketResponse:
             if msg.type == WSMsgType.TEXT:
                 await handle_text(state, ws, ctx, msg.data)
             elif msg.type == WSMsgType.BINARY:
+                live = registry.get(ctx.device_id) if ctx.device_id else None
+                if live is None or live.ws is not ws or not current(ctx.principal):
+                    audit_denial(ctx.principal is not None)
+                    await ws.close()
+                    break
                 handle_binary(ctx, msg.data)
             elif msg.type == WSMsgType.ERROR:
                 log.warning("ws error: %s", ws.exception())
@@ -490,6 +512,7 @@ async def device_ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+@transport_boundary
 async def channel_ws_handler(request: web.Request) -> web.WebSocketResponse:
     state: AppState = request.app[APP_STATE]
     ws = web.WebSocketResponse()
@@ -499,7 +522,7 @@ async def channel_ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 
 def make_app() -> web.Application:
-    app = web.Application(middlewares=[cors_middleware])
+    app = web.Application(middlewares=[owner_middleware, cors_middleware, policy_middleware])
     app[APP_STATE] = AppState()
     cfg = get_config()
     app.router.add_get(cfg.channel.ws_path, channel_ws_handler)
@@ -521,6 +544,7 @@ def make_app() -> web.Application:
 async def _startup(app: web.Application) -> None:
     state: AppState = app[APP_STATE]
     cfg = get_config()
+    get_store().load()
     # Load channel registry.
     channel_registry.load()
     log.info("channel registry loaded")
@@ -572,7 +596,7 @@ def main() -> None:
     loop = asyncio.new_event_loop()
 
     async def run() -> None:
-        runner = web.AppRunner(app)
+        runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         ws_site = web.TCPSite(runner, host="0.0.0.0", port=cfg.ws.port)
         await ws_site.start()
