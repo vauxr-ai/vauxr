@@ -114,7 +114,14 @@ per-client service guarantee. Repeated unauthorized traffic can exhaust it.
    credential in one transaction, and makes affected enrollment actors stale in
    that same snapshot. Identity/settings and disabled records remain. A response
    of revoked means authorization is invalidated; active transport closure is awaited
-   before success. Teardown failures produce 503 and are retried by maintenance.
+   before success. Teardown failures produce 503 and are retried by maintenance. Each individual
+   teardown attempt is waited for at most two seconds; independent socket/media
+   callbacks all run even if peers fail. A timed-out attempt is cancelled once;
+   cancellation-resistant attempts remain visible and are observed on retry,
+   without spawning duplicates. Finished failed attempts are retried. Concurrent
+   requests cannot claim success while teardown remains pending. This bounds the
+   server wait, not a noncooperative transport's physical shutdown time; authority
+   remains revoked throughout. Maintenance continues after failures/timeouts.
 
 Authentication checks deadlines directly, even before the periodic sweep. A
 one-second maintenance pass persists expiry and closes idle expired transports;
@@ -183,13 +190,35 @@ an old token. This package does not invent that enrollment UI/proof protocol.
 Store schema **4** contains `version,credentials,owner,enrollment,lifecycle`.
 The lifecycle namespace version 1 contains bounded `operations`, permanent verifier
 `blocked` tombstones, durable device-key/kind `bindings`, and `recovery` grants.
-There are at most 1024 retained operations, bindings and recovery entries, 1024
-credential admission records, and 65536 verifier tombstones. No live/terminal
-operation or tombstone is silently evicted: idempotency and non-resurrection persist
-across restart. Capacity returns 429; bounded v1 does not offer automatic history
-compaction or unlimited rotations. Plan an explicit reviewed migration before these
-administrative limits, preserving every tombstone and known identity. Do not remove
-auth records to evade limits. Settings and channel configuration files are untouched.
+General operation admission stops at 1024 retained operations. A reserved tail
+permits up to **3072 total operations**, exclusively for new revokes that tombstone
+at least one previously unblocked retained verifier or cancel an unfinished
+operation. Existing IDs remain permanently retryable, including at capacity;
+reusing an ID for another action/identity conflicts. Fresh no-op revoke IDs at
+capacity return 429 `capacity`; retry the original revoke ID or read its status.
+Rotate/recover with fresh IDs remain unavailable at capacity. No operation or
+verifier tombstone is evicted, so old operation replay cannot issue or revive a
+credential. There is no retry expiry or automatic history compaction.
+
+There are at most 1024 bindings, recovery entries and credential admission records,
+and 65536 permanent verifier tombstones. Every snapshot writer and loader enforces:
+
+- `count(blocked UNION retained credential verifiers) <= 65536`.
+- `count(operations) + count(retained verifiers NOT blocked) + count(unfinished operations) <= 3072`.
+
+Disabled records also reserve tombstones. A required revoke adds one history row
+and removes at least one unblocked verifier or unfinished operation; therefore it
+cannot increase either total. Before the general limit, at most 1024 history rows,
+1024 records and 1024 unfinished operations fit this bound. Later issuance (including
+enrollment/recovery and future #51 writers) must preserve both bounds in the shared
+atomic snapshot or return capacity before committing any credential. This reserves
+revocation even after selective record removal and future admissions; it does not
+rely on operators leaving spare tombstones. Revoke of a pending recovery grant is
+covered even if all its old verifiers are already blocked. Invalid imported stores
+without headroom fail closed; reachable snapshots from the preceding #49 commit
+satisfy these invariants. Do not selectively remove history to evade limits.
+An explicit reviewed migration is required for further issuance when admission is
+exhausted. Settings and channel configuration files are untouched.
 
 A tombstone is independent of credential ID and `enabled`. Restoring an exact old
 verifier, even under a new ID, cannot restore authentication or a retained principal

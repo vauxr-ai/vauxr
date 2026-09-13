@@ -441,6 +441,12 @@ def test_interoperability_fixture(env, monkeypatch, role, subject):
 
     fixture = json.loads((Path(__file__).parent / "fixtures/lifecycle-v1.json").read_text())
     service, _, owner = env
+    from lifecycle_schema import LIMIT, OPERATION_LIMIT, TOMBSTONE_LIMIT
+
+    assert fixture["history"]["general_limit"] == LIMIT
+    assert fixture["history"]["total_limit"] == OPERATION_LIMIT
+    assert fixture["history"]["tombstone_limit"] == TOMBSTONE_LIMIT
+    assert fixture["teardown"]["attempt_seconds"] == auth_connections.CLOSE_SECONDS
     monkeypatch.setattr(lifecycle.time, "time", lambda: 2000000000)
     # Test fixture time is later than the synthetic owner's session; retain its
     # current epoch for the service-only controller resolver.
@@ -574,3 +580,185 @@ def test_client_storage_crash_and_restart_ack(env, tmp_path, saved_before_crash)
         with pytest.raises(EnrollmentError, match="unavailable"):
             service.execute("deliver", {"operation_id": "1" * 32}, client(service))
         assert service.store.lifecycle["operations"]["1" * 32]["state"] == "delivered"
+
+
+@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "channel")])
+def test_exhausted_history_reserves_revocation_and_permanent_retries(env, role, subject):
+    from lifecycle_schema import LIMIT
+
+    service, _, owner = env
+    original = delivered(service, owner, role, subject)
+    # Retain an actual delivered operation and fill the general history with
+    # expired, never-delivered rotations (which leave existing access usable).
+    with service.store.transaction():
+        template = dict(service.store.lifecycle["operations"]["1" * 32])
+        template.update(state="expired", credential_id="", overlap_until=0)
+        for index in range(LIMIT - 1):
+            oid = f"{index:032x}"
+            service.store.lifecycle["operations"][oid] = {**template, "operation_id": oid}
+        service.store.replace(service.store.records)
+    for _ in range(2):
+        service.store.load()
+        with pytest.raises(EnrollmentError, match="capacity"):
+            control(service, owner, role=role, subject=subject, oid="e" * 32)
+        result = control(service, owner, "revoke", role, subject, "f" * 32)
+        assert result["state"] == "revoked"
+        assert len(service.store.lifecycle["operations"]) == LIMIT + 1
+        assert not service.store.authenticate("synthetic-" + role)
+        assert not service.store.authenticate(original["credential"])
+        assert control(service, owner, role=role, subject=subject)["state"] == "revoked"
+        with pytest.raises(EnrollmentError, match="conflict"):
+            control(service, owner, role=role, subject=subject, oid="f" * 32)
+        with pytest.raises(EnrollmentError, match="capacity"):
+            control(service, owner, "revoke", role, subject, "d" * 32)
+    other_role, other_subject = ("integration", "channel") if role == "device" else ("device", "speaker")
+    assert control(service, owner, "revoke", other_role, other_subject, "c" * 32)["state"] == "revoked"
+
+
+@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "channel")])
+@pytest.mark.parametrize("resource", ["tombstones", "operations"])
+def test_admission_enforces_last_revocation_headroom(env, role, subject, resource):
+    from lifecycle_schema import OPERATION_LIMIT, TOMBSTONE_LIMIT
+
+    service, _, owner = env
+    result = control(service, owner, "revoke", role, subject)
+    # Model retained history at the admission boundary. Records may have been
+    # removed by a future enrollment writer, but history must remain permanent.
+    with service.store.transaction():
+        state = service.store.lifecycle
+        if resource == "tombstones":
+            count = TOMBSTONE_LIMIT - len({r.verifier for r in service.store.records}) - 1
+            state["blocked"].extend(f"{index:064x}" for index in range(count))
+        else:
+            template = state["operations"][result["operation_id"]]
+            for index in range(OPERATION_LIMIT - 3):
+                oid = f"{index:032x}"
+                state["operations"][oid] = {**template, "operation_id": oid}
+        service.store.replace(service.store.records)
+    fresh = Credential("fresh", Role(role), subject, verifier("synthetic-fresh"))
+    with service.store.transaction():
+        service.store.replace((*service.store.records, fresh))
+    denied = Credential("denied", Role(role), subject, verifier("synthetic-denied"))
+    with pytest.raises(EnrollmentError, match="capacity"), service.store.transaction():
+        service.store.replace((*service.store.records, denied))
+    service.store.load()
+    assert service.store.authenticate("synthetic-fresh")
+    assert control(service, owner, "revoke", role, subject, "f" * 32)["state"] == "revoked"
+    service.store.load()
+    assert not service.store.authenticate("synthetic-fresh")
+    assert control(service, owner, "revoke", role, subject, "f" * 32)["state"] == "revoked"
+    other_role, other_subject = ("integration", "channel") if role == "device" else ("device", "speaker")
+    assert control(service, owner, "revoke", other_role, other_subject, "e" * 32)["state"] == "revoked"
+
+
+async def test_noncooperative_and_raising_closers_do_not_block_peers_or_concurrent_sweeps(env, monkeypatch):
+    import asyncio
+
+    service, _, owner = env
+    monkeypatch.setattr(auth_connections, "CLOSE_SECONDS", 0.02)
+    finish = asyncio.Event()
+    calls = 0
+
+    async def hanging():
+        nonlocal calls
+        calls += 1
+        try:
+            await finish.wait()
+        except asyncio.CancelledError:
+            await finish.wait()  # Model a close implementation that suppresses cancellation.
+
+    def raising():
+        raise ValueError("synthetic synchronous failure")
+
+    healthy = AsyncMock()
+    connections = [auth_connections.retain(client(service)(), callback)
+                   for callback in (hanging, raising, healthy)]
+    control(service, owner, "revoke")
+    try:
+        outcomes = await asyncio.wait_for(asyncio.gather(
+            auth_connections.disconnect_stale(service.store),
+            auth_connections.disconnect_stale(service.store), return_exceptions=True), 0.5)
+        assert all(isinstance(outcome, RuntimeError) for outcome in outcomes)
+        healthy.assert_awaited_once()
+        auth_connections.release(connections[0])  # WS finally must not hide unfinished media cleanup.
+        assert connections[0] in auth_connections._connections
+        assert connections[1] in auth_connections._connections
+        assert connections[2] not in auth_connections._connections
+        with pytest.raises(RuntimeError):
+            await auth_connections.disconnect_stale(service.store)
+        assert calls == 1  # No unbounded accumulation of abandoned hanging tasks.
+        assert not service.store.current(connections[0].principal)
+        connections[1].close = AsyncMock()
+        finish.set()
+        await asyncio.sleep(0)
+        await auth_connections.disconnect_stale(service.store)
+        assert all(connection not in auth_connections._connections for connection in connections)
+    finally:
+        finish.set()
+        for connection in connections:
+            auth_connections.release(connection)
+
+
+async def test_real_realtime_session_close_preserves_failed_cleanup(env, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    import realtime_session
+
+    monkeypatch.setattr(auth_connections, "CLOSE_SECONDS", 0.02)
+    manager = realtime_session.RealtimeManager()
+    monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
+    session = realtime_session.RealtimeSession("speaker", None)
+    manager._sessions["speaker"] = session
+    finish = asyncio.Event()
+
+    async def hang():
+        try:
+            await finish.wait()
+        except asyncio.CancelledError:
+            await finish.wait()
+
+    session._task = SimpleNamespace(cancel=hang)
+    disconnect = AsyncMock(side_effect=[ValueError("synthetic disconnect"), None])
+    session._connection = SimpleNamespace(disconnect=disconnect)
+    healthy = SimpleNamespace(close=AsyncMock())
+    manager._sessions["peer"] = healthy
+    try:
+        with pytest.raises(RuntimeError, match="transport_teardown_unavailable"):
+            await asyncio.wait_for(manager.stop_all(), 0.5)
+        assert session.is_closed  # Logical authority has stopped; cleanup is not done.
+        assert manager._sessions["speaker"] is session
+        healthy.close.assert_awaited_once()
+        disconnect.assert_awaited_once()
+        finish.set()
+        await asyncio.sleep(0)
+        await manager.stop("speaker")
+        assert "speaker" not in manager._sessions
+        assert disconnect.await_count == 2
+    finally:
+        finish.set()
+
+
+def test_exhausted_history_can_revoke_recovery_without_unblocked_credentials(env):
+    from lifecycle_schema import LIMIT
+
+    service, enrollment, owner = env
+    key, row, code = ready(enrollment)
+    approve(enrollment, row, code, owner)
+    enrollment.execute("redeem", signed(key, row, "redeem"))
+    control(service, owner, action="recover", subject=row["device_id"])
+    with service.store.transaction():
+        state = service.store.lifecycle
+        template = state["operations"]["1" * 32]
+        for index in range(LIMIT - 1):
+            oid = f"{index:032x}"
+            state["operations"][oid] = {**template, "operation_id": oid, "state": "expired"}
+        service.store.replace(service.store.records)
+    blocked = service.store.lifecycle["blocked"][:]
+    result = control(service, owner, "revoke", subject=row["device_id"], oid="f" * 32)
+    assert result["state"] == "revoked"
+    service.store.load()
+    assert service.store.lifecycle["blocked"] == blocked
+    assert row["device_id"] not in service.store.lifecycle["recovery"]
+    with pytest.raises(EnrollmentError, match="already_owned"):
+        request(enrollment, owner, key=key)
