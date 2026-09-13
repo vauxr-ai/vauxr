@@ -24,10 +24,23 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install package + dev dependencies
+      - name: Install package + dev and realtime dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,realtime]"
+
+      - name: Require real Pipecat media-authority coverage (no skips)
+        run: |
+          python -m pytest -q tests/test_realtime_media_authority.py --junitxml=realtime-media-authority.xml
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          cases = ET.parse("realtime-media-authority.xml").findall(".//testcase")
+          if not cases or any(case.find(tag) is not None for case in cases
+                              for tag in ("skipped", "failure", "error")):
+              raise SystemExit("Required realtime media-authority tests must run without skips or failures")
+          print(f"Required realtime media-authority coverage: {len(cases)} passed, zero skipped")
+          PY
 
       - name: Run pytest
         run: pytest -q

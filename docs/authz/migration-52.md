@@ -18,11 +18,15 @@ Do not substitute `latest`, a matching package version, or an older store build.
 
 | Component | Concrete baseline | Evidence and limit |
 | --- | --- | --- |
-| Server and built web client | `8edb3e0e3cfc71a7b09ff1e24187d7721e05f08d` (PR62); package `2.0.0a0` | Combined owner/browser/integration implementation; schema 1–5 reader, schema 5 once integration state is written. Build the UI from the same checkout. |
+| Server and built web client | `81527bdf464e942bfba60dbfad508458aefb7cee` (PR62); package `2.0.0a0` | Combined owner/browser/integration implementation; schema 1–5 reader, schema 5 once integration state is written. Build the UI from the same checkout. |
 | Server ancestors | PR60 `b8932451aa8edc9ada97692c09dee675af28754c`, PR61 `16968a73b7610c917a9922d94d8c7ef187f7dda3`; merged PR58 `8ffc9110f0fefcf285b822e7829dcb345ba6b33f` | PR60/61 remain unmerged dependencies of PR62. Earlier owner/enrollment/lifecycle contracts are incorporated; their old package status paragraphs are historical. |
 | OpenClaw plugin | [PR37](https://github.com/vauxr-ai/vauxr-openclaw/pull/37), `69794b3a4a9f6859f56c0deba9fc017178639ac1` | Unmerged. Contract tests pinned to PR61, whose contracts/fixtures PR62 preserves. Actual PR37 + PR62 + browser + voice acceptance remains outstanding. |
 | OpenClaw SDK | **2026.9.3** on POSIX | The plugin's public private-file SDK adapter was verified at this version. Later versions require revalidation; Windows fails closed in this adapter. |
 | Voice PE firmware | Separate firmware #69 candidate against PR61 enrollment/lifecycle v1 | **No available validated artifact or release pin.** Isolated ESP-IDF 5.5.2 compile/link, dependencies, map/image fit and physical acceptance are still missing. Portable tests are not firmware build evidence. Other boards are not covered. |
+
+The PR62 pin includes the integration consent disclosure/test and realtime CI
+fail-on-skip repair. That repair leaves server/storage and auth protocol contracts
+unchanged; it does not clear the release gates below.
 
 Before a physical rollout, obtain the reviewed firmware commit, target/config,
 artifact SHA-256 and supported installation/recovery instructions, plus successful
@@ -55,7 +59,7 @@ LAN address for remote administration. Run from the repository root:
 git clone https://github.com/vauxr-ai/vauxr.git vauxr-auth
 cd vauxr-auth
 git fetch origin refs/pull/62/head
-git checkout --detach 8edb3e0e3cfc71a7b09ff1e24187d7721e05f08d
+git checkout --detach 81527bdf464e942bfba60dbfad508458aefb7cee
 python3 -m venv .venv
 . .venv/bin/activate
 python3 -m pip install .
