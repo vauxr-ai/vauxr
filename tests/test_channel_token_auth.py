@@ -1,17 +1,8 @@
-"""Regression tests for channel-token bearer auth.
+"""Legacy channel hashes remain routing data, never authorization authority.
 
-Covers two paths that the OpenClaw plugin (and other channel clients)
-exercise against the HTTP API:
-
-1. Malformed / oversize bearer tokens must yield a clean 401 rather than
-   crashing the auth middleware. `bcrypt.checkpw` raises `ValueError` on
-   inputs longer than 72 bytes or on a malformed stored hash; without
-   defensive handling those exceptions surface as a 500 from any
-   `@_require_auth` endpoint (including `POST /api/channels/{id}/rotate`).
-
-2. Channels migrated from the old Node/bcryptjs server (which writes
-   `$2a$` hashes) must continue to authenticate, and rotate, against the
-   Python implementation.
+Malformed/oversize bearer values fail without bcrypt exceptions. Node-era
+credentials and shared DEVICE_TOKEN cannot authenticate or rotate credentials;
+explicit reenrollment is required by the breaking authorization contract.
 """
 
 from __future__ import annotations
@@ -133,20 +124,17 @@ async def test_malformed_stored_hash_does_not_500_other_requests(
     good, good_token = await channel_registry.create("Good", "openclaw")
 
     res = await client.get("/api/channels", headers=_bearer(good_token))
-    assert res.status == 200, await res.text()
-    body = await res.json()
-    ids = {c["id"] for c in body}
-    assert good.id in ids
+    assert res.status == 401, await res.text()
 
 
-# --- Bug 2: Node-migrated channels stay compatible ---
+# --- Legacy persistence never supplies transport authority ---
 
 
-async def test_node_migrated_channel_authenticates(
+async def test_node_migrated_channel_requires_reenrollment(
     client: TestClient, tmp_path: Path
 ) -> None:
     """A channel created by the old Node/bcryptjs server (with `$2a$`
-    hash) must still authenticate after the Python rewrite reads
+    hash) must not authenticate after the Python rewrite reads
     channels.json at startup."""
     raw_token = "vx_ch_" + "0123456789abcdef" * 4  # canonical 70-byte token
     _write_node_style_channels(tmp_path, raw_token, channel_id="node-ch")
@@ -156,17 +144,14 @@ async def test_node_migrated_channel_authenticates(
     assert len(channel_registry._channels) == 1
 
     res = await client.get("/api/channels", headers=_bearer(raw_token))
-    assert res.status == 200, await res.text()
-    body = await res.json()
-    assert any(c["id"] == "node-ch" for c in body)
+    assert res.status == 401, await res.text()
 
 
-async def test_node_migrated_channel_can_be_rotated(
+async def test_legacy_device_token_cannot_rotate(
     client: TestClient, tmp_path: Path
 ) -> None:
     """`POST /api/channels/{id}/rotate` against a Node-migrated channel,
-    authenticated with the admin device token, must return a fresh
-    `vx_ch_…` token and persist the new hash."""
+    authenticated with the admin device token, must fail closed without issuing any token."""
     raw_token = "vx_ch_" + "fedcba9876543210" * 4
     _write_node_style_channels(tmp_path, raw_token, channel_id="node-ch")
     channel_registry._reset_for_tests()
@@ -175,12 +160,4 @@ async def test_node_migrated_channel_can_be_rotated(
     res = await client.post(
         "/api/channels/node-ch/rotate", headers=_bearer(DEVICE_TOKEN)
     )
-    assert res.status == 200, await res.text()
-    body = await res.json()
-    assert body["token"].startswith("vx_ch_")
-    assert body["token"] != raw_token
-    # New token authenticates; old token does not.
-    res_new = await client.get("/api/channels", headers=_bearer(body["token"]))
-    assert res_new.status == 200
-    res_old = await client.get("/api/channels", headers=_bearer(raw_token))
-    assert res_old.status == 401
+    assert res.status == 401, await res.text()
