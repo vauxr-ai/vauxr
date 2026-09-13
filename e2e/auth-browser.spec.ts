@@ -23,7 +23,7 @@ function consoleCode(recover = false) {
   ).trim();
 }
 test.use({ baseURL: origin, trace: "off", screenshot: "off", video: "off" });
-test.beforeAll(async () => {
+test.beforeEach(async () => {
   data = mkdtempSync(resolve(root, ".browser-test-"));
   // Synthetic unavailable Wyoming providers exercise selection without model inference.
   writeFileSync(resolve(data, "speech-providers.json"), JSON.stringify([
@@ -31,7 +31,10 @@ test.beforeAll(async () => {
     { id: "kokoro", kind: "tts", adapter: "kokoro", model: "kokoro-test", host: "127.0.0.1", port: 1, voices: ["af", "bf"] },
   ]));
   environment = {
-    ...process.env,
+    PATH: process.env.PATH,
+    REALTIME_ENABLED: "0",
+    STT_URL: "tcp://127.0.0.1:1",
+    TTS_URL: "tcp://127.0.0.1:1",
     PYTHONPATH: resolve(root, "src"),
     DATA_DIR: data,
     OWNER_HTTP_ORIGIN: origin,
@@ -56,7 +59,7 @@ test.beforeAll(async () => {
     })
     .toBe(200);
 });
-test.afterAll(async () => {
+test.afterEach(async () => {
   server?.kill("SIGTERM");
   if (server && server.exitCode === null)
     await new Promise((r) => server.once("exit", r));

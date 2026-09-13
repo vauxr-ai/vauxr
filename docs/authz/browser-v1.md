@@ -169,3 +169,8 @@ public owner status and exercising owner claim persistence internally without
 printing a secret. It then installs an isolated Python server, tests/builds the
 frontend and runs `auth-browser.spec.ts`. It does not re-enable removed shared-token
 channel forms. Local verification does not run the container or touch deployed services.
+
+
+Combined #53 integration now supplies matching-code integration approval under Channels
+and replaces the historical shared-token channel smoke. See [combined integration](combined-53.md)
+and [current full browser suite](../../e2e/README.md); the package counts above describe PR60 only.

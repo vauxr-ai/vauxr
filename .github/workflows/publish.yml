@@ -106,9 +106,9 @@ jobs:
 
       - name: Run Playwright tests
         working-directory: e2e
-        # The suite owns throwaway DATA_DIRs and its own 18080/18765 listeners.
-        # channels.spec.ts exercises removed shared-token create/export forms.
-        run: npx playwright test auth-browser.spec.ts
+        # Both auth specs own disposable servers/data; no shared-token forms.
+        # Includes loopback integration workflows and LAN browser restrictions.
+        run: npx playwright test
 
       - name: Dump container logs on failure
         if: failure()

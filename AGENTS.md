@@ -18,10 +18,11 @@
 - `DATA_DIR` must be writable (channel registry persists to `<DATA_DIR>/config.json`). Its
   default is `/data` (used by the Docker image); set a writable local path when running outside
   Docker or channel create/rotate will fail.
-- **Web client** (`web-client/`, React+Vite): `npm run dev` serves it on **:5173**. It derives the
-  HTTP API base URL from the WebSocket URL you enter in the Connection panel (host + port 8080),
-  so there is no dev proxy — just connect to `ws://localhost:8765/ws` with the `DEVICE_TOKEN`.
-  `npm run build` emits `web-client/dist`, which the backend serves at `:8080`.
+- **Web client** (`web-client/`, React+Vite): `npm run build` emits `web-client/dist`.
+  Serve that build through the backend at the exact configured owner origin. The
+  cross-origin Vite development server cannot authenticate owner sessions. The browser
+  voice URL uses the same authority and `/ws`, with HTTP/WS by default or optional
+  verified HTTPS/WSS. There is no shared-token connection form.
 
 ### STT/TTS and realtime (not needed for control-plane work)
 - Actual voice turns need **Whisper (STT)** and **Piper (TTS)** Wyoming services on
@@ -35,5 +36,6 @@
 ### Tests
 - Backend: `pytest -q` (config in `pyproject.toml`, `pythonpath=["src"]`).
 - Web client: `npm --prefix web-client run test` (Vitest; use `npx vitest run` for one-shot).
-- E2E UI smoke: `cd e2e && VAUXR_URL=http://localhost:8080 VAUXR_DEVICE_TOKEN=<token> npx playwright test`
-  — requires the backend running and the Chromium browser (installed by the update script).
+- E2E: build the web client, then `npm --prefix e2e test`. The suite starts disposable
+  aiohttp servers and clean Chromium contexts; no running backend or shared token is
+  required. Install dependencies/browser first as documented in `e2e/README.md`.
