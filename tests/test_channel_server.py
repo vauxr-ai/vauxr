@@ -16,6 +16,14 @@ import config as cfg_mod
 from channel_server import ChannelServer
 
 
+async def create_integration(name, type_):
+    from tests.auth_helpers import seed
+    from auth_policy import Role
+    channel, token = await cr.create(name, type_)
+    seed(token, Role.INTEGRATION, channel.id)
+    return channel, token
+
+
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     cfg_mod.reset_config()
@@ -59,7 +67,7 @@ async def _recv(ws) -> dict:
 @pytest.mark.asyncio
 async def test_auth_valid_token_sends_ready(setup) -> None:
     cs, client = setup
-    channel, token = await cr.create("Test Channel", "openclaw")
+    channel, token = await create_integration("Test Channel", "openclaw")
 
     async with client.ws_connect("/channel") as ws:
         await _send(ws, {"type": "channel.auth", "token": token})
@@ -75,7 +83,7 @@ async def test_auth_invalid_token_errors_and_closes(setup) -> None:
     async with client.ws_connect("/channel") as ws:
         await _send(ws, {"type": "channel.auth", "token": "bad-token"})
         err = await _recv(ws)
-        assert err == {"type": "error", "code": "UNAUTHORIZED", "message": "Invalid channel token"}
+        assert err == {"type": "error", "code": "UNAUTHORIZED", "message": "Access denied"}
         msg = await ws.receive(timeout=2)
         assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.CLOSING)
 
@@ -83,7 +91,7 @@ async def test_auth_invalid_token_errors_and_closes(setup) -> None:
 @pytest.mark.asyncio
 async def test_auth_non_active_channel_no_transcript(setup) -> None:
     cs, client = setup
-    channel, token = await cr.create("Non-Active", "openclaw")
+    channel, token = await create_integration("Non-Active", "openclaw")
     # Don't activate it.
     async with client.ws_connect("/channel") as ws:
         await _send(ws, {"type": "channel.auth", "token": token})
@@ -96,8 +104,8 @@ async def test_auth_non_active_channel_no_transcript(setup) -> None:
 @pytest.mark.asyncio
 async def test_transcript_routes_to_active_only(setup) -> None:
     cs, client = setup
-    ch_active, tok_active = await cr.create("Active", "openclaw")
-    ch_idle, tok_idle = await cr.create("Idle", "openclaw")
+    ch_active, tok_active = await create_integration("Active", "openclaw")
+    ch_idle, tok_idle = await create_integration("Idle", "openclaw")
     cr.activate(ch_active.id)
 
     async with client.ws_connect("/channel") as ws_active, client.ws_connect("/channel") as ws_idle:
@@ -125,7 +133,7 @@ async def test_transcript_routes_to_active_only(setup) -> None:
 @pytest.mark.asyncio
 async def test_response_delta_routed_to_listener(setup) -> None:
     cs, client = setup
-    ch, token = await cr.create("Ch", "openclaw")
+    ch, token = await create_integration("Ch", "openclaw")
     cr.activate(ch.id)
 
     deltas: list[tuple[str, str]] = []
@@ -155,7 +163,7 @@ async def test_response_delta_routed_to_listener(setup) -> None:
 @pytest.mark.asyncio
 async def test_response_error_routed(setup) -> None:
     cs, client = setup
-    ch, token = await cr.create("Ch", "openclaw")
+    ch, token = await create_integration("Ch", "openclaw")
     cr.activate(ch.id)
 
     errors: list[tuple[str, str]] = []
@@ -188,7 +196,7 @@ async def test_response_error_routed(setup) -> None:
 @pytest.mark.asyncio
 async def test_connection_drop_then_send_transcript_returns_false(setup) -> None:
     cs, client = setup
-    ch, token = await cr.create("Ch", "openclaw")
+    ch, token = await create_integration("Ch", "openclaw")
     cr.activate(ch.id)
 
     async with client.ws_connect("/channel") as ws:

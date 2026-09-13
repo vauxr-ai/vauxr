@@ -49,6 +49,6 @@ Features grouped by theme. No ordering assigned.
 Plugin-only remaining work lives in [vauxr-openclaw/ROADMAP.md](https://github.com/vauxr-ai/vauxr-openclaw/blob/develop/ROADMAP.md). Pairing / `/pair` / per-device `/status` are out of scope (the plugin opts out).
 
 ### Security
-- **WSS / TLS transport** — currently using plain `ws://`; production deployments should use `wss://`; needs TLS cert handling on the server side and `esp_tls` on the ESP32 (ESP-IDF has built-in support)
+- **WSS / TLS transport** — default home-network setup supports HTTP/WS; optional HTTPS/WSS retains strict certificate validation; needs TLS cert handling on the server side and `esp_tls` on the ESP32 (ESP-IDF has built-in support)
 - **Certificate validation** — device should verify server cert; for self-hosted setups, support custom CA bundle baked into firmware
 - **Token rotation** — per-device bearer tokens should be rotatable without re-pairing (channel-token rotate already ships)

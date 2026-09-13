@@ -1,4 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import OwnerGate from "./auth/OwnerGate";
+import AccessPanel from "./components/AccessPanel";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Layout from "./components/Layout";
 import Sidebar, { type SectionId } from "./components/Sidebar";
 import TalkPanel, { type TalkMode } from "./components/TalkPanel";
@@ -12,15 +14,30 @@ import SettingsPanel from "./components/SettingsPanel";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAudio } from "./hooks/useAudio";
 
-const CONNECTED_STATES = ["connected", "listening", "processing", "speaking"] as const;
+const CONNECTED_STATES = [
+  "connected",
+  "listening",
+  "processing",
+  "speaking",
+] as const;
 
 export default function App() {
+  return (
+    <OwnerGate>
+      <OwnerApp />
+    </OwnerGate>
+  );
+}
+
+function OwnerApp() {
   const [transcript, setTranscript] = useState("");
   const [talking, setTalking] = useState(false);
   const [followUpListening, setFollowUpListening] = useState(false);
   const talkingRef = useRef(false);
+  const captureReadyRef = useRef(false);
+  const captureGeneration = useRef(0);
   const [wsUrl, setWsUrl] = useState("");
-  const [wsToken, setWsToken] = useState("");
+
   const [deviceId, setDeviceId] = useState("");
 
   const [activeSection, setActiveSection] = useState<SectionId>("connection");
@@ -42,7 +59,9 @@ export default function App() {
       },
       onAudioFrame: (pcm: ArrayBuffer) => {
         if (pendingLatencyStart.current != null) {
-          setLatencyMs(Math.round(performance.now() - pendingLatencyStart.current));
+          setLatencyMs(
+            Math.round(performance.now() - pendingLatencyStart.current),
+          );
           pendingLatencyStart.current = null;
         }
         ws.setState("speaking");
@@ -71,6 +90,33 @@ export default function App() {
     }, []),
   });
 
+  useEffect(() => {
+    const stop = () => {
+      captureGeneration.current++;
+      captureReadyRef.current = false;
+      talkingRef.current = false;
+      setTalking(false);
+      audio.stopCapture();
+      audio.stopPlayback();
+      ws.disconnect();
+    };
+    window.addEventListener("voice-stop", stop);
+    return () => {
+      window.removeEventListener("voice-stop", stop);
+      stop();
+    };
+  }, []);
+  useEffect(() => {
+    if (ws.state === "disconnected") {
+      captureGeneration.current++;
+      captureReadyRef.current = false;
+      talkingRef.current = false;
+      setTalking(false);
+      audio.stopCapture();
+      audio.stopPlayback();
+    }
+  }, [ws.state]);
+
   // Patch the memoized opts to use live refs
   wsOpts.onAudioFrame = (pcm: ArrayBuffer) => {
     if (pendingLatencyStart.current != null) {
@@ -88,7 +134,7 @@ export default function App() {
   const handleConnect = useCallback(
     (url: string, dev: string, token: string) => {
       setWsUrl(url);
-      setWsToken(token);
+
       setDeviceId(dev);
       ws.connect(url, dev, token);
     },
@@ -96,11 +142,12 @@ export default function App() {
   );
 
   const startActualTalking = useCallback(async () => {
+    if (talkingRef.current) return;
+    const attempt = ++captureGeneration.current;
     talkingRef.current = true;
+    captureReadyRef.current = false;
     setTalking(true);
     setFollowUpListening(false);
-    ws.sendVoiceStart();
-    ws.setState("listening");
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error(
@@ -108,9 +155,17 @@ export default function App() {
         );
       }
       await audio.startCapture();
+      if (attempt !== captureGeneration.current) return;
+      captureReadyRef.current = true;
+      ws.sendVoiceStart();
+      ws.setState("listening");
     } catch (err) {
+      if (attempt !== captureGeneration.current) return;
       const msg = err instanceof Error ? err.message : String(err);
-      ws.addLog("sys", `startCapture failed: ${msg}`);
+      ws.addLog("sys", `Microphone capture failed: ${msg}`);
+      audio.stopCapture();
+      captureGeneration.current++;
+      captureReadyRef.current = false;
       talkingRef.current = false;
       setTalking(false);
       ws.setState("connected");
@@ -119,9 +174,12 @@ export default function App() {
 
   const stopActualTalking = useCallback(() => {
     if (!talkingRef.current) return;
+    captureGeneration.current++;
     talkingRef.current = false;
     setTalking(false);
     audio.stopCapture();
+    if (!captureReadyRef.current) return;
+    captureReadyRef.current = false;
     ws.sendJson({ type: "voice.end" });
     ws.setState("processing");
     pendingLatencyStart.current = performance.now();
@@ -167,7 +225,9 @@ export default function App() {
     });
   }, [audio]);
 
-  const isConnected = (CONNECTED_STATES as readonly string[]).includes(ws.state);
+  const isConnected = (CONNECTED_STATES as readonly string[]).includes(
+    ws.state,
+  );
   const micUnavailable =
     typeof window !== "undefined" &&
     (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia);
@@ -177,8 +237,8 @@ export default function App() {
     onConnect: handleConnect,
     onDisconnect: ws.disconnect,
     wsUrl,
-    wsToken,
-    wsState: ws.state,
+    wsToken: "",
+    wsState: "connected",
     addLog: ws.addLog,
   });
 
@@ -197,7 +257,15 @@ export default function App() {
           top={
             <div className="flex h-full min-h-0 flex-col gap-5 overflow-y-auto px-6 py-6">
               {micUnavailable && <MicWarning />}
-              {sectionContent}
+              <div hidden={activeSection !== "connection"}>
+                <ConfigPanel
+                  connected={isConnected}
+                  onConnect={handleConnect}
+                  onDisconnect={ws.disconnect}
+                />
+                <AccessPanel />
+              </div>
+              {activeSection !== "connection" && sectionContent}
             </div>
           }
           bottom={
@@ -257,14 +325,7 @@ function renderSection(id: SectionId, props: SectionProps) {
         />
       );
     case "channels":
-      return (
-        <ChannelsPanel
-          wsUrl={props.wsUrl}
-          token={props.wsToken}
-          wsState={props.wsState}
-          addLog={props.addLog}
-        />
-      );
+      return <ChannelsPanel />;
     case "devices":
       return (
         <DevicesPanel
@@ -296,7 +357,8 @@ function MicWarning() {
         browsers block{" "}
         <code className="font-mono text-amber-100">getUserMedia</code> on plain
         HTTP origins like{" "}
-        <code className="font-mono text-amber-100">{window.location.host}</code>.
+        <code className="font-mono text-amber-100">{window.location.host}</code>
+        . HTTP administration remains available.
       </p>
     </div>
   );

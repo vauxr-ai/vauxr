@@ -126,7 +126,8 @@ reset the affected override. There is no silent fallback to a different voice.
 
 ## API and authorization integration
 
-Current legacy management bearer authorization applies to **both reads and writes**:
+Owner cookie sessions authorize **both reads and writes** through the explicit
+`speech.configure` policy operation:
 
 - `GET /api/speech`: registry projection, defaults and effective global selection.
 - `PATCH /api/speech`: partial global `stt_backend`, `tts_backend`, `voices` map.
@@ -143,33 +144,24 @@ HTTP projection. Announcement synthesis failures return HTTP 503 and emit a
 device TTS error plus audio.end. An unavailable but configured backend can be selected for later
 use; runtime failures produce errors, not automatic rerouting or downloads.
 
-`http_server._authorize_speech_management` is the explicit compatibility seam
-injected into `speech_http.attach_speech_routes`. On this base it delegates to the
-existing shared `DEVICE_TOKEN` **or channel-token** management check. Legacy auth
-cannot distinguish a shared-token device holder from management; this change
-neither fixes nor broadens that existing trust model. WS/offer JSON cannot alter
-speech settings. Announcement/button permissions remain at their existing entry
-points and do not grant speech configuration permissions.
+`http_server._authorize_speech_management` is the explicit authorization seam
+injected into `speech_http.attach_speech_routes`. PR60 reconciles merged PR58 with
+the scoped auth stack: the callback resolves a fresh owner session and checks the
+owner-only `speech.configure` operation for both global and per-device reads and
+writes. The shared handler declares its guarded boundary; all four routes are in
+the route inventory. Unknown/legacy/operator bearers receive 401; authenticated
+device and integration bearers receive 403. No channel-token fallback remains.
 
-Read-only inspection of the #45/#49 workstreams (`vauxr-auth-scopes`,
-`vauxr-auth-owner`, `vauxr-auth-enrollment`) found deny-by-default `Operation`
-policy, owner sessions and scoped device/integration roles. No auth files or
-branches were copied, changed, merged or rebased. Integration should:
+Owner middleware preserves exact configured Host/Origin, mode/proxy validation,
+CSRF on PATCH, and no-store responses. SpeechSettings uses same-origin `ownerFetch`
+with the HttpOnly session cookie and in-memory CSRF; it sends no bearer or inferred
+HTTP port. HTTP administration works without browser voice or microphone access.
+The operation is separate from the reserved, broader `server.manage` grant.
 
-- Map global speech read/write and registry readiness to owner `server.manage`
-  (or explicitly agreed narrower speech operations). That operation is currently
-  marked unshipped in the scopes branch; do not blindly inherit its 501 guard.
-- Map device speech read/write to owner `device.configure`, passing the device ID
-  as resource. `devices.list` alone must not grant configuration/readiness access.
-- Replace the injected legacy authorization callback with owner/session policy;
-  preserve its 401/403 distinction, transport boundary and session CSRF checks.
-  The callback may raise the appropriate aiohttp HTTP exception for denial.
-- Extend the upcoming route/operation allowlist explicitly: these routes use a
-  shared handler and must be classified by path and method. Deny device and
-  integration credentials access to speech settings. Do not keep the legacy
-  channel-token fallback after scoped auth lands.
-- Adapt the web component's fetch transport to the owner session/CSRF client at
-  integration time; this branch intentionally retains current bearer UI behavior.
+This is the required PR58/#46/#50 integration dependency, implemented and reported
+in PR60. Speech URLs, request/response fields, validation, persistence, readiness,
+provider selection and turn snapshots retain PR58's contracts. Devices/WS/offer
+input still cannot select speech configuration. No auth middleware is relaxed.
 
 ## Turn consistency and readiness limits
 

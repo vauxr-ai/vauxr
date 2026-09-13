@@ -9,9 +9,12 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+import auth
 import config
 import speech
+from auth_policy import Role
 from speech import Backend, SpeechStore
+from tests.auth_helpers import owner_headers, seed
 
 
 @pytest.fixture
@@ -19,6 +22,10 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setenv("DEVICE_TOKEN", "speech-test")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     config.reset_config()
+    monkeypatch.setenv("OWNER_HTTPS_ORIGIN", "https://owner.example")
+    monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
+    seed("speech-test", Role.DEVICE, "a")
+    seed("integration-test", Role.INTEGRATION, "channel")
     backends = (
         Backend("whisper", "stt", "whisper", "small", "127.0.0.1", 10300),
         Backend("parakeet", "stt", "parakeet-v3", "v3", "127.0.0.1", 10301),
@@ -97,7 +104,7 @@ async def test_http_management_auth_validation_and_isolation(store, monkeypatch)
             for method in ("GET", "PATCH"):
                 r = await client.request(method, path, json={"tts_backend": "kokoro"})
                 assert r.status == 401
-        headers = {"Authorization": "Bearer speech-test"}
+        headers = owner_headers(client)
         r = await client.patch("/api/devices/a/speech", headers=headers, json={"tts_backend": "kokoro"})
         assert r.status == 200
         body = await r.json()
@@ -108,10 +115,13 @@ async def test_http_management_auth_validation_and_isolation(store, monkeypatch)
         assert (await r.json())["effective"]["tts_backend"] == "piper"
         r = await client.patch("/api/speech", headers=headers, json={"url": "tcp://bad:1"})
         assert r.status == 400
-        # Existing channel-token management boundary is preserved, not reimplemented.
-        monkeypatch.setattr(channel_registry, "validate_channel_token", AsyncMock(return_value=object()))
-        r = await client.get("/api/speech", headers={"Authorization": "Bearer channel-test"})
-        assert r.status == 200
+        # Only owner sessions manage speech; paired roles and legacy tokens do not.
+        for token, status in (("speech-test", 403), ("integration-test", 403), ("channel-test", 401)):
+            for path in ("/api/speech", "/api/devices/a/speech"):
+                for method in ("GET", "PATCH"):
+                    r = await client.request(method, path, headers={"Authorization": f"Bearer {token}"},
+                                             json={"tts_backend": "piper"})
+                    assert r.status == status
 
 
 async def test_midturn_stt_to_multiple_tts_segments(store, monkeypatch):
@@ -143,7 +153,7 @@ async def test_midturn_stt_to_multiple_tts_segments(store, monkeypatch):
     ws = SimpleNamespace(closed=False, send_str=AsyncMock(), send_bytes=AsyncMock())
     channels = SimpleNamespace(get_active_channel=lambda: SimpleNamespace(type="openclaw-direct"))
     state = AppState(openclaw_client=object(), channel_server=channels)
-    ctx = ConnectionCtx()
+    ctx = ConnectionCtx(device_id="a", principal=auth.authenticate("speech-test"))
     await _voice_start(
         state, ws, ctx, {"device_id": "a", "token": "speech-test", "tts_backend": "kokoro", "voice": "bf"}
     )
@@ -337,7 +347,7 @@ async def test_announcement_outage_returns_503_and_error_frame(store, monkeypatc
     monkeypatch.setattr(button_dispatch, "synthesize", failed)
     async with TestClient(TestServer(make_http_app())) as client:
         response = await client.post(
-            "/api/devices/a/announce", json={"text": "hello"}, headers={"Authorization": "Bearer speech-test"}
+            "/api/devices/a/announce", json={"text": "hello"}, headers=owner_headers(client)
         )
         assert response.status == 503
     messages = [json.loads(call.args[0]) for call in ws.send_str.call_args_list]
@@ -463,3 +473,50 @@ async def test_realtime_rejected_turn_cannot_retry_resolution(store, monkeypatch
     await tts.on_turn_context_created("accepted")
     assert tts._selections["accepted"] == selected
     resolver.assert_called_once_with("a")
+
+
+@pytest.mark.parametrize("tls", [False, True])
+async def test_speech_owner_transport_and_csrf_before_provider_io(store, monkeypatch, tls):
+    import speech_http
+    from http_server import make_http_app
+    from owner_http import COOKIE, LAN_COOKIE, OWNER
+
+    origin = "https://owner.example" if tls else "http://192.168.10.20:8080"
+    monkeypatch.delenv("OWNER_HTTPS_ORIGIN", raising=False)
+    if not tls:
+        monkeypatch.delenv("OWNER_TRUSTED_PROXIES", raising=False)
+    monkeypatch.setenv("OWNER_HTTPS_ORIGIN" if tls else "OWNER_HTTP_ORIGIN", origin)
+    ready = AsyncMock(return_value="ready")
+    monkeypatch.setattr(speech_http, "readiness", ready)
+    async with TestClient(TestServer(make_http_app())) as client:
+        owner = client.app[OWNER]
+        claim = owner.claim(owner.console_claim())
+        owner.acknowledge(claim["save_acknowledgement"], True)
+        cookie, session = owner.login(claim["operator_token"])
+        headers = {"Host": origin.split("://")[1], "Origin": origin,
+                   "Cookie": f"{COOKIE if tls else LAN_COOKIE}={cookie}", "X-CSRF-Token": session.csrf}
+        if tls:
+            headers["X-Forwarded-Proto"] = "https"
+        for path in ("/api/speech", "/api/devices/a/speech"):
+            for method in ("GET", "HEAD", "PATCH"):
+                response = await client.request(method, path, headers=headers, json={"tts_backend": "kokoro"})
+                assert response.status == 200
+                assert response.headers["Cache-Control"] == "no-store"
+                assert "Access-Control-Allow-Origin" not in response.headers
+            before = store.path.read_bytes()
+            ready.reset_mock()
+            for overrides in ({"Host": "evil.example"}, {"Origin": "http://evil.example"},
+                              {"X-CSRF-Token": "wrong"}, {"X-CSRF-Token": ""},
+                              {"Origin": ""}, {"X-Forwarded-Proto": "http"}):
+                response = await client.patch(path, headers={**headers, **overrides}, json={"tts_backend": "piper"})
+                assert response.status == 403
+            # The generated operator token itself never substitutes for a cookie.
+            response = await client.patch(path, headers={"Authorization": f"Bearer {claim['operator_token']}"},
+                                          json={"tts_backend": "piper"})
+            assert response.status == 401
+            assert store.path.read_bytes() == before
+            ready.assert_not_called()
+        owner.logout(cookie)
+        ready.reset_mock()
+        assert (await client.get("/api/speech", headers=headers)).status == 401
+        ready.assert_not_called()

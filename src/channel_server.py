@@ -10,11 +10,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable, TypedDict
+from collections.abc import Callable
+from typing import Any, TypedDict
 
 from aiohttp import WSMsgType, web
 
+import auth_connections
 import channel_registry
+from auth import authenticate, current
+from auth_policy import Operation, Principal, allowed, audit_denial
 
 log = logging.getLogger("vauxr.channel_server")
 
@@ -28,12 +32,14 @@ class DeviceResponseListener(TypedDict):
 
 
 class _Connection:
-    __slots__ = ("ws", "channel", "authenticated")
+    __slots__ = ("authenticated", "authority", "channel", "principal", "ws")
 
     def __init__(self, ws: web.WebSocketResponse) -> None:
         self.ws: web.WebSocketResponse = ws
         self.channel: channel_registry.Channel | None = None
         self.authenticated = False
+        self.principal: Principal | None = None
+        self.authority: auth_connections.Connection | None = None
 
 
 async def _send_json(ws: web.WebSocketResponse, obj: dict[str, Any]) -> None:
@@ -62,7 +68,7 @@ class ChannelServer:
         if active.type == "openclaw-direct":
             return True
         conn = self._connections.get(active.id)
-        return conn is not None and not conn.ws.closed
+        return conn is not None and not conn.ws.closed and current(conn.principal)
 
     def send_transcript(self, device_id: str, text: str) -> bool:
         active = channel_registry.get_active()
@@ -72,7 +78,7 @@ class ChannelServer:
         if active.type == "openclaw-direct":
             return False
         conn = self._connections.get(active.id)
-        if conn is None or conn.ws.closed:
+        if conn is None or conn.ws.closed or not current(conn.principal):
             log.warning("Active channel %s not connected — dropping transcript", active.name)
             return False
 
@@ -89,7 +95,7 @@ class ChannelServer:
                 },
             )
         )
-        log.info("Sent transcript to %s: %r", active.name, text)
+        log.info("Sent transcript")
         return True
 
     def add_response_listener(self, device_id: str, listener: DeviceResponseListener) -> None:
@@ -118,7 +124,7 @@ class ChannelServer:
         async def auth_timeout() -> None:
             try:
                 await asyncio.wait_for(auth_done.wait(), timeout=_AUTH_TIMEOUT_S)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if not conn.authenticated:
                     await _send_json(
                         ws,
@@ -149,6 +155,7 @@ class ChannelServer:
                         await self._handle_auth(conn, payload.get("token", ""))
                         auth_done.set()
                     else:
+                        audit_denial(False)
                         await _send_json(
                             ws,
                             {
@@ -161,6 +168,7 @@ class ChannelServer:
 
                 await self._handle_authenticated_message(conn, payload)
         finally:
+            auth_connections.release(conn.authority)
             auth_done.set()
             timeout_task.cancel()
             if conn.authenticated and conn.channel is not None:
@@ -173,16 +181,47 @@ class ChannelServer:
                 log.info("unauthenticated channel connection closed")
 
     async def _handle_auth(self, conn: _Connection, token: str) -> None:
-        channel = await channel_registry.validate_channel_token(token)
-        if channel is None:
+        principal = authenticate(token)
+        channel = channel_registry.get_by_id(principal.subject) if principal else None
+        if not allowed(principal, Operation.CHANNEL_CONNECT) or channel is None:
+            audit_denial(principal is not None)
             await _send_json(
                 conn.ws,
-                {"type": "error", "code": "UNAUTHORIZED", "message": "Invalid channel token"},
+                {"type": "error", "code": "UNAUTHORIZED" if principal is None else "FORBIDDEN",
+                 "message": "Access denied"},
             )
             await conn.ws.close()
             return
+        conn.principal = principal
         conn.authenticated = True
         conn.channel = channel
+
+        teardown: list[auth_connections.Teardown] = []
+
+        async def close_revoked() -> None:
+            if not teardown:
+                teardown.append(auth_connections.Teardown(conn.ws.close))
+                if self._connections.get(channel.id) is conn:
+                    self._connections.pop(channel.id, None)
+                    if channel_registry.get_active() == channel:
+                        for device_id, listener in list(self._response_listeners.items()):
+                            async def notify(device_id=device_id, listener=listener) -> None:
+                                listener["on_error"](device_id, "integration_revoked")
+
+                            teardown.append(auth_connections.Teardown(notify))
+                        import device_registry
+                        from config import get_config
+
+                        for device in device_registry.get_all():
+                            device_registry.abort_active_turn(device.id)
+                            if get_config().realtime.enabled:
+                                from realtime_session import get_manager
+
+                                teardown.append(auth_connections.Teardown(
+                                    lambda device_id=device.id: get_manager().stop(device_id)))
+            await auth_connections.run_teardowns(teardown)
+
+        conn.authority = auth_connections.retain(principal, close_revoked)
 
         existing = self._connections.get(channel.id)
         if existing is not None and existing is not conn:
@@ -199,6 +238,21 @@ class ChannelServer:
         log.info("channel authenticated: %s (%s)", channel.name, channel.id)
 
     async def _handle_authenticated_message(self, conn: _Connection, msg: dict[str, Any]) -> None:
+        active = channel_registry.get_active()
+        authenticated = current(conn.principal)
+        if (not authenticated or not allowed(conn.principal, Operation.VOICE_RESPONSE)
+                or conn.channel is None or active is None or active.id != conn.channel.id
+                or self._connections.get(conn.channel.id) is not conn
+                or not isinstance(msg.get("type"), str)
+                or msg.get("type") not in {
+                    "channel.response.delta", "channel.response.end", "channel.response.error"
+                }):
+            audit_denial(authenticated)
+            await _send_json(conn.ws, {"type": "error",
+                                      "code": "FORBIDDEN" if authenticated else "UNAUTHORIZED",
+                                      "message": "Access denied"})
+            await conn.ws.close()
+            return
         device_id = msg.get("deviceId")
         run_id = msg.get("runId")
         msg_type = msg.get("type")
