@@ -1,6 +1,7 @@
 """Owner contract v1. Random credentials only; console authority is local OS access."""
 
 import hmac
+import ipaddress
 import os
 import re
 import secrets
@@ -27,14 +28,42 @@ def environment_token() -> str | None:
     return token
 
 
-def trusted_origin(value: str) -> str:
+def trusted_origin(value: str, scheme: str = "https") -> str:
+    """Require canonical ASCII DNS/IP authority; never derive trust from a request."""
     parsed = urlsplit(value)
-    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
-            or parsed.path or parsed.query or parsed.fragment or value != f"https://{parsed.netloc}"):
-        raise ValueError("OWNER_HTTPS_ORIGIN must be an exact HTTPS origin without path or userinfo")
-    # Force validation of malformed port syntax.
-    _ = parsed.port
+    error = "Owner origin must be an exact canonical " + scheme.upper() + " origin"
+    if (parsed.scheme != scheme or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path or parsed.query or parsed.fragment or value != f"{scheme}://{parsed.netloc}"):
+        raise ValueError(error)
+    host = parsed.hostname
+    if "%" in host:
+        raise ValueError(error)
+    try:
+        address = ipaddress.ip_address(host)
+        canonical_host = f"[{address}]" if address.version == 6 else str(address)
+    except ValueError:
+        if len(host) > 253 or not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                                      for label in host.split(".")):
+            raise ValueError(error) from None
+        canonical_host = host
+    port = parsed.port  # Also rejects invalid/out-of-range ports.
+    authority = canonical_host + (f":{port}" if port is not None else "")
+    if parsed.netloc != authority or port == 0:
+        raise ValueError(error)
     return value
+
+
+def configured_origin() -> str:
+    """Presence of TLS settings selects TLS, even if empty or malformed."""
+    if "OWNER_HTTPS_ORIGIN" in os.environ or "OWNER_TRUSTED_PROXIES" in os.environ:
+        origin = trusted_origin(os.environ.get("OWNER_HTTPS_ORIGIN", ""))
+        raw = os.environ.get("OWNER_TRUSTED_PROXIES")
+        if raw is not None:
+            # Empty lists/entries are configuration mistakes, not LAN selection.
+            for value in raw.split(","):
+                ipaddress.ip_network(value.strip())
+        return origin
+    return trusted_origin(os.environ.get("OWNER_HTTP_ORIGIN", "http://localhost:8080"), "http")
 
 
 class OwnerError(Exception):
@@ -49,12 +78,19 @@ class Session:
 
 
 class OwnerAuth:
-    def __init__(self, store: CredentialStore, override: str | None = None) -> None:
+    def __init__(self, store: CredentialStore, override: str | None = None, *, origin: str = "") -> None:
         if override is not None and not TOKEN_PATTERN.fullmatch(override):
             raise ValueError("Invalid OPERATOR_TOKEN; use vauxr-owner generate-token")
         self.store = store
         self.override = verifier(override) if override is not None else None
         self.sessions: dict[str, Session] = {}
+        self._origin = origin
+
+    def bind_origin(self, origin: str) -> None:
+        """Transport changes discard all sessions, including an A -> B -> A transition."""
+        if origin != self._origin:
+            self.sessions.clear()
+            self._origin = origin
 
     def _state(self) -> dict:
         state = self.store.owner

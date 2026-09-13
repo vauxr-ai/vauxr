@@ -7,41 +7,61 @@ It implements backend owner authentication and a local-console CLI. Browser UI
 belongs to #50; device/integration enrollment and credential lifecycle remain
 #48/#49/#51. This is not a deployable end-to-end auth release by itself.
 
-## Transport prerequisite and configuration
+## Transport modes and configuration
 
-Establish browser-trusted HTTPS **before entering any claim code or token**.
-Configure `OWNER_HTTPS_ORIGIN` to one exact origin, for example
-`https://voice.example.test` (synthetic name). No trailing slash, path, userinfo,
-query or fragment is accepted. An explicit port must match the public Host header.
-This names an already trusted endpoint; it neither obtains certificates nor makes
-DNS resolve. No auth environment variables are required to start the server.
-With no HTTPS origin configured, owner HTTP endpoints and cookie requests fail
-closed with 403. Startup never prints a claim or everyday credential.
+LAN HTTP is the supported default; no domain, certificate, proxy or managed service
+is required. Set `OWNER_HTTP_ORIGIN` to the exact intended local endpoint, for
+example `http://192.168.10.20:8080` or `http://voice.lan:8080`. If absent, the fixed
+origin is `http://localhost:8080` (local browser only); remote LAN use requires the
+explicit local address/name. Neither Host nor discovery nor forwarding headers
+select the origin. HTTP supplies no cryptographic server authentication: select
+the intended endpoint and trust the LAN and setup surface. An on-path LAN attacker
+can observe or modify credentials, cookies and browser code. Console claim codes
+do not encrypt traffic or authenticate the server.
 
-The server currently exposes HTTP listeners. For these listeners, configure
+Opt into hardened TLS by setting `OWNER_HTTPS_ORIGIN`, for example
+`https://voice.example.test`. Establish browser-trusted HTTPS before submitting
+credentials in this mode; never bypass certificate warnings. HTTPS configuration
+takes precedence over `OWNER_HTTP_ORIGIN`. The presence of either
+`OWNER_HTTPS_ORIGIN` or `OWNER_TRUSTED_PROXIES`, even empty, selects TLS validation.
+Malformed/empty HTTPS origins, proxy entries, or proxies without an HTTPS origin
+fail startup and console setup. Missing proxy trust permits only direct TLS;
+it never admits plaintext. TLS failure never selects LAN or retries HTTP.
+
+Both origin settings require one canonical ASCII origin: lowercase DNS name or
+canonical IP literal (bracketed IPv6), optional numeric port, no trailing slash,
+path, userinfo, query, fragment, zone ID or whitespace. Host must match the exact
+configured authority, including an explicitly configured port. All owner requests
+must use the configured scheme. LAN rejects `Forwarded` and every
+`X-Forwarded-Proto` header; it accepts only direct HTTP. No auth environment
+variable is required to start the server. Startup never prints credentials.
+
+The server currently exposes HTTP listeners. In TLS mode configure
 `OWNER_TRUSTED_PROXIES` as comma-separated IP networks (prefer exact /32 or /128
-proxy addresses). The immediate TCP peer must match that allowlist, the proxy
-must **replace** `X-Forwarded-Proto` with exactly one `https` value, preserve the
-configured public `Host`, and strip `Forwarded`. Do not expose the backend ports
-to clients: enforce an OS/network firewall or private container network so only
-the proxy can reach them. The proxy must accept credentials only on its trusted
-HTTPS listener; never forward HTTP credential requests. Redirecting a request
-that already contains a credential does not undo insecure transmission. Configure
-proxy access/error logs to omit authorization, cookies, bodies and query strings.
+proxy addresses). The immediate TCP peer must match, the proxy must replace
+`X-Forwarded-Proto` with exactly one `https` value, preserve the configured Host,
+and strip `Forwarded`. Restrict backend access to that proxy through the network
+boundary. The proxy must never forward plaintext credential submissions; a
+redirect cannot undo prior exposure. Omit credentials, cookies, bodies and query
+strings from proxy logs. A direct TLS aiohttp transport is also recognized without
+forwarding headers; this package adds no server certificate configuration.
+`X-Forwarded-Host` and `X-Forwarded-For` never establish trust. Forwarding chains,
+duplicate proto values and `Forwarded` fail. The trusted proxy and private backend
+hop are part of the TLS trust boundary.
 
-A direct TLS aiohttp transport is also recognized by the HTTP boundary, without
-forwarding headers; this package does not add certificate configuration to the
-server entry point. `X-Forwarded-Host`, `X-Forwarded-For` and forwarding chains do
-not establish trust. `Forwarded` and duplicate/comma-separated proto values fail.
-A compromised trusted proxy can assert TLS; that proxy and its private backend
-network are explicitly within the trust boundary. No arbitrary-header or HTTP
-fallback exists for owner auth. Device WSS/realtime/media deployment is governed
-by the separate TLS and downstream transport packages.
+Restart the single server after configuration changes. Sessions are process-local
+and discarded on every restart, so mode/origin changes, including A -> B -> A,
+require login again with the saved operator token. The internal origin-binding
+operation also clears all sessions before rebinding; live environment mutation
+is unsupported. These transitions do not rotate the operator token or modify
+recovery/override state. Returning to LAN requires explicitly removing both TLS
+settings and selecting the intended HTTP origin; reconfigure clients explicitly.
 
-PR54's TLS/server-trust decision record is provisional. Managed DNS/service
-ownership, LAN DNS and browser/router behavior are unresolved. This package does
-not choose a provider, provision DNS, issue certificates, or prove clean-browser,
-clean-install, phone, speaker hardware, or end-to-end media trust.
+The #45 decision is optional TLS with supported LAN HTTP/WS. This owner-only
+implementation does not add enrollment, device transport or UI mode support,
+provision DNS, issue certificates, or prove browser/proxy/hardware acceptance.
+Plain non-loopback LAN HTTP does not promise browser microphone capture; that
+secure-context UI and browser voice work remains downstream.
 
 ## Local console and generated everyday login
 
@@ -53,7 +73,7 @@ vauxr-owner claim
 # Source checkout alternative: PYTHONPATH=src python3 -m owner_cli claim
 ```
 
-The command requires a configured HTTPS origin and prints a random 192-bit,
+The command validates the same configured LAN/TLS origin and prints a random 192-bit,
 5-minute, single-use claim code. It never runs implicitly at startup. OS console
 access is the authority: the console is not a remotely accessible setup endpoint.
 Protect shell/container access as owner-equivalent. Only this explicit command can
@@ -101,8 +121,8 @@ server processes with conflicting environments are unsupported.
 
 ## HTTP endpoints
 
-All routes below require the HTTPS boundary. Mutations additionally require
-`Origin` exactly equal to `OWNER_HTTPS_ORIGIN`, `Content-Type: application/json`,
+All routes below require the selected mode and exact Host boundary. Mutations additionally require
+`Origin` exactly equal to the selected configured origin, `Content-Type: application/json`,
 a JSON object with exactly the listed fields, and a body no larger than 4096 bytes.
 Cross-origin and `Origin: null` requests are rejected. Secrets in URL query strings
 are rejected. Auth responses (including errors) use `Cache-Control: no-store` and
@@ -117,9 +137,14 @@ are rejected. Auth responses (including errors) use `Cache-Control: no-store` an
 | GET session | session cookie | `{version:1, csrf_token, expires_at}`; 401 if absent/invalid/revoked/expired |
 | POST logout | `{}` plus session cookie and `X-CSRF-Token` | `{version:1, logged_out:true}`; revoke that session and delete cookie |
 
-The cookie is `__Host-vauxr_owner`, Secure, HttpOnly, SameSite=Strict, Path=/,
-without Domain; its Max-Age is 43200 seconds. Absolute server-side expiry is 12
-hours with no sliding refresh. Cookie plaintext exists only in the response/client;
+TLS uses `__Host-vauxr_owner` with Secure; LAN uses the distinct unprefixed
+`vauxr_owner` without Secure. Both are host-only (no Domain), HttpOnly,
+SameSite=Strict, Path=/, with Max-Age 43200 seconds. The opposite mode's cookie
+is rejected, including when both cookies are supplied. Logout revokes the session
+and expires the selected mode's cookie with its matching attributes. Clients must
+clear stale cookies when explicitly switching modes; HTTP cannot clear a Secure
+`__Host-` cookie. Renaming/replaying an old cookie after restart cannot revive it.
+Absolute server-side expiry is 12 hours with no sliding refresh. Cookie plaintext exists only in the response/client;
 the in-memory session table keys are SHA-256 verifiers. Sessions are bounded to 100
 per process, expire on restart, and are checked against the durable generation on
 every authenticated HTTP request. Logout revokes one session; recovery/env change
@@ -187,8 +212,8 @@ For downstream #48/#49/#51, `owner_http.session_principal(request)` resolves the
 session to `Principal(Role.OWNER, "owner", session.generation)` with an empty
 `credential_generation`; use the same middleware and
 foundation operation policy for new HTTP handlers. `owner_middleware` enforces the
-transport/Origin/CSRF boundary for all requests carrying the cookie, including new
-routes. New handlers still need the foundation declared authorization boundary and
+selected-mode transport/Host/Origin/CSRF boundary for requests carrying either
+owner cookie, including new routes. New handlers still need the foundation declared authorization boundary and
 an explicit policy check; adding a route is not authorization. Session generations
 are **not credential IDs in the paired-client collection** and must not be sent to
 socket credential validators or `auth.current()`: that function intentionally
@@ -206,8 +231,13 @@ credential generation by ID. HTTP bearer requests authenticate the supplied toke
 afresh; owner bearer records remain rejected. Removing/reissuing a client ID with
 a different verifier cannot revive its old principal and does not revoke owner
 sessions; owner recovery revokes sessions while preserving current client identities.
-No enrollment/lifecycle secret belongs in owner
-status or pairing approval responses.
+For lifecycle #49, reuse this mode-aware owner HTTP boundary and resolve each
+owner session afresh. `secure_request()` retains its historical name but validates
+the selected HTTP or HTTPS mode; it is not a universal bearer/WS transport gate.
+Lifecycle/enrollment must separately bind their state/transcripts to the configured
+origin and invalidate stale approvals on origin/mode transitions. No schema,
+enrollment/lifecycle, paired-client or device transport implementation is changed
+here. No enrollment/lifecycle secret belongs in owner status or pairing approval responses.
 
 ## Recovery and validation limits
 
@@ -222,5 +252,6 @@ credentials. Repeat console recovery to obtain a fresh code after storage is fix
 Focused validation: `python3 -m pytest -q tests/test_owner_auth.py`. Full backend:
 `python3 -m pytest -q`. Tests cover sessions, CSRF, untrusted proxies, atomic failures,
 concurrent threads/processes, restart and override removal. They use synthetic
-credentials and a synthetic configured proxy boundary. They do not replace the
-TLS package's real browser/device or clean-install acceptance work.
+credentials, a non-loopback LAN authority over a local test transport, and a
+synthetic configured HTTPS proxy boundary. They do not establish real browser
+cookie acceptance, deployed proxy trust, hardware or clean-install acceptance.

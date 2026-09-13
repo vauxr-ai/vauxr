@@ -16,7 +16,7 @@ from auth_policy import Role
 from auth_store import Credential, CredentialStore, verifier
 from http_server import make_http_app
 from owner_auth import OwnerAuth, OwnerError, environment_token, trusted_origin
-from owner_http import COOKIE, OWNER
+from owner_http import COOKIE, LAN_COOKIE, OWNER
 
 # Synthetic fixtures only: deliberately reproducible, never production credentials.
 TOKEN_A = "vx_op_" + "A" * 43
@@ -31,6 +31,7 @@ def isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("OWNER_HTTPS_ORIGIN", ORIGIN)
     monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
+    monkeypatch.delenv("OWNER_HTTP_ORIGIN", raising=False)
     monkeypatch.delenv("OPERATOR_TOKEN", raising=False)
     monkeypatch.delenv("DEVICE_TOKEN", raising=False)
     yield
@@ -266,37 +267,52 @@ def test_origin_configuration_rejected(origin):
         trusted_origin(origin)
 
 
-async def test_http_complete_session_csrf_and_logout():
+@pytest.mark.parametrize("tls", [False, True])
+async def test_http_complete_session_csrf_and_logout(monkeypatch, tls):
+    # Non-loopback public authority over a local test transport; not browser acceptance.
+    origin = ORIGIN if tls else "http://192.168.10.20:8080"
+    base_headers = HEADERS if tls else {"Host": "192.168.10.20:8080", "Origin": origin}
+    name = COOKIE if tls else LAN_COOKIE
+    if not tls:
+        monkeypatch.delenv("OWNER_HTTPS_ORIGIN")
+        monkeypatch.delenv("OWNER_TRUSTED_PROXIES")
+        monkeypatch.setenv("OWNER_HTTP_ORIGIN", origin)
     async with TestClient(TestServer(make_http_app())) as client:
         service = client.app[OWNER]
         code = service.console_claim()
-        response = await client.post("/api/auth/claim", headers=HEADERS, json={"code": code})
+        response = await client.post("/api/auth/claim", headers=base_headers, json={"code": code})
         assert response.status == 200
         assert response.headers["Cache-Control"] == "no-store"
         assert "Access-Control-Allow-Origin" not in response.headers
         result = await response.json()
         token = result["operator_token"]
-        assert (await client.post("/api/auth/login", headers=HEADERS,
+        assert (await client.post("/api/auth/login", headers=base_headers,
                                   json={"operator_token": token})).status == 400
-        assert (await client.post("/api/auth/save", headers=HEADERS,
+        assert (await client.post("/api/auth/save", headers=base_headers,
                                   json={"saved": True, "save_acknowledgement": result["save_acknowledgement"]}
                                   )).status == 200
-        response = await client.post("/api/auth/login", headers=HEADERS, json={"operator_token": token})
+        response = await client.post("/api/auth/login", headers=base_headers, json={"operator_token": token})
         body = await response.json()
-        cookie = response.cookies[COOKIE]
-        assert cookie["secure"] and cookie["httponly"] and cookie["samesite"] == "Strict"
+        cookie = response.cookies[name]
+        assert bool(cookie["secure"]) == tls
+        assert cookie["httponly"] and cookie["samesite"] == "Strict"
         assert cookie["path"] == "/" and not cookie["domain"] and int(cookie["max-age"]) == 43200
-        headers = {**HEADERS, "Cookie": f"{COOKIE}={cookie.value}"}
+        headers = {**base_headers, "Cookie": f"{name}={cookie.value}"}
+        assert (await client.get("/api/auth/session", headers=headers)).status == 200
         assert (await client.get("/api/devices", headers=headers)).status == 200
         assert (await client.post("/api/auth/logout", headers=headers, json={})).status == 403
         assert (await client.patch("/api/devices/missing", headers=headers, json={})).status == 403
         headers["X-CSRF-Token"] = body["csrf_token"]
         assert (await client.patch("/api/devices/missing", headers=headers, json={})).status == 404
-        assert (await client.post("/api/auth/logout", headers=headers, json={})).status == 200
+        response = await client.post("/api/auth/logout", headers=headers, json={})
+        assert response.status == 200
+        cleared = response.cookies[name]
+        assert cleared["max-age"] == "0" and cleared["path"] == "/" and not cleared["domain"]
+        assert bool(cleared["secure"]) == tls and cleared["httponly"] and cleared["samesite"] == "Strict"
         assert (await client.get("/api/auth/session", headers=headers)).status == 401
         assert (await client.get("/api/devices", headers=headers)).status == 401
         # Everyday token is never a transport/admin bearer substitute.
-        assert (await client.get("/api/devices", headers={**HEADERS, "Authorization": f"Bearer {token}"})
+        assert (await client.get("/api/devices", headers={**base_headers, "Authorization": f"Bearer {token}"})
                 ).status == 401
 
 
@@ -316,9 +332,12 @@ async def test_untrusted_transport_rejected_before_claim(changes):
 
 
 async def test_no_origin_or_untrusted_proxy_fails_closed(monkeypatch):
-    for origin, proxies in [("", "127.0.0.1/32"), (ORIGIN, "192.0.2.1/32")]:
+    for origin, proxies in [(ORIGIN, "192.0.2.1/32"), (ORIGIN, None)]:
         monkeypatch.setenv("OWNER_HTTPS_ORIGIN", origin)
-        monkeypatch.setenv("OWNER_TRUSTED_PROXIES", proxies)
+        if proxies is None:
+            monkeypatch.delenv("OWNER_TRUSTED_PROXIES", raising=False)
+        else:
+            monkeypatch.setenv("OWNER_TRUSTED_PROXIES", proxies)
         async with TestClient(TestServer(make_http_app())) as client:
             response = await client.get("/api/auth/status", headers=HEADERS)
             assert response.status == 403
@@ -598,3 +617,159 @@ def test_nested_shared_transaction_and_owner_write_guard(tmp_path):
         with owner.store.transaction():
             assert owner.store.owner["mode"] == "recovery"
     assert CredentialStore(owner.store.path).owner["mode"] == "recovery"
+
+
+@pytest.mark.parametrize("value", ["http://LAN:8080", "http://lan:", "http://lan:08080",
+    "http://lan:0", "http://lan:65536", "http://lan/", "http://lan?", "http://lan#",
+    "http://user@lan", "http://lan\\evil", "http://lan.", "http://a..b", "http://a b",
+    "http://lan\n", "http://[fe80::1%eth0]", "http://-lan", "http://lan_"])
+def test_lan_origin_must_be_canonical(value):
+    with pytest.raises(ValueError):
+        trusted_origin(value, "http")
+
+
+@pytest.mark.parametrize("https,proxies", [("", None), ("http://lan:8080", None),
+    ("https://lan/", None), (None, "127.0.0.1/32"), (ORIGIN, ""),
+    (ORIGIN, "bogus"), (ORIGIN, "127.0.0.1/32,"), (None, "")])
+def test_tls_configuration_errors_never_select_lan(monkeypatch, https, proxies):
+    monkeypatch.setenv("OWNER_HTTP_ORIGIN", "http://192.168.10.20:8080")
+    for key, value in [("OWNER_HTTPS_ORIGIN", https), ("OWNER_TRUSTED_PROXIES", proxies)]:
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
+    with pytest.raises(ValueError):
+        make_http_app()
+    with pytest.raises(ValueError):
+        owner_auth.configured_origin()  # Console uses exactly the same selection.
+
+
+@pytest.mark.parametrize("changes", [{"Host": "evil.example"}, {"Origin": "http://evil.example"},
+    {"Origin": None}, {"Origin": "null"}, {"X-Forwarded-Proto": "https"},
+    {"X-Forwarded-Proto": "http"}, {"Forwarded": "proto=http"},
+    {"Host": "evil.example", "X-Forwarded-Host": "192.168.10.20:8080"}])
+async def test_lan_spoofed_boundary_does_not_consume_claim(monkeypatch, changes):
+    monkeypatch.delenv("OWNER_HTTPS_ORIGIN")
+    monkeypatch.delenv("OWNER_TRUSTED_PROXIES")
+    monkeypatch.setenv("OWNER_HTTP_ORIGIN", "http://192.168.10.20:8080")
+    headers = {"Host": "192.168.10.20:8080", "Origin": "http://192.168.10.20:8080"}
+    headers = {key: value for key, value in {**headers, **changes}.items() if value is not None}
+    async with TestClient(TestServer(make_http_app())) as client:
+        owner = client.app[OWNER]
+        code = owner.console_claim()
+        assert (await client.post("/api/auth/claim", headers=headers, json={"code": code})).status == 403
+        assert owner.claim(code)["save_required"]
+
+
+async def test_fixed_default_origin_cannot_be_selected_by_host(monkeypatch):
+    monkeypatch.delenv("OWNER_HTTPS_ORIGIN")
+    monkeypatch.delenv("OWNER_TRUSTED_PROXIES")
+    assert owner_auth.configured_origin() == "http://localhost:8080"
+    async with TestClient(TestServer(make_http_app())) as client:
+        assert (await client.get("/api/auth/status", headers={"Host": "localhost:8080"})).status == 200
+        assert (await client.get("/api/auth/status", headers={"Host": "192.168.10.20:8080"})).status == 403
+
+
+@pytest.mark.parametrize("tls", [False, True])
+async def test_opposite_mode_cookie_rejected_even_with_valid_session_value(monkeypatch, tls):
+    headers = HEADERS.copy()
+    wrong_name = LAN_COOKIE
+    if not tls:
+        monkeypatch.delenv("OWNER_HTTPS_ORIGIN")
+        monkeypatch.delenv("OWNER_TRUSTED_PROXIES")
+        monkeypatch.setenv("OWNER_HTTP_ORIGIN", "http://owner.example")
+        headers = {"Host": "owner.example", "Origin": "http://owner.example"}
+        wrong_name = COOKIE
+    async with TestClient(TestServer(make_http_app())) as client:
+        owner = client.app[OWNER]
+        cookie, _ = owner.login(claim_saved(owner))
+        headers["Cookie"] = f"{wrong_name}={cookie}"
+        for path in ("/api/auth/session", "/api/devices"):
+            assert (await client.get(path, headers=headers)).status == 403
+
+
+@pytest.mark.parametrize("next_origin", ["http://other.example", "https://owner.example"])
+def test_origin_transition_discards_sessions_and_capacity_without_changing_owner(tmp_path, next_origin):
+    owner = service(tmp_path)
+    owner.bind_origin("http://owner.example")
+    token = claim_saved(owner)
+    cookies = [owner.login(token)[0] for _ in range(100)]
+    state = owner.store.owner.copy()
+    owner.bind_origin(next_origin)
+    # Leave old cookies unexamined until after A -> B -> A.
+    owner.bind_origin("http://owner.example")
+    assert owner.session(owner.login(token)[0])
+    assert all(owner.session(cookie) is None for cookie in cookies)
+    assert owner.store.owner == state
+
+
+@pytest.mark.parametrize("origins", [
+    ["http://owner.example", "https://owner.example", "http://owner.example"],
+    ["https://owner.example", "http://owner.example", "https://owner.example"],
+    ["http://owner.example", "http://other.example", "http://owner.example"],
+    ["https://owner.example", "https://other.example", "https://owner.example"],
+])
+async def test_restart_origin_transitions_require_fresh_login(monkeypatch, origins):
+    old_cookie = None
+    token = None
+    generation = None
+    for origin in origins:
+        tls = origin.startswith("https://")
+        for key in ("OWNER_HTTPS_ORIGIN", "OWNER_TRUSTED_PROXIES", "OWNER_HTTP_ORIGIN"):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("OWNER_HTTPS_ORIGIN" if tls else "OWNER_HTTP_ORIGIN", origin)
+        headers = {"Host": origin.split("://")[1], "Origin": origin}
+        if tls:
+            monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
+            headers["X-Forwarded-Proto"] = "https"
+        name = COOKIE if tls else LAN_COOKIE
+        async with TestClient(TestServer(make_http_app())) as client:
+            owner = client.app[OWNER]
+            if token is None:
+                token = claim_saved(owner)
+                generation = owner.store.owner["generation"]
+            else:
+                # Even copying the old secret into the destination cookie name fails.
+                stale = {**headers, "Cookie": f"{name}={old_cookie}"}
+                assert (await client.get("/api/auth/session", headers=stale)).status == 401
+                assert (await client.get("/api/devices", headers=stale)).status == 401
+            response = await client.post("/api/auth/login", headers=headers, json={"operator_token": token})
+            assert response.status == 200
+            fresh = {**headers, "Cookie": f"{name}={response.cookies[name].value}"}
+            assert (await client.get("/api/devices", headers=fresh)).status == 200
+            assert owner.store.owner["generation"] == generation
+            if old_cookie is None:
+                old_cookie = response.cookies[name].value
+
+
+@pytest.mark.parametrize("tls", [False, True])
+@pytest.mark.parametrize("header", ["Origin", "X-Forwarded-Proto"])
+async def test_duplicate_boundary_headers_fail_closed(monkeypatch, tls, header):
+    headers = HEADERS.copy()
+    if not tls:
+        monkeypatch.delenv("OWNER_HTTPS_ORIGIN")
+        monkeypatch.delenv("OWNER_TRUSTED_PROXIES")
+        monkeypatch.setenv("OWNER_HTTP_ORIGIN", "http://owner.example")
+        headers = {"Host": "owner.example", "Origin": "http://owner.example"}
+    pairs = list(headers.items()) + [(header, headers.get(header, "http"))]
+    async with TestClient(TestServer(make_http_app())) as client:
+        assert (await client.post("/api/auth/login", headers=pairs,
+                                  json={"operator_token": TOKEN_A})).status == 403
+
+
+@pytest.mark.parametrize("tls", [False, True])
+def test_direct_tls_boundary_retained_and_never_accepted_as_lan(tls):
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from owner_http import ORIGIN as ORIGIN_KEY
+    from owner_http import PROXIES, secure_request
+
+    app = web.Application()
+    app[ORIGIN_KEY] = "https://owner.example" if tls else "http://owner.example"
+    app[PROXIES] = ()
+    for extra, expected in [({}, tls), ({"X-Forwarded-Proto": "https"}, False),
+                            ({"Forwarded": "proto=https"}, False)]:
+        request = make_mocked_request("GET", "https://owner.example/api/auth/status",
+                                      headers={"Host": "owner.example", **extra}, app=app)
+        assert secure_request(request) == expected
