@@ -10,6 +10,12 @@
 
 This repo comes pre-configured as a Docker stack that ships with [Wyoming](https://github.com/rhasspy/wyoming)-compatible Whisper (STT) and Piper (TTS) out of the box. Use it as-is, or as a blueprint for your own implementation.
 
+Speech selection also supports operator-configured Wyoming STT/TTS deployments
+with opaque model and voice IDs. Use `STT_URL`, `TTS_URL`, and `TTS_VOICE` for
+server defaults (legacy environment names remain supported), or configure a
+catalog for global/device selections. See [speech settings](docs/speech-settings.md)
+for precedence, examples, and protocol limitations.
+
 ## How it works
 
 ```

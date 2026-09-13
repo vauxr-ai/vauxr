@@ -19,12 +19,16 @@ services:
       piper:
         condition: service_healthy
     environment:
-      WHISPER_URL: tcp://127.0.0.1:10300
-      PIPER_URL: tcp://127.0.0.1:10200
+      # Neutral values win in config.py; empty values use legacy names below.
+      STT_URL: ${STT_URL:-}
+      TTS_URL: ${TTS_URL:-}
+      TTS_VOICE: ${TTS_VOICE:-}
+      WHISPER_URL: ${WHISPER_URL:-tcp://127.0.0.1:10300}
+      PIPER_URL: ${PIPER_URL:-tcp://127.0.0.1:10200}
       OPENCLAW_URL: ${OPENCLAW_URL:-}
       OPENCLAW_TOKEN: ${OPENCLAW_TOKEN:-}
       DEVICE_TOKEN: ${DEVICE_TOKEN}
-      PIPER_VOICE: en_US-libritts_r-medium
+      PIPER_VOICE: ${PIPER_VOICE:-en_US-libritts_r-medium}
       DATA_DIR: /data
       SSL_CERT_FILE: /certs/root.crt
       # Realtime WebRTC is opt-in (off by default): set REALTIME_ENABLED=1 in

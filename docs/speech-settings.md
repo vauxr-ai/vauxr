@@ -38,11 +38,34 @@ add a catalog entry with its own opaque ID/model label and select it through the
 existing settings API/UI. Changing or removing an explicitly selected voice
 continues to fail resolution until settings are updated.
 
+Compose passes both neutral and legacy names to the gateway, with the same
+precedence. Its unchanged host-network URL defaults are `tcp://127.0.0.1:10300`
+and `tcp://127.0.0.1:10200`. The bundled Whisper/Piper services and health
+dependencies remain; selecting an external endpoint does not remove those
+services or change their provisioned models/voices.
+
 Additional endpoints are declared in `DATA_DIR/speech-providers.json` (restart to
 reload). The file is operator-owned, never writable through HTTP. Example:
 
 ```json
 [
+  {
+    "id": "recognizer-east",
+    "kind": "stt",
+    "adapter": "wyoming",
+    "model": "operator-asr-2026",
+    "host": "speech-east",
+    "port": 10400
+  },
+  {
+    "id": "speaker-east",
+    "kind": "tts",
+    "adapter": "wyoming",
+    "model": "operator-voice-2026",
+    "host": "speech-east",
+    "port": 10401,
+    "voices": ["narrator-a", "narrator-b"]
+  },
   {
     "id": "parakeet-v3-local",
     "kind": "stt",

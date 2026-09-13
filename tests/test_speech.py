@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -207,7 +207,7 @@ async def test_wyoming_adapter_wire_voice_and_readiness(store, generic):
             request = json.loads(data)
             requests.append(request)
             if request["type"] == "describe":
-                writer.write(encode_event(WyomingEvent("info", {"tts": [{}]})))
+                writer.write(encode_event(WyomingEvent("info", {"asr": [{}], "tts": [{}]})))
             elif request["type"] == "synthesize":
                 writer.write(encode_event(WyomingEvent("audio-start", {"rate": 24000})))
                 writer.write(encode_event(WyomingEvent("audio-chunk", {}, b"\0\0")))
@@ -230,13 +230,34 @@ async def test_wyoming_adapter_wire_voice_and_readiness(store, generic):
         selection = store.resolve()
         tts = replace(store.backends["kokoro"], port=port)
         stt = replace(store.backends["parakeet"], port=port)
+        voice = "narrator-b" if generic else "bf"
         if generic:
-            tts = replace(tts, id="speaker", adapter="wyoming", model="operator-model")
+            tts = replace(tts, id="speaker", adapter="wyoming", model="operator-model",
+                          voices=("narrator-a", voice))
             stt = replace(stt, id="recognizer", adapter="wyoming", model="operator-model")
-        selection = replace(selection, tts=tts, voice_id="bf")
+        selection = replace(selection, tts=tts, voice_id=voice)
+        if generic:
+            # Exercise the operator file, validation, persisted selection and
+            # restart path, not just directly constructed client arguments.
+            from speech_catalog import load_backends
+
+            (store.path.parent / "speech-providers.json").write_text(
+                json.dumps([asdict(stt), asdict(tts)])
+            )
+            configured = SpeechStore(store.path.parent, load_backends(config.get_config()))
+            assert configured.resolve().stt.id == "whisper"
+            assert configured.resolve().tts.id == "piper"
+            configured.update({"stt_backend": stt.id, "tts_backend": tts.id,
+                               "voices": {tts.id: voice}}, "opaque-device")
+            restored = SpeechStore(store.path.parent, load_backends(config.get_config()))
+            selection = restored.resolve("opaque-device")
+            assert selection.stt == stt and selection.tts == tts
+            assert selection.voice_id == voice
+            assert all("host" not in b and "port" not in b for b in restored.view()["backends"])
+        assert await speech.readiness(stt) == "ready"
         assert await speech.readiness(selection.tts) == "ready"
         assert [b async for b in synthesize("hello", selection=selection)] == [b"\0\0"]
-        assert requests[-1]["data"]["voice"] == {"name": "bf"}
+        assert requests[-1]["data"]["voice"] == {"name": voice}
         assert await transcribe([b"\0\0"], backend=stt) == "test"
     assert await speech.readiness(selection.tts) == "unavailable"
     with pytest.raises(OSError):
@@ -326,8 +347,6 @@ async def test_announcement_outage_returns_503_and_error_frame(store, monkeypatc
 
 
 def test_legacy_environment_and_operator_registry_restart(tmp_path, monkeypatch):
-    from dataclasses import asdict
-
     monkeypatch.setenv("DEVICE_TOKEN", "speech-test")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("WHISPER_URL", "tcp://127.0.0.1:12001")

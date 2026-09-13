@@ -1,92 +1,85 @@
-# Provider-neutral speech follow-up
+# Bounded STT/TTS neutrality follow-up review
 
-Worktree: `feat/speech-provider-settings`. Inspected AGENTS.md, CLAUDE.md,
-ARCHITECTURE.md, ROADMAP.md, speech implementation/tests/docs, status and history.
-Started clean at `2889e86`, following implementation `2375dd5`. Prior commits are
-preserved. This artifact accompanies one local follow-up commit using configured
-git identity, without coauthor trailers. Nothing was pushed.
+## Scope and starting state
 
-## Already neutral
+Reviewed only the existing isolated `feat/speech-provider-settings` worktree,
+starting clean at `ac2b71a`. Read AGENTS.md, CLAUDE.md, ARCHITECTURE.md and
+ROADMAP.md, then inspected the actual flat src layout, configuration, catalog,
+shared Wyoming clients, resolver, WS/WebRTC/button/announcement call sites,
+management API and existing tests. Prior feature commits remain intact.
 
-- Management selects configured backend/voice IDs; endpoints are server-owned.
-- Global/device inheritance, model-scoped voices, persistence and immutable
-  complete selection snapshots already existed.
-- Device WS turns, text/button prompts, announcements, cold WebRTC buffered
-  seeding/WS fallback and warm WebRTC turns already used the shared resolver.
-  STT, reply segments and spoken backend errors already received the snapshot.
-- Pipecat already used the common Wyoming STT/TTS clients and retained selections
-  by reply context. This follow-up does not claim to introduce that routing.
+## Already implemented and verified
 
-## Fixed
+- `speech_catalog.py` accepts generic `wyoming` for either STT or TTS and retains
+  whisper/parakeet-v3/piper/kokoro aliases. `speech.py` delegates validation to
+  that catalog; it does not restrict routing to four engines.
+- `Config.stt` / `Config.tts` and `WyomingTTSConfig` are neutral. Nonempty
+  STT_URL/TTS_URL/TTS_VOICE take precedence over WHISPER_URL/PIPER_URL/PIPER_VOICE;
+  empty/unset values fall back to legacy values, then unchanged defaults.
+- Case-insensitive source search finds the four engine names only in the catalog
+  compatibility boundary. Shared clients and routing do not branch on model IDs.
+- Catalog built-ins retain IDs/order. Persisted defaults, device overrides,
+  model-scoped voices, reset/inheritance and explicit unresolved-selection errors
+  remain. Existing migration tests check identical selections and file bytes.
+- WS voice/text, buttons, announcements and cold/warm WebRTC use the shared
+  resolver and complete immutable selections. Existing tests cover mid-turn
+  edits, next-turn resolution and overlapping Pipecat reply contexts.
+- Management accepts only configured IDs/voices, hides endpoint addresses and
+  rejects endpoint fields. No browser endpoint inputs or plugin framework added.
 
-- Generic `Config.stt`, `Config.tts`, `WyomingTTSConfig`; neutral server env names.
-- Generic deployment/snapshot models in `speech_models.py`; server catalog,
-  legacy mapping, adapter validation and voice wire mapping in `speech_catalog.py`.
-- Initial store defaults select the first configured backend of each kind,
-  rather than requiring hard-coded model IDs. Wrong-kind persisted selections
-  fail explicitly. Generic `wyoming` catalog entries support opaque model IDs
-  using the existing wire contract; no generalized plugin system was added.
-- Shared event framing and `WyomingError` in `wyoming_protocol.py`. TTS/readiness
-  no longer import protocol machinery from the STT client. STT protocol imports
-  remain available for existing Python callers. Explicit remote error events now
-  fail immediately without forwarding remote payloads; premature EOF also uses
-  the generic RuntimeError subclass.
-- Removed model-specific transport descriptions and TTS sample-rate variables.
-  Case-insensitive source search finds model-specific names only in the catalog.
+## Changes in this completion commit
 
-## Compatibility and boundaries
+- Compose now forwards neutral env variables and legacy overrides to the gateway.
+  Previously its fixed legacy values prevented .env speech overrides from reaching
+  the process. Unconfigured loopback URLs and default voice remain unchanged.
+- Updated .env.example, README and speech settings docs with preferred variables,
+  precedence, standalone versus Compose defaults and generic opaque deployments
+  for both kinds, retaining the legacy adapter examples.
+- Strengthened the fake Wyoming wire test: generic opaque STT/TTS deployments and
+  narrator voice IDs now load through speech-providers.json, catalog validation,
+  persisted device selection and store restart before real local TCP requests.
+  Checks both ASR/TTS readiness, transcript, PCM, voice.name and endpoint hiding.
+- Added neutral-only env and all-empty/all-unset default regressions alongside
+  existing conflicting-value precedence, legacy-only and restart migration tests.
+- No runtime source changes were needed after review. No auth, firmware or
+  frontend implementation changes; no installed plugins modified. No push,
+  publication, deployment, branch switch or other worktree edits performed.
 
-Nonempty `STT_URL`, `TTS_URL`, `TTS_VOICE` take precedence over `WHISPER_URL`,
-`PIPER_URL`, `PIPER_VOICE`; empty/unset preferred variables retain legacy fallback
-and unchanged deployment defaults. These are server-only environment settings,
-not new client-supplied endpoint URLs. Catalog loading still prepends the legacy
-built-ins, preserving their IDs/order and initial behavior. Existing operator
-catalog files and persisted settings retain their schema and selections; a test
-migrates env names and verifies both selection equality and unchanged file bytes.
-Removed IDs/voices remain explicit resolution failures, without silent fallback.
+## Validation evidence
 
-No auth scope/boundary, installed plugin, deployment, compose, host driver or
-public remote changes. No automatic downloads, model provisioning, browser-owned
-endpoints, arbitrary endpoint API, firmware or frontend changes.
+Existing Python 3.12 .venv contains optional Pipecat; no dependencies installed.
 
-## Validation
+- `.venv/bin/python3 -m pytest -q`: **347 passed**, no skips, 3 dependency
+  deprecation warnings, 8.00s.
+- After strengthening opaque voice names, reran the affected tests:
+  `.venv/bin/python3 -m pytest -q tests/test_speech.py tests/test_config.py`:
+  **32 passed**, 2 dependency deprecation warnings, 0.25s.
+- `npm --prefix web-client run test -- --run`: **125 passed in 12 files**.
+- `npm --prefix web-client run build`: **passed** (TypeScript and Vite).
+  Browserslist reported stale caniuse-lite data; no dependency updates made.
+- Focused Ruff covering config, speech registry/catalog/models, Wyoming protocol
+  and clients, realtime adapters and speech/config tests: **passed**. Affected
+  tests passed Ruff again after the final test refinement.
+- `git diff --check`: **passed**. Reviewed the complete diff for defaults,
+  legacy compatibility, catalog loading and scope regressions.
+- Compose YAML parses and includes all six speech env keys. Actual
+  `docker compose config` validation was attempted but **unavailable**: the Docker
+  CLI has no Compose subcommand. No Compose interpolation or deployment success
+  is claimed. Browser E2E was not run; frontend code is unchanged.
 
-Existing local Python 3.12 `.venv` includes optional Pipecat; no dependencies were
-installed for this task.
+## Remaining neutrality and performance limitations
 
-- `.venv/bin/python -m pytest -q tests/test_speech_neutral.py tests/test_config.py tests/test_speech.py tests/test_wyoming_stt.py tests/test_wyoming_tts.py`
-  — **53 passed, 2 warnings in 0.62s**.
-- `.venv/bin/python -m pytest -q`
-  — **344 passed, 3 warnings in 7.87s**, no skips.
-- `npm --prefix web-client run test -- --run`
-  — **12 test files passed, 125 tests passed**, 1.53s.
-- Focused Ruff check of changed functional modules and tests — **passed**.
-  Broader check also included wording-only pipeline/realtime files and reported
-  18 existing findings. Compared their codes, locations and messages against
-  `git show HEAD:<file>`: all unchanged (pipeline 8, session 9, turn strategy 1).
-- `git diff --check` — **passed**.
-- Frontend build/UI browser smoke not run: no frontend code/assets changed.
+Generic support requires an operator-provisioned Wyoming service implementing
+Vauxr's existing PCM/transcript or synthesize/voice.name contract. Opaque model
+labels do not load models or switch remote deployments. Voices must already be
+available remotely. No arbitrary protocols, model installation or discovery are
+provided; the catalog remains bounded to 32 entries including legacy built-ins.
+Readiness is only a bounded describe capability probe, not inference validation.
+The Compose stack still provisions and depends on bundled Whisper/Piper even
+when an external service is selected. Existing PCM/resampling assumptions remain.
 
-New regressions use a registry without legacy IDs to exercise WS voice routing,
-cold WS fallback, button prompt, button announcement, direct announcement,
-realtime buffered/text seeding and real Pipecat segmented STT/TTS adapters.
-They check device selection, fixed reply snapshots despite settings edits, and
-next-turn resolution. Cold fallback deliberately resolves again to arm the next
-turn. Local fake Wyoming peers verify generic successful STT/TTS, readiness,
-wire voice names, and prompt failure on error events from a peer that stays open.
-Other regressions cover defaults, legacy env precedence/empty fallback, restart
-migration, and incompatible persisted selection kinds.
-
-Warnings are dependency deprecations: audioop, AudioContextTTSService and the
-existing VAD turn-stop reset override.
-
-## Remaining real provider/hardware limitations
-
-No real Whisper/Parakeet/Piper/Kokoro inference, GPU execution, ESP32 audio,
-WebRTC media exchange or latency benchmarks were performed. Generic catalog
-support requires an operator-provided Wyoming service implementing the existing
-PCM/transcript or synthesize/voice.name contract. Models and voices must already
-be provisioned on that service. Readiness is a bounded describe capability probe,
-not proof of model/voice availability or inference success. WS streams received
-PCM; realtime TTS still buffers each entire segment before Pipecat playback.
-Resampling and existing PCM assumptions remain unchanged.
+No live model inference, GPU, ESP32 audio or WebRTC media exchange was tested.
+WebRTC TTS still buffers an entire segment before Pipecat playback. WebRTC
+streaming performance is explicitly out of scope; no latency/performance claim
+is made. Current legacy management authorization remains unchanged, with its
+limitations and future scoped-auth integration documented in speech-settings.md.
