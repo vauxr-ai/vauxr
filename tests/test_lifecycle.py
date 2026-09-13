@@ -771,3 +771,143 @@ def test_exhausted_history_can_revoke_recovery_without_unblocked_credentials(env
     assert row["device_id"] not in service.store.lifecycle["recovery"]
     with pytest.raises(EnrollmentError, match="already_owned"):
         request(enrollment, owner, key=key)
+
+
+@pytest.mark.parametrize("retry_disconnect", [False, True])
+async def test_rotation_teardown_cannot_untrack_replacement_realtime_offer(env, monkeypatch, retry_disconnect):
+    """A's ACK cleanup finishes after B registers; B's revoke must still close media."""
+    import asyncio
+    import sys
+    from types import SimpleNamespace
+
+    from aiohttp import web
+
+    import channel_registry
+    import realtime_app
+    import realtime_session
+
+    service, _, owner = env
+    manager = realtime_session.RealtimeManager()
+    monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
+    monkeypatch.setattr(channel_registry, "get_active", lambda: None)
+    monkeypatch.setattr(realtime_app, "_media_authorities", {})
+    monkeypatch.setattr(auth_connections, "_connections", set())
+    # Only SDP/media construction is synthetic. Keep the production HTTP offer,
+    # manager replacement, session teardown and retained-authority machinery.
+    monkeypatch.setitem(sys.modules, "pipecat.transports.smallwebrtc.request_handler",
+                        SimpleNamespace(SmallWebRTCRequest=SimpleNamespace(from_dict=lambda body: body)))
+    monkeypatch.setitem(sys.modules, "realtime_teardown",
+                        SimpleNamespace(protect_handshake_teardown=lambda connection: None))
+    old_disconnect_entered = asyncio.Event()
+    finish_old_disconnect = asyncio.Event()
+    old_revocation_entered = asyncio.Event()
+    old_revocation_cleaned = asyncio.Event()
+    finish_old_revocation = asyncio.Event()
+    peers = []
+
+    class Peer:
+        def __init__(self):
+            self.closed = False
+            self.attempts = 0
+
+        async def disconnect(self):
+            self.attempts += 1
+            if self is peers[0]:
+                old_disconnect_entered.set()
+                await finish_old_disconnect.wait()
+            elif retry_disconnect and self.attempts == 1:
+                raise RuntimeError("synthetic media disconnect failure")
+            self.closed = True
+
+    class Handler:
+        async def handle_web_request(self, request, on_connection):
+            peer = Peer()
+            peers.append(peer)
+            await on_connection(peer)
+            return {"sdp": "synthetic-answer", "type": "answer"}
+
+    async def start(session, connection):
+        session._connection = connection
+
+    manager._handler = Handler()
+    monkeypatch.setattr(realtime_session.RealtimeSession, "start", start)
+    real_close = realtime_session.RealtimeSession.close
+    old_session = None
+    old_close_calls = 0
+
+    async def gated_close(session):
+        nonlocal old_close_calls
+        revocation = False
+        if session is old_session:
+            old_close_calls += 1
+            revocation = old_close_calls == 2
+            if revocation:
+                old_revocation_entered.set()
+        await real_close(session)
+        if revocation:
+            # Hold only the return from actual cleanup, so the B offer can
+            # register before A's manager.stop()/authority callback resumes.
+            old_revocation_cleaned.set()
+            await finish_old_revocation.wait()
+
+    monkeypatch.setattr(realtime_session.RealtimeSession, "close", gated_close)
+    app = web.Application()
+    app.router.add_post("/api/offer", realtime_app._offer_handler)
+    tasks = []
+    try:
+        async with asyncio.timeout(5), TestClient(TestServer(app)) as http:
+            async def offer(token):
+                return await http.post("/api/offer", json={
+                    "device_id": "speaker", "token": token, "sdp": "synthetic", "type": "offer",
+                })
+
+            manager.begin_preroll("speaker")
+            assert (await offer("synthetic-device")).status == 200
+            old_session = manager._sessions["speaker"]
+            old_authorities = realtime_app._media_authorities["speaker"]
+            rotation = delivered(service, owner)
+            replacement = client(service, token=rotation["credential"])
+            offer_b = asyncio.create_task(offer(rotation["credential"]))
+            tasks.append(offer_b)
+            await old_disconnect_entered.wait()
+            assert service.execute("ack", {
+                "operation_id": rotation["operation_id"], "saved": True,
+            }, replacement)["state"] == "acknowledged"
+            cleanup_a = asyncio.create_task(auth_connections.disconnect_stale(service.store))
+            tasks.append(cleanup_a)
+            await old_revocation_entered.wait()
+            finish_old_disconnect.set()
+            await old_revocation_cleaned.wait()
+            assert (await offer_b).status == 200
+            session_b = manager._sessions["speaker"]
+            authorities_b = realtime_app._media_authorities["speaker"]
+            assert authorities_b is not old_authorities
+            assert all(c in auth_connections._connections for c in authorities_b)
+            finish_old_revocation.set()
+            await cleanup_a
+            assert peers[0].closed and not peers[1].closed
+            assert manager._sessions["speaker"] is session_b
+            assert all(c not in auth_connections._connections for c in old_authorities)
+
+            assert control(service, owner, action="revoke", oid="2" * 32)["state"] == "revoked"
+            assert replacement() is None
+            if retry_disconnect:
+                with pytest.raises(RuntimeError, match="transport_teardown_unavailable"):
+                    await auth_connections.disconnect_stale(service.store)
+                assert not peers[1].closed
+                assert manager._sessions["speaker"] is session_b
+                assert realtime_app._media_authorities["speaker"] is authorities_b
+                assert all(c in auth_connections._connections for c in authorities_b)
+            await auth_connections.disconnect_stale(service.store)
+            assert peers[1].closed, "B media survived revocation after A erased its registration"
+            assert session_b.is_closed and session_b._close_attempts == []
+            assert "speaker" not in manager._sessions
+            assert "speaker" not in realtime_app._media_authorities
+            assert not auth_connections._connections
+    finally:
+        finish_old_disconnect.set()
+        finish_old_revocation.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # Do not mask a regression assertion with the injected first-close failure.
+        retry_disconnect = False
+        await manager.stop_all()
