@@ -6,7 +6,6 @@ import json
 
 from aiohttp import web
 
-from auth_connections import Teardown
 from auth_policy import Principal, Role
 from enrollment import EnrollmentError
 from enrollment_http import ENROLLMENT, unique_object
@@ -14,7 +13,6 @@ from lifecycle import Lifecycle
 from owner_http import ORIGIN, OWNER, cookie_name, secure_request, session_principal
 
 LIFECYCLE = web.AppKey("lifecycle", Lifecycle)
-MEDIA_TEARDOWN = web.AppKey("lifecycle_media_teardown", Teardown)
 
 
 async def lifecycle_endpoint(request: web.Request) -> web.Response:
@@ -71,37 +69,19 @@ lifecycle_endpoint.authz_boundary = True  # type: ignore[attr-defined]
 
 
 async def disconnect_stale(app: web.Application) -> None:
-    from auth_connections import disconnect_stale as disconnect
-
-    results = await asyncio.gather(disconnect(app[LIFECYCLE].store), app[MEDIA_TEARDOWN].run(),
-                                   return_exceptions=True)
-    if any(isinstance(result, BaseException) for result in results):
-        raise RuntimeError("transport_teardown_unavailable")
+    await disconnect_media(app)
 
 
 async def disconnect_media(app: web.Application) -> None:
-    store = app[LIFECYCLE].store
-    # A plugin may have disconnected while its dependent media/turn remains.
-    # Revoke must tear that down even without a retained integration socket.
-    import channel_registry
-    import device_registry
-    from config import get_config
+    # Media retains its originating credential and exact turn/peer callback.
+    # Current routing and the device's current turn cannot identify old media.
+    from auth_connections import disconnect_stale as disconnect
 
-    active = channel_registry.get_active()
-    if active is not None and active.type == "openclaw":
-        records = [r for r in store.records if r.role == Role.INTEGRATION and r.subject == active.id]
-        if records and not any(store.usable(r) for r in records):
-            for device in device_registry.get_all():
-                device_registry.abort_active_turn(device.id)
-            if get_config().realtime.enabled:
-                from realtime_session import get_manager
-
-                await get_manager().stop_all()
+    await disconnect(app[LIFECYCLE].store)
 
 
 def attach_lifecycle(app: web.Application) -> None:
     app[LIFECYCLE] = Lifecycle(app[OWNER].store, app[ORIGIN])
-    app[MEDIA_TEARDOWN] = Teardown(lambda: disconnect_media(app))
 
     async def maintenance(application: web.Application) -> None:
         while True:

@@ -631,9 +631,11 @@ def test_rotation_preserves_valid_routing_and_retires_only_unusable_channel(
         assert replacement()
 
 
+@pytest.mark.parametrize("disconnect_socket", [False, True])
+@pytest.mark.parametrize("revoke", [False, True])
 @pytest.mark.parametrize("replacement_turn", [False, True])
 async def test_revoke_after_response_end_aborts_only_originating_media(
-    env, alternate_channel, monkeypatch, replacement_turn
+    env, alternate_channel, monkeypatch, replacement_turn, disconnect_socket, revoke
 ):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -648,8 +650,33 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
     body, _, issued = deliver(env)
     service.execute("ack", ack_body(body, issued))
     server = ChannelServer()
-    connection = _Connection(SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock()))
-    await server._handle_auth(connection, issued["credential"])
+    from aiohttp import WSMsgType
+
+    disconnected, authenticated = asyncio.Event(), asyncio.Event()
+
+    class ChannelSocket:
+        closed = False
+
+        async def send_str(self, text):
+            authenticated.set()
+
+        async def close(self):
+            self.closed = True
+            disconnected.set()
+
+        async def __aiter__(self):
+            yield SimpleNamespace(type=WSMsgType.TEXT, data=json.dumps({
+                "type": "channel.auth", "token": issued["credential"]}))
+            await disconnected.wait()
+
+    socket = ChannelSocket()
+    socket_task = asyncio.create_task(server.handle_connection(socket))
+    await asyncio.wait_for(authenticated.wait(), 1)
+    connection = server._connections[issued["channel_id"]]
+    b_body, _, b_issued = deliver(env, 2)
+    service.execute("ack", ack_body(b_body, b_issued))
+    b_connection = _Connection(SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock()))
+    await server._handle_auth(b_connection, b_issued["credential"])
     assert channel_registry.activate(issued["channel_id"])
     ready, draining, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
     original_add = server.add_response_listener
@@ -685,18 +712,29 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
         listener["on_end"]("a")
         await asyncio.wait_for(draining.wait(), 1)
         assert not task.done() and not abort.is_set()
+        media_authority = server._media_authorities[abort]
+        if disconnect_socket:
+            await socket.close()
+            await asyncio.wait_for(socket_task, 1)
+            assert connection.authority not in auth_connections._connections
+            assert media_authority in auth_connections._connections
+            assert issued["channel_id"] not in server._connections
         # Switch selection before revocation; optionally replace this same device's turn.
-        assert channel_registry.activate(alternate_channel.id)
+        assert channel_registry.activate(b_issued["channel_id"])
         replacement_listener = {"on_delta": lambda *args: None, "on_end": lambda *args: None,
                                 "on_error": lambda *args: pytest.fail("replacement notified")}
         if replacement_turn:
             device.abort_event = replacement_abort
-            server.retain_media_turn(alternate_channel.id, replacement_abort)
+            server.retain_media_turn(b_issued["channel_id"], replacement_abort)
             server.add_response_listener("speaker", replacement_listener)
-        Lifecycle(service.store, ORIGIN).execute(
-            "revoke", {"operation_id": "e" * 32, "role": "integration", "subject": issued["channel_id"]}, owner)
-        await auth_connections.disconnect_stale(service.store)
-        assert abort.is_set()
+        if revoke:
+            Lifecycle(service.store, ORIGIN).execute(
+                "revoke", {"operation_id": "e" * 32, "role": "integration", "subject": issued["channel_id"]},
+                owner)
+            from lifecycle_http import LIFECYCLE, disconnect_media
+
+            await disconnect_media({LIFECYCLE: SimpleNamespace(store=service.store)})
+        assert abort.is_set() is revoke
         assert not replacement_abort.is_set()
         if replacement_turn:
             assert device.abort_event is replacement_abort
@@ -704,19 +742,27 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
         monkeypatch.setattr(pipeline.SegmentQueue, "done", original_done)
         release.set()
         await asyncio.wait_for(task, 1)
-        assert not ws.binary
-        assert not any(msg["type"] == "audio.end" for msg in ws.json_messages())
+        assert bool(ws.binary) is not revoke
+        assert any(msg["type"] == "audio.end" for msg in ws.json_messages()) is not revoke
         assert abort not in server._media_turns
+        assert abort not in server._media_authorities
+        assert media_authority not in auth_connections._connections
+        await media_authority.close()  # A stale teardown snapshot must be harmless after completion.
+        assert abort.is_set() is revoke
+        assert not replacement_abort.is_set()
         if replacement_turn:
             assert server.get_response_listener("speaker") is replacement_listener
-            assert server._media_turns[replacement_abort] == alternate_channel.id
+            assert server._media_turns[replacement_abort] == b_issued["channel_id"]
     finally:
         release.set()
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         server.release_media_turn(replacement_abort)
+        await socket.close()
+        await asyncio.wait_for(socket_task, 1)
         auth_connections.release(connection.authority)
+        auth_connections.release(b_connection.authority)
         device_registry.reset()
 
 
@@ -771,5 +817,86 @@ async def test_fallback_b_cannot_dispatch_to_a_listener_while_a_teardown_held(en
     finally:
         release.set()
         await asyncio.gather(teardown, return_exceptions=True)
+        for conn in connections:
+            auth_connections.release(conn.authority)
+
+
+@pytest.mark.parametrize("finish", ["drain", "revoke", "switch", "retry"])
+async def test_realtime_disconnected_channel_retains_exact_peer_until_drain(env, monkeypatch, finish):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import auth_connections
+    import realtime_session
+    from channel_server import ChannelServer, _Connection
+
+    service, owner = env
+    server = ChannelServer()
+    manager = realtime_session.RealtimeManager()
+    monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
+    connections = []
+    for index in (1, 2):
+        body, _, issued = deliver(env, index)
+        service.execute("ack", ack_body(body, issued))
+        conn = _Connection(SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock()))
+        await server._handle_auth(conn, issued["credential"])
+        connections.append(conn)
+    a, b = connections
+    assert channel_registry.activate(a.channel.id)
+    old = realtime_session.RealtimeSession("speaker", server)
+    replacement = realtime_session.RealtimeSession("speaker", server)
+    old._connection = SimpleNamespace(disconnect=AsyncMock(), audio_input_track=lambda: None)
+    replacement._connection = SimpleNamespace(disconnect=AsyncMock(), audio_input_track=lambda: None)
+    try:
+        complete = await old._channel_turn_complete_callback()
+        abort, = old._channel_media
+        authority = server._media_authorities[abort]
+        old._bot_speaking = 1  # Hold playback independently of response.end.
+        await complete(False, "Queued A speech")
+        assert len(old._pending_ends) == 1
+        assert authority in auth_connections._connections
+        auth_connections.release(a.authority)
+        server._connections.pop(a.channel.id)
+        assert channel_registry.activate(b.channel.id)
+        if finish == "switch":
+            # A shared Pipecat queue must retire before accepting a different origin.
+            assert await old._channel_turn_complete_callback() is None
+            assert old._closed
+        manager._sessions["speaker"] = replacement
+        await replacement._channel_turn_complete_callback()
+        b_abort, = replacement._channel_media
+        if finish == "drain":
+            old._bot_speaking = 0
+            old._bot_stop_credits = 1
+            await old._drain_ends()
+            assert not abort.is_set()
+            old._connection.disconnect.assert_not_awaited()
+        else:
+            Lifecycle(service.store, ORIGIN).execute(
+                "revoke", {"operation_id": "d" * 32, "role": "integration", "subject": a.channel.id}, owner)
+            if finish == "retry":
+                old._connection.disconnect.side_effect = [RuntimeError("synthetic teardown failure"), None]
+                with pytest.raises(RuntimeError, match="transport_teardown_unavailable"):
+                    await auth_connections.disconnect_stale(service.store)
+                assert abort.is_set()
+                assert authority in auth_connections._connections
+                assert server._media_turns[abort] == a.channel.id
+                assert not b_abort.is_set()
+            await auth_connections.disconnect_stale(service.store)
+            if finish in {"revoke", "retry"}:
+                assert abort.is_set()
+            assert old._connection.disconnect.await_count == (2 if finish == "retry" else 1)
+        await authority.close()  # Normal completion must also invalidate captured teardown callbacks.
+        assert abort not in server._media_turns
+        assert abort not in server._media_authorities
+        assert authority not in auth_connections._connections
+        assert not old._channel_media
+        assert not b_abort.is_set()
+        assert server._media_turns[b_abort] == b.channel.id
+        assert manager._sessions["speaker"] is replacement
+        replacement._connection.disconnect.assert_not_awaited()
+    finally:
+        await old.close()
+        await replacement.close()
         for conn in connections:
             auth_connections.release(conn.authority)

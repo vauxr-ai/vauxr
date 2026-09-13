@@ -14,7 +14,7 @@ stay in realtime mode or return the device to silent wake-waiting.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from loguru import logger
@@ -95,7 +95,7 @@ class ChannelLLMService(LLMService):
         device_id: str,
         channel_server: ChannelServer,
         on_turn_complete: TurnCompleteCb | None = None,
-        turn_complete_factory: Callable[[], TurnCompleteCb] | None = None,
+        turn_complete_factory: Callable[[], TurnCompleteCb | Awaitable[TurnCompleteCb | None]] | None = None,
         on_turn_skipped: TurnSkippedCb | None = None,
         **kwargs,
     ) -> None:
@@ -157,9 +157,6 @@ class ChannelLLMService(LLMService):
             return
         self._last_user_msg_count = user_count
 
-        on_turn_complete = (
-            self._turn_complete_factory() if self._turn_complete_factory else self._on_turn_complete
-        )
         await self.push_frame(LLMFullResponseStartFrame())
         await self.start_processing_metrics()
 
@@ -173,6 +170,16 @@ class ChannelLLMService(LLMService):
 
         def on_error(_run_id: str, message: str) -> None:
             queue.put_nowait(("error", message))
+
+        on_turn_complete = (
+            self._turn_complete_factory() if self._turn_complete_factory else self._on_turn_complete
+        )
+        if asyncio.iscoroutine(on_turn_complete):
+            on_turn_complete = await on_turn_complete
+            if on_turn_complete is None:
+                await self.stop_processing_metrics()
+                await self.push_frame(LLMFullResponseEndFrame())
+                return  # The owning media session was retired before routing.
 
         listener = {"on_delta": on_delta, "on_end": on_end, "on_error": on_error}
         self._channel_server.add_response_listener(self._device_id, listener)

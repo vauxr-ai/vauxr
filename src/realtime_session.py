@@ -121,12 +121,13 @@ class RealtimeSession:
         # Set once the pipeline is built and the WebRTC client is connected.
         self._pipeline_ready = asyncio.Event()
         # Deferred audio.end queue, in turn order. Each entry is (follow_up,
-        # has_audio): a turn that produced bot speech can't end until its bot
+        # has_audio, media_abort): a turn that produced bot speech can't end until its bot
         # audio fully drains (counted as a credit), while a silent turn (empty/
         # errored reply) ends as soon as it reaches the head — but never ahead of
         # an earlier still-speaking turn, which would advance turn state while the
         # first reply is still playing.
-        self._pending_ends: deque[tuple[bool, bool]] = deque()
+        self._pending_ends: deque[tuple[bool, bool, asyncio.Event | None]] = deque()
+        self._channel_media: dict[asyncio.Event, str] = {}
         self._bot_stop_credits = 0
         # Bot-speaking bookkeeping. Wyoming TTS speaks one sentence per run_tts,
         # so a single reply produces several BotStarted/BotStoppedSpeaking pairs.
@@ -245,7 +246,7 @@ class RealtimeSession:
         llm = ChannelLLMService(
             device_id=self.device_id,
             channel_server=self._channel_server,
-            turn_complete_factory=self._turn_complete_callback,
+            turn_complete_factory=self._channel_turn_complete_callback,
             on_turn_skipped=self._on_turn_skipped,
         )
 
@@ -732,8 +733,30 @@ class RealtimeSession:
         """Bind completion to the user turn before the LLM yields to barge-in."""
         return partial(self._on_turn_complete, turn_generation=self._turn_generation)
 
+    async def _channel_turn_complete_callback(self) -> Callable[[bool, str], Awaitable[None]] | None:
+        """Retain channel ownership through playback on this exact peer."""
+        active = self._channel_server.get_active_channel()
+        if self._closed:
+            return None
+        if active is None or any(origin != active.id for origin in self._channel_media.values()):
+            # Pipecat's output queue is shared by a peer. Retire it before a
+            # different channel can add media that an old-channel revoke could
+            # otherwise cancel. A replacement peer has its own authority.
+            await self.close()
+            return None
+        abort = asyncio.Event()
+        self._channel_media[abort] = active.id
+        self._channel_server.retain_media_turn(active.id, abort, self.close)
+        return partial(self._on_turn_complete, turn_generation=self._turn_generation, media_abort=abort)
+
+    def _release_channel_media(self, abort: asyncio.Event | None) -> None:
+        if abort is not None:
+            self._channel_media.pop(abort, None)
+            self._channel_server.release_media_turn(abort)
+
     async def _on_turn_complete(
         self, follow_up: bool, reply: str, *, turn_generation: int | None = None,
+        media_abort: asyncio.Event | None = None,
     ) -> None:
         """Called when an LLM turn ends. Queue its audio.end in turn order."""
         if self._closed or self._ended_notified:
@@ -757,7 +780,7 @@ class RealtimeSession:
             self._turn_active = False
         # Text completion precedes playback completion. In particular it must
         # not pause barge-in, or overwrite an explicit device pause/resume.
-        self._pending_ends.append((follow_up, has_audio))
+        self._pending_ends.append((follow_up, has_audio, media_abort))
         if has_audio and self._bot_speaking == 0:
             self._schedule_drain_timer()
         await self._drain_ends()
@@ -843,7 +866,7 @@ class RealtimeSession:
         self._apply_vad_profile()
         if self._closed or self._bot_speaking != 0:
             return
-        if not any(has_audio for _, has_audio in self._pending_ends):
+        if not any(has_audio for _, has_audio, _ in self._pending_ends):
             return
         self._bot_stop_credits += 1
         await self._drain_ends()
@@ -851,12 +874,13 @@ class RealtimeSession:
     async def _drain_ends(self) -> None:
         """Emit deferred audio.end events in turn order."""
         while self._pending_ends and not self._ended_notified:
-            follow_up, has_audio = self._pending_ends[0]
+            follow_up, has_audio, media_abort = self._pending_ends[0]
             if has_audio:
                 if self._bot_stop_credits <= 0:
                     break
                 self._bot_stop_credits -= 1
             self._pending_ends.popleft()
+            self._release_channel_media(media_abort)
             # A barge-in cut a turn short: this end (the FIFO front) is the
             # interrupted turn's, so its bot-stop was the interruption, not a
             # natural reply end, and a new user turn is already underway. Emitting
@@ -952,6 +976,8 @@ class RealtimeSession:
             if self._connection is not None:
                 self._close_attempts.append(auth_connections.Teardown(self._connection.disconnect))
         await auth_connections.run_teardowns(self._close_attempts)
+        for abort in list(self._channel_media):
+            self._release_channel_media(abort)
         manager = get_manager()
         if manager._sessions.get(self.device_id) is self:
             manager.forget(self.device_id)

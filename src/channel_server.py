@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, TypedDict
 
 from aiohttp import WSMsgType, web
@@ -57,6 +57,7 @@ class ChannelServer:
         self._response_listeners: dict[str, DeviceResponseListener] = {}
         self._response_channels: dict[str, str] = {}
         self._media_turns: dict[asyncio.Event, str] = {}
+        self._media_authorities: dict[asyncio.Event, auth_connections.Connection] = {}
 
     # --- Pipeline-facing API ---
 
@@ -100,12 +101,31 @@ class ChannelServer:
         log.info("Sent transcript")
         return True
 
-    def retain_media_turn(self, channel_id: str, abort: asyncio.Event) -> None:
+    def retain_media_turn(
+        self, channel_id: str, abort: asyncio.Event,
+        close: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         """Keep exact turn authority until all queued media has completed."""
+        if abort in self._media_turns:
+            raise ValueError("media turn already retained")
         self._media_turns[abort] = channel_id
+        conn = self._connections.get(channel_id)
+        if conn is not None and conn.principal is not None:
+            async def close_revoked() -> None:
+                # A completed entry may already be in a teardown snapshot.
+                if abort not in self._media_turns:
+                    return
+                abort.set()
+                if close is not None:
+                    await close()
+
+            # This authority belongs to the media, not the socket. Socket close,
+            # routing fallback and replacement turns must not release it.
+            self._media_authorities[abort] = auth_connections.retain(conn.principal, close_revoked)
 
     def release_media_turn(self, abort: asyncio.Event) -> None:
         self._media_turns.pop(abort, None)
+        auth_connections.release(self._media_authorities.pop(abort, None))
 
     def add_response_listener(self, device_id: str, listener: DeviceResponseListener) -> None:
         self._response_listeners[device_id] = listener
@@ -215,11 +235,6 @@ class ChannelServer:
                 teardown.append(auth_connections.Teardown(conn.ws.close))
                 if self._connections.get(channel.id) is conn:
                     self._connections.pop(channel.id, None)
-                    # Selection and response receipt can finish before media does.
-                    # Signal the captured turn, never whichever turn now occupies a device.
-                    for abort, origin in self._media_turns.items():
-                        if origin == channel.id:
-                            abort.set()
                     dependents = {device_id: listener for device_id, listener in self._response_listeners.items()
                                   if self._response_channels.get(device_id) == channel.id}
                     for device_id, listener in dependents.items():
@@ -227,17 +242,6 @@ class ChannelServer:
                             listener["on_error"](device_id, "integration_revoked")
 
                         teardown.append(auth_connections.Teardown(notify))
-                    from config import get_config
-
-                    if get_config().realtime.enabled:
-                        import device_registry
-                        from realtime_session import get_manager
-
-                        active = channel_registry.get_active()
-                        for device in device_registry.get_all():
-                            if device.id in dependents or (active is not None and active.id == channel.id):
-                                teardown.append(auth_connections.Teardown(
-                                    lambda device_id=device.id: get_manager().stop(device_id)))
             await auth_connections.run_teardowns(teardown)
 
         conn.authority = auth_connections.retain(principal, close_revoked)
