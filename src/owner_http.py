@@ -1,4 +1,4 @@
-"""Configured HTTP/HTTPS boundary for owner credentials and cookie-authenticated APIs."""
+"""Configured LAN HTTP or HTTPS boundary for owner credentials and cookie-authenticated APIs."""
 
 import asyncio
 import hmac
@@ -27,7 +27,7 @@ def cookie_name(request: web.Request) -> str:
 
 def secure_request(request: web.Request) -> bool:
     origin = request.app[ORIGIN]
-    if not origin or request.headers.get("Host") != origin.split("://", 1)[1]:
+    if not origin or request.headers.getall("Host", []) != [origin.split("://", 1)[1]]:
         return False
     # Never accept arbitrary forwarding chains or Forwarded in addition to our contract.
     if "Forwarded" in request.headers:
@@ -50,6 +50,9 @@ def secure_request(request: web.Request) -> bool:
 def session_principal(request: web.Request) -> Principal | None:
     if OWNER not in request.app:
         return None
+    if not secure_request(request):
+        return None
+    request.app[OWNER].bind_origin(request.app[ORIGIN])
     result = request.app[OWNER].session(request.cookies.get(cookie_name(request), ""))
     return result[0] if result else None
 
@@ -58,10 +61,17 @@ def session_principal(request: web.Request) -> Principal | None:
 async def owner_middleware(request: web.Request, handler: Handler) -> web.StreamResponse:
     owner_path = request.path.startswith("/api/auth/")
     cookie = request.cookies.get(cookie_name(request), "")
-    if not owner_path and not cookie:
+    if not owner_path and not any(name in request.cookies for name in (COOKIE, LAN_COOKIE)):
         return await handler(request)
     try:
         if not secure_request(request):
+            raise web.HTTPForbidden()
+        request.app[OWNER].bind_origin(request.app[ORIGIN])
+        other_cookie = LAN_COOKIE if cookie_name(request) == COOKIE else COOKIE
+        if other_cookie in request.cookies:
+            raise web.HTTPForbidden()
+        origins = request.headers.getall("Origin", [])
+        if len(origins) > 1:
             raise web.HTTPForbidden()
         origin = request.headers.get("Origin")
         if origin is not None and origin != request.app[ORIGIN]:
@@ -123,14 +133,13 @@ async def owner_endpoint(request: web.Request) -> web.Response:
             cookie, session = service.login(body["operator_token"])
             response = web.json_response({"version": 1, "csrf_token": session.csrf,
                                           "expires_at": session.expires})
-            response.set_cookie(cookie_name(request), cookie, secure=request.app[ORIGIN].startswith("https://"),
+            response.set_cookie(cookie_name(request), cookie, secure=cookie_name(request) == COOKIE,
                                 httponly=True, samesite="Strict", path="/", max_age=SESSION_SECONDS)
             return response
         if action == "logout" and not body:
             service.logout(request.cookies.get(cookie_name(request), ""))
             response = web.json_response({"version": 1, "logged_out": True})
-            response.del_cookie(cookie_name(request), path="/",
-                                secure=request.app[ORIGIN].startswith("https://"),
+            response.del_cookie(cookie_name(request), path="/", secure=cookie_name(request) == COOKIE,
                                 httponly=True, samesite="Strict")
             return response
         raise OwnerError("invalid_request")
@@ -150,7 +159,7 @@ def attach_owner(app: web.Application) -> None:
     app[ORIGIN] = configured_origin()
     raw_proxies = os.environ.get("OWNER_TRUSTED_PROXIES", "")
     app[PROXIES] = tuple(ipaddress.ip_network(value.strip()) for value in raw_proxies.split(",") if value)
-    app[OWNER] = OwnerAuth(get_store(), environment_token())
+    app[OWNER] = OwnerAuth(get_store(), environment_token(), origin=app[ORIGIN])
 
     async def startup(application: web.Application) -> None:
         application[OWNER].initialize()
