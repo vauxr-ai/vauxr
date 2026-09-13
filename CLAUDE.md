@@ -36,7 +36,9 @@ src/
 └── realtime_*.py      # Opt-in WebRTC (Pipecat) realtime transport
 ```
 
-Run locally with `python -m server` (needs `DEVICE_TOKEN`); tests run under `pytest`.
+Run locally with `python3 -m server` and a writable `DATA_DIR`; no auth token is
+required at startup. Owner HTTPS setup and console commands are documented in
+`docs/authz/owner-v1.md`. Legacy `DEVICE_TOKEN` grants no access. Tests run under `pytest`.
 
 ## Git Workflow
 

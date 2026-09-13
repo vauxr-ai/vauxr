@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +14,9 @@ from aiohttp.test_utils import TestClient, TestServer
 import channel_registry
 import config as cfg_mod
 import device_registry as registry
-import pipeline
 import wyoming_tts
 from http_server import make_http_app
+from tests.auth_helpers import owner_headers
 
 
 class FakeWs:
@@ -35,10 +35,12 @@ class FakeWs:
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     cfg_mod.reset_config()
+    monkeypatch.setenv("OWNER_HTTPS_ORIGIN", "https://owner.example")
+    monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
     monkeypatch.setenv("DEVICE_TOKEN", "tok-X")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    from tests.auth_helpers import seed
     from auth_policy import Role
+    from tests.auth_helpers import seed
     seed("tok-X", Role.OWNER, "owner")
     monkeypatch.setenv("OPENCLAW_URL", "")
     registry.reset()
@@ -69,19 +71,19 @@ async def client() -> AsyncIterator[TestClient]:
         yield c
 
 
-def _auth() -> dict[str, str]:
-    return {"Authorization": "Bearer tok-X"}
+def _auth(client) -> dict[str, str]:
+    return owner_headers(client)
 
 
 def _now() -> datetime:
-    return datetime(2026, 5, 17, 12, 0, 0, tzinfo=timezone.utc)
+    return datetime(2026, 5, 17, 12, 0, 0, tzinfo=UTC)
 
 
 # --- announce ---
 
 
 async def test_announce_unknown_device_404(client: TestClient) -> None:
-    res = await client.post("/api/devices/no-such/announce", headers=_auth(), json={"text": "hi"})
+    res = await client.post("/api/devices/no-such/announce", headers=_auth(client), json={"text": "hi"})
     assert res.status == 404
 
 
@@ -89,20 +91,20 @@ async def test_announce_busy_device_409(client: TestClient) -> None:
     ws = FakeWs()
     entry = registry.register("dev1", ws=ws)
     entry.state = "listening"
-    res = await client.post("/api/devices/dev1/announce", headers=_auth(), json={"text": "hi"})
+    res = await client.post("/api/devices/dev1/announce", headers=_auth(client), json={"text": "hi"})
     assert res.status == 409
 
 
 async def test_announce_missing_text_400(client: TestClient) -> None:
     registry.register("dev1", ws=FakeWs())
-    res = await client.post("/api/devices/dev1/announce", headers=_auth(), json={})
+    res = await client.post("/api/devices/dev1/announce", headers=_auth(client), json={})
     assert res.status == 400
 
 
 async def test_announce_sends_audio_frames_and_end(client: TestClient) -> None:
     ws = FakeWs()
     registry.register("dev1", ws=ws)
-    res = await client.post("/api/devices/dev1/announce", headers=_auth(), json={"text": "hello"})
+    res = await client.post("/api/devices/dev1/announce", headers=_auth(client), json={"text": "hello"})
     assert res.status == 200
     # All binary frames have type 0x03 (push audio).
     assert ws.binary
@@ -131,7 +133,7 @@ async def test_announce_passes_hello_output_sample_rate(
 
     monkeypatch.setattr(bd, "synthesize", fake_synth)
 
-    res = await client.post("/api/devices/dev1/announce", headers=_auth(), json={"text": "hello"})
+    res = await client.post("/api/devices/dev1/announce", headers=_auth(client), json={"text": "hello"})
     assert res.status == 200
     assert seen["target_rate"] == 48000
 
@@ -140,21 +142,21 @@ async def test_announce_passes_hello_output_sample_rate(
 
 
 async def test_command_unknown_device(client: TestClient) -> None:
-    res = await client.post("/api/devices/no/command", headers=_auth(), json={"command": "mute"})
+    res = await client.post("/api/devices/no/command", headers=_auth(client), json={"command": "mute"})
     assert res.status == 404
 
 
 async def test_command_invalid_command(client: TestClient) -> None:
     registry.register("dev1", ws=FakeWs())
     res = await client.post(
-        "/api/devices/dev1/command", headers=_auth(), json={"command": "nope"}
+        "/api/devices/dev1/command", headers=_auth(client), json={"command": "nope"}
     )
     assert res.status == 400
 
 
 async def test_command_missing_command(client: TestClient) -> None:
     registry.register("dev1", ws=FakeWs())
-    res = await client.post("/api/devices/dev1/command", headers=_auth(), json={})
+    res = await client.post("/api/devices/dev1/command", headers=_auth(client), json={})
     assert res.status == 400
 
 
@@ -163,7 +165,7 @@ async def test_command_forwards_to_device(client: TestClient) -> None:
     registry.register("dev1", ws=ws)
     res = await client.post(
         "/api/devices/dev1/command",
-        headers=_auth(),
+        headers=_auth(client),
         json={"command": "set_volume", "params": {"level": 0.7}},
     )
     assert res.status == 200
@@ -176,7 +178,7 @@ async def test_command_forwards_to_device(client: TestClient) -> None:
 async def test_command_ota_requires_url(client: TestClient) -> None:
     registry.register("dev1", ws=FakeWs())
     res = await client.post(
-        "/api/devices/dev1/command", headers=_auth(), json={"command": "ota"}
+        "/api/devices/dev1/command", headers=_auth(client), json={"command": "ota"}
     )
     assert res.status == 400
     body = await res.json()
@@ -187,7 +189,7 @@ async def test_command_ota_rejects_non_http_url(client: TestClient) -> None:
     registry.register("dev1", ws=FakeWs())
     res = await client.post(
         "/api/devices/dev1/command",
-        headers=_auth(),
+        headers=_auth(client),
         json={"command": "ota", "params": {"url": "ftp://x/fw.bin"}},
     )
     assert res.status == 400
@@ -199,7 +201,7 @@ async def test_command_ota_forwards_url(client: TestClient) -> None:
     url = "http://192.168.1.10:8080/firmware/satellite1.bin"
     res = await client.post(
         "/api/devices/dev1/command",
-        headers=_auth(),
+        headers=_auth(client),
         json={"command": "ota", "params": {"url": url}},
     )
     assert res.status == 200
@@ -213,7 +215,7 @@ async def test_command_set_barge_in_persists_and_is_not_forwarded(client: TestCl
     registry.register("dev1", ws=ws)
     res = await client.post(
         "/api/devices/dev1/command",
-        headers=_auth(),
+        headers=_auth(client),
         json={"command": "set_barge_in", "params": {"enabled": False}},
     )
     assert res.status == 200
@@ -228,7 +230,7 @@ async def test_command_set_barge_in_requires_enabled(client: TestClient) -> None
     registry.register("dev1", ws=FakeWs())
     res = await client.post(
         "/api/devices/dev1/command",
-        headers=_auth(),
+        headers=_auth(client),
         json={"command": "set_barge_in"},
     )
     assert res.status == 400
@@ -238,7 +240,7 @@ async def test_command_set_barge_in_rejects_non_bool(client: TestClient) -> None
     registry.register("dev1", ws=FakeWs())
     res = await client.post(
         "/api/devices/dev1/command",
-        headers=_auth(),
+        headers=_auth(client),
         json={"command": "set_barge_in", "params": {"enabled": "no"}},
     )
     assert res.status == 400
@@ -248,18 +250,18 @@ async def test_firmware_serves_bin(client: TestClient, tmp_path: Path) -> None:
     fw_dir = tmp_path / "firmware"
     fw_dir.mkdir()
     (fw_dir / "satellite1.bin").write_bytes(b"ESPFW")
-    res = await client.get("/firmware/satellite1.bin", headers=_auth())
+    res = await client.get("/firmware/satellite1.bin", headers=_auth(client))
     assert res.status == 200
     assert await res.read() == b"ESPFW"
 
 
 async def test_firmware_missing_is_404(client: TestClient) -> None:
-    res = await client.get("/firmware/missing.bin", headers=_auth())
+    res = await client.get("/firmware/missing.bin", headers=_auth(client))
     assert res.status == 404
 
 
 async def test_firmware_rejects_non_bin_name(client: TestClient) -> None:
-    res = await client.get("/firmware/secret.txt", headers=_auth())
+    res = await client.get("/firmware/secret.txt", headers=_auth(client))
     assert res.status == 404
 
 
@@ -271,7 +273,7 @@ async def test_patch_device_updates_config(client: TestClient) -> None:
     entry.last_seen = _now()
     res = await client.patch(
         "/api/devices/dev1",
-        headers=_auth(),
+        headers=_auth(client),
         json={"name": "Kitchen", "voice": True, "follow_up_mode": "always"},
     )
     assert res.status == 200
@@ -285,7 +287,7 @@ async def test_patch_device_updates_config(client: TestClient) -> None:
 async def test_patch_device_barge_in(client: TestClient) -> None:
     registry.register("dev1", ws=FakeWs())
     res = await client.patch(
-        "/api/devices/dev1", headers=_auth(), json={"barge_in": False}
+        "/api/devices/dev1", headers=_auth(client), json={"barge_in": False}
     )
     assert res.status == 200
     body = await res.json()
@@ -294,26 +296,26 @@ async def test_patch_device_barge_in(client: TestClient) -> None:
 
 async def test_patch_device_invalid_barge_in(client: TestClient) -> None:
     registry.register("dev1", ws=FakeWs())
-    res = await client.patch("/api/devices/dev1", headers=_auth(), json={"barge_in": "off"})
+    res = await client.patch("/api/devices/dev1", headers=_auth(client), json={"barge_in": "off"})
     assert res.status == 400
 
 
 async def test_patch_device_invalid_follow_up_mode(client: TestClient) -> None:
     registry.register("dev1", ws=FakeWs())
     res = await client.patch(
-        "/api/devices/dev1", headers=_auth(), json={"follow_up_mode": "garbage"}
+        "/api/devices/dev1", headers=_auth(client), json={"follow_up_mode": "garbage"}
     )
     assert res.status == 400
 
 
 async def test_patch_device_invalid_name_type(client: TestClient) -> None:
     registry.register("dev1", ws=FakeWs())
-    res = await client.patch("/api/devices/dev1", headers=_auth(), json={"name": 5})
+    res = await client.patch("/api/devices/dev1", headers=_auth(client), json={"name": 5})
     assert res.status == 400
 
 
 async def test_patch_unknown_device_404(client: TestClient) -> None:
-    res = await client.patch("/api/devices/missing", headers=_auth(), json={"name": "x"})
+    res = await client.patch("/api/devices/missing", headers=_auth(client), json={"name": "x"})
     assert res.status == 404
 
 
@@ -321,7 +323,7 @@ async def test_patch_button_actions(client: TestClient) -> None:
     registry.register("dev1", ws=FakeWs())
     res = await client.patch(
         "/api/devices/dev1",
-        headers=_auth(),
+        headers=_auth(client),
         json={
             "button_actions": {
                 "double_press": {"kind": "prompt", "text": "lights off"},
@@ -339,7 +341,7 @@ async def test_patch_button_actions_invalid(client: TestClient) -> None:
     registry.register("dev1", ws=FakeWs())
     res = await client.patch(
         "/api/devices/dev1",
-        headers=_auth(),
+        headers=_auth(client),
         json={"button_actions": {"double_press": {"kind": "prompt"}}},
     )
     assert res.status == 400
@@ -349,7 +351,7 @@ async def test_patch_button_actions_invalid(client: TestClient) -> None:
 
 
 async def test_list_channels_empty(client: TestClient) -> None:
-    res = await client.get("/api/channels", headers=_auth())
+    res = await client.get("/api/channels", headers=_auth(client))
     assert res.status == 200
     assert await res.json() == []
 
@@ -359,7 +361,7 @@ async def test_list_channels_empty(client: TestClient) -> None:
     ("POST", "/api/channels/missing/rotate"),
 ])
 async def test_channel_lifecycle_is_explicitly_unshipped(client, method, path):
-    res = await client.request(method, path, headers=_auth(), json={"name": "X"})
+    res = await client.request(method, path, headers=_auth(client), json={"name": "X"})
     assert res.status == 501
     assert await res.json() == {"error": "operation not implemented"}
     assert channel_registry.get_all() == []
@@ -367,5 +369,5 @@ async def test_channel_lifecycle_is_explicitly_unshipped(client, method, path):
 
 async def test_activate_channel(client):
     created, _ = await channel_registry.create("X")
-    res = await client.post(f"/api/channels/{created.id}/activate", headers=_auth())
+    res = await client.post(f"/api/channels/{created.id}/activate", headers=_auth(client))
     assert res.status == 200
