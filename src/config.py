@@ -103,7 +103,7 @@ def load_config() -> Config:
             token=_optional("OPENCLAW_TOKEN", ""),
         ),
         channel=ChannelConfig(ws_path="/channel"),
-        device=DeviceConfigSection(token=_required("DEVICE_TOKEN")),
+        device=DeviceConfigSection(token=_optional("DEVICE_TOKEN", "")),
         data_dir=_optional("DATA_DIR", "/data"),
         whisper=_parse_wyoming_url(_optional("WHISPER_URL", "tcp://whisper:10300")),
         piper=PiperConfig(
