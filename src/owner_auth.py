@@ -133,6 +133,10 @@ class OwnerAuth:
                 raise OwnerError("Replace the authoritative OPERATOR_TOKEN environment value and restart; "
                                  "or remove it and restart, then run recover. "
                                  "Persisted rotation cannot override it.")
+            pending = state.get("pending", {})
+            if (not recover and pending.get("expires", 0) > time.time()):
+                raise OwnerError("An operator token is awaiting save acknowledgement; "
+                                 "finish or discard that browser flow, or wait for it to expire")
             if not recover and state.get("mode", "unclaimed") != "unclaimed":
                 raise OwnerError("Already claimed; use the explicit recover command")
             code = secrets.token_urlsafe(24)

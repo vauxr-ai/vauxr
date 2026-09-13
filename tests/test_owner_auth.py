@@ -90,6 +90,27 @@ def test_claim_save_restart_and_redaction(tmp_path, caplog):
     assert owner.store.path.stat().st_mode & 0o777 == 0o600
 
 
+def test_console_claim_preserves_unexpired_pending_save(tmp_path, monkeypatch):
+    owner = service(tmp_path)
+    claimed = owner.claim(owner.console_claim())
+    before = owner.store.path.read_bytes()
+
+    with pytest.raises(OwnerError, match="awaiting save acknowledgement"):
+        OwnerAuth(CredentialStore(owner.store.path)).console_claim()
+
+    assert owner.store.path.read_bytes() == before
+    owner.acknowledge(claimed["save_acknowledgement"], True)
+    assert owner.login(claimed["operator_token"])
+
+    expired = service(tmp_path / "expired")
+    replacement = expired.claim(expired.console_claim())
+    now = owner_auth.time.time()
+    monkeypatch.setattr(owner_auth.time, "time", lambda: now + owner_auth.CLAIM_SECONDS + 1)
+    assert OwnerAuth(CredentialStore(expired.store.path)).console_claim()
+    with pytest.raises(OwnerError, match="invalid_acknowledgement"):
+        expired.acknowledge(replacement["save_acknowledgement"], True)
+
+
 def test_environment_precedence_change_removal_recovery(tmp_path):
     owner = service(tmp_path)
     old_token = claim_saved(owner)

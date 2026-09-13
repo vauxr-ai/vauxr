@@ -100,7 +100,9 @@ The command validates the same configured LAN/TLS origin and prints a random 192
 access is the authority: the console is not a remotely accessible setup endpoint.
 Protect shell/container access as owner-equivalent. Only this explicit command can
 open claim; the first remote visitor has no ownership privilege. Reissuing a claim
-code invalidates the previous attempt. Five failed code attempts exhaust a code,
+code invalidates the previous unconsumed attempt. An ordinary claim command refuses
+to replace an unexpired operator token awaiting save acknowledgement; explicit
+recovery still replaces it. Five failed code attempts exhaust a code,
 including across restart. A correct claim consumes the code durably before returning.
 
 The claim response contains a server-generated 256-bit operator token and a random
