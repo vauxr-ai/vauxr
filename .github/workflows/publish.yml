@@ -32,10 +32,8 @@ jobs:
       - name: Run pytest
         run: pytest -q
 
-  # On every push/PR: run the Playwright UI smoke test against a real
-  # container. Catches regressions where channel CRUD 500s — including
-  # the Alpine→slim docker uid drift that broke /data writes after the
-  # Python rewrite.
+  # Keep the container ownership smoke and exercise the owner/browser contract
+  # against isolated aiohttp servers. Legacy shared-token channel forms are gone.
   e2e:
     name: E2E UI smoke (Playwright)
     runs-on: ubuntu-latest
@@ -50,8 +48,8 @@ jobs:
       - name: Pre-seed /data with Alpine-era ownership
         # Simulates an existing deployment that ran the previous Node
         # image (which created files in /data as uid 100). The new
-        # container must remain able to write here; otherwise channel
-        # create/rotate hit PermissionError → 500.
+        # container must remain able to write here; owner console bootstrap
+        # verifies persistence without restoring legacy credential endpoints.
         run: |
           docker volume create vauxr-e2e-data
           docker run --rm -v vauxr-e2e-data:/data alpine sh -c '
@@ -64,15 +62,14 @@ jobs:
         run: |
           docker run -d --name vauxr-e2e \
             -p 8080:8080 -p 8765:8765 \
-            -e DEVICE_TOKEN=e2e-device-token \
             -e DATA_DIR=/data \
             -v vauxr-e2e-data:/data \
             vauxr:e2e
           for i in $(seq 1 30); do
-            if curl -sf -o /dev/null \
-                 -H "Authorization: Bearer e2e-device-token" \
-                 http://localhost:8080/api/devices; then
-              echo "vauxr ready"; exit 0
+            if curl -sf -o /dev/null http://localhost:8080/api/auth/status; then
+              # Exercise the existing-volume write boundary; never print the claim code.
+              docker exec vauxr-e2e python -c 'from auth import get_store; from owner_auth import OwnerAuth; OwnerAuth(get_store()).console_claim()'
+              echo "vauxr ready; owner bootstrap persisted"; exit 0
             fi
             sleep 1
           done
@@ -80,10 +77,24 @@ jobs:
           docker logs vauxr-e2e
           exit 1
 
+      - name: Set up Python for isolated browser servers
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install isolated server dependencies
+        run: python -m pip install -e ".[dev]"
+
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
           node-version: 22
+
+      - name: Test and build web client for isolated browser servers
+        run: |
+          npm --prefix web-client ci
+          npm --prefix web-client test -- --run
+          npm --prefix web-client run build
 
       - name: Install e2e deps
         working-directory: e2e
@@ -95,10 +106,9 @@ jobs:
 
       - name: Run Playwright tests
         working-directory: e2e
-        env:
-          VAUXR_DEVICE_TOKEN: e2e-device-token
-          VAUXR_URL: http://localhost:8080
-        run: npx playwright test
+        # The suite owns throwaway DATA_DIRs and its own 18080/18765 listeners.
+        # channels.spec.ts exercises removed shared-token create/export forms.
+        run: npx playwright test auth-browser.spec.ts
 
       - name: Dump container logs on failure
         if: failure()

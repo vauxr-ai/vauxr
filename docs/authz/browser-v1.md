@@ -157,9 +157,15 @@ screenshots to avoid recording generated secrets. Physical speaker/microphone,
 real STT/TTS, firmware durable storage, browser/OS power-loss and positive deployed
 trusted-TLS acceptance remain untested. No release/deployment/OTA is implied.
 
-Reconciliation validation used the available Python 3.11.2, not the declared 3.12
-runtime. Chromium required the previously extracted libraries under this worktree's
+Local reconciliation validation used Python 3.11.2; the GitHub pytest job also
+passed on the declared Python 3.12 runtime. Chromium required the previously extracted libraries under this worktree's
 `.auth50-runtime/usr/lib/x86_64-linux-gnu` through `LD_LIBRARY_PATH`; no global
 packages or services were changed. The historical `channels.spec.ts` exercises
 removed shared-token create/export forms and is outside this supported auth-browser
 run; new integration enrollment remains #51.
+
+CI retains the container image/build and legacy-volume ownership smoke, now checking
+public owner status and exercising owner claim persistence internally without
+printing a secret. It then installs an isolated Python server, tests/builds the
+frontend and runs `auth-browser.spec.ts`. It does not re-enable removed shared-token
+channel forms. Local verification does not run the container or touch deployed services.
