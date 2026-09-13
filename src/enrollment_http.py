@@ -1,4 +1,4 @@
-"""Enrollment endpoints share the configured owner HTTPS/proxy/cookie boundary."""
+"""Enrollment endpoints share the configured owner HTTP/HTTPS/proxy/cookie boundary."""
 
 import asyncio
 import json
@@ -7,7 +7,7 @@ from aiohttp import web
 
 from auth_policy import Principal, Role
 from enrollment import Enrollment, EnrollmentError
-from owner_http import COOKIE, ORIGIN, OWNER, secure_request
+from owner_http import ORIGIN, OWNER, cookie_name, secure_request
 
 ENROLLMENT = web.AppKey("enrollment", Enrollment)
 CLIENT_ACTIONS = {"request", "prove", "redeem", "cancel", "status"}
@@ -46,7 +46,7 @@ async def enrollment_endpoint(request: web.Request) -> web.Response:
         if len(request.headers.getall("Authorization", [])) > 1:
             raise EnrollmentError("invalid_request")
         header = request.headers.get("Authorization", "")
-        cookie = request.cookies.get(COOKIE, "")
+        cookie = request.cookies.get(cookie_name(request), "")
         if header and (cookie or action in CLIENT_ACTIONS):
             raise EnrollmentError("invalid_request")
 

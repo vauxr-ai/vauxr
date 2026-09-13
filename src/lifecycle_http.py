@@ -1,4 +1,4 @@
-"""Lifecycle v1 HTTPS polling API shared by firmware, browser and plugin clients."""
+"""Lifecycle v1 HTTP/HTTPS polling API shared by firmware, browser and plugin clients."""
 
 import asyncio
 import contextlib
@@ -11,7 +11,7 @@ from auth_policy import Principal, Role
 from enrollment import EnrollmentError
 from enrollment_http import ENROLLMENT, unique_object
 from lifecycle import Lifecycle
-from owner_http import COOKIE, ORIGIN, OWNER, secure_request
+from owner_http import ORIGIN, OWNER, cookie_name, secure_request
 
 LIFECYCLE = web.AppKey("lifecycle", Lifecycle)
 MEDIA_TEARDOWN = web.AppKey("lifecycle_media_teardown", Teardown)
@@ -28,7 +28,7 @@ async def lifecycle_endpoint(request: web.Request) -> web.Response:
         if request.content_type != "application/json" or len(request.headers.getall("Authorization", [])) > 1:
             raise EnrollmentError("invalid_request")
         header = request.headers.get("Authorization", "")
-        cookie = request.cookies.get(COOKIE, "")
+        cookie = request.cookies.get(cookie_name(request), "")
         if header and cookie:
             raise EnrollmentError("invalid_request")
         raw = bytearray()

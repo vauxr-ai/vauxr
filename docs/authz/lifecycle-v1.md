@@ -5,7 +5,7 @@ plugins. It is stacked on unmerged PR55/56/57, exact base
 `bdc0dbe9edf115e4474d5ae8364e8bf8b8138cc2`. Owner access uses the separate owner
 session contract; it never becomes device or integration voice authority.
 
-## Trusted transport and exact HTTP interface
+## Optional TLS and exact HTTP interface
 
 Every request below is POST `/api/lifecycle/v1/{action}`, with a UTF-8 JSON object
 and **exactly** the listed fields. Unknown fields/actions, duplicate JSON keys,
@@ -16,10 +16,24 @@ retained by the owner UI before the first POST. `role` is exactly `device` or
 `integration`; `subject` is the existing stable device ID or routing-channel ID.
 There is no credential-ID/role selection in client polling, delivery or ACK.
 
-Use authenticated HTTPS with the exact configured `OWNER_HTTPS_ORIGIN`, including
-server certificate validation, **before sending any credential, proof or cookie**.
-The existing owner Host/direct-TLS/trusted-proxy boundary, exact same-origin
-Origin and CSRF protections apply unchanged. Owner mutations and status require the
+TLS is optional. Default self-hosted home-network lifecycle uses HTTP/WS with an
+exact `OWNER_ORIGIN` (for example `http://192.168.1.20:8080`), without a domain,
+certificates, reverse proxy or managed service. HTTPS/WSS is an optional explicit
+choice and retains strict certificate chain, hostname/IP SAN and validity checks
+against pretrusted roots with trustworthy time before any credentials are sent.
+Never disable verification or fall back to HTTP/WS after TLS failure.
+
+The [owner transport contract](owner-v1.md) defines exact Host, same-origin Origin,
+CSRF, mode-specific cookies and the optional direct-TLS/trusted-proxy boundary.
+`OWNER_HTTPS_ORIGIN` remains an HTTPS-only compatibility alias. HTTP/WS is
+unencrypted and cannot authenticate the server against an on-path LAN attacker;
+physical participation and signed enrollment do not conceal bearer credentials.
+Auth, explicit pairing confirmation/physical participation, scopes, rotation,
+revocation and recovery state-machine guarantees remain required in either mode.
+Clients persist the selected origin/scheme and require explicit setup on changes;
+TLS provider selection is not a blocker for the LAN lifecycle.
+
+Owner mutations and status require the
 owner session cookie, exact Origin and `X-CSRF-Token`. Native subject clients use
 `Authorization: Bearer <their credential>`; they may omit Origin. Browser voice
 requests must omit owner cookies (`credentials: "omit"`) and send their separate
@@ -55,7 +69,7 @@ Successful `deliver` adds **only** `credential` (a generated 256-bit `vx_dev_` o
 only lifecycle endpoint that returns a secret, only to the matching authenticated
 subject. Owners, integrations acting as approvers, other subjects, and owner
 bearers cannot obtain it. No new WS frame is defined: all three clients use this
-same HTTPS polling interface alongside their existing WSS/media transports.
+same HTTP or HTTPS polling interface alongside their selected WS or WSS/media transports.
 Clients must not send lifecycle frames to `/ws` or `/channel`; unknown frames remain
 denied. This avoids dependency on a particular plugin/device socket implementation.
 
@@ -92,7 +106,7 @@ per-client service guarantee. Repeated unauthorized traffic can exhaust it.
    pending enrollment approvals, and records `acknowledged`. Old socket/media
    authority is disconnected. A subsequent status/ACK/maintenance pass records
    `completed`. Neither state is possible without the replacement-authenticated
-   durable-save ACK. Clients reconnect WSS/realtime/channel sessions using the saved
+   durable-save ACK. Clients reconnect WS/WSS/realtime/channel sessions using the saved
    replacement; they cannot change a retained socket's authenticated principal.
 5. A lost ACK reply is safely retryable with the saved replacement and same ID;
    it returns acknowledged or completed. Owner retries with the same operation ID
@@ -237,8 +251,17 @@ unsupported. Back up consistently and never selectively remove the lifecycle nam
 deadlines and ACK obligations for downstream implementations; tests execute the
 fixture against both roles. Tests also inject pre/post-rename persistence failures,
 client-save/ACK and final-response loss, restart/offline/expiry, recovery/revoke races,
-retained authority, role/identity substitution and configured HTTPS/CSRF failures.
+retained authority, role/identity substitution and configured transport/CSRF failures.
 These are synthetic server tests. Real firmware durable storage/physical interaction,
 browser storage/tab behavior, plugin persistence, stock browser/device TLS acceptance,
 real media E2E and clean-install trust bootstrap remain outstanding. No TLS bypass,
 new service/DNS provisioning, deployment or hardware claim is included.
+
+
+Optional-transport regressions in `tests/test_optional_tls.py` exercise owner
+claim/save/login, confirmed signed enrollment, authenticated WS, rotation/save ACK,
+revocation and same-key recovery over direct HTTP/WS. Device and integration
+lifecycle role/CSRF checks run in both configured modes in `tests/test_lifecycle.py`.
+Local HTTPS/WSS handshakes accept an explicitly trusted valid test certificate and
+reject untrusted, wrong-IP-SAN and expired certificates with verification enabled.
+These are server/aiohttp regressions, not stock browser or firmware acceptance.

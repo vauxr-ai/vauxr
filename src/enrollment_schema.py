@@ -57,7 +57,7 @@ def validate_enrollment(state: object) -> None:
                 raise ValueError("Invalid enrollment state")
             if not row["server_id"] == state["server_id"]:
                 raise ValueError("Invalid enrollment state")
-            if not (isinstance(row["origin"], str) and row["origin"].startswith("https://")):
+            if not (isinstance(row["origin"], str) and row["origin"].startswith(("http://", "https://"))):
                 raise ValueError("Invalid enrollment state")
             if not (len(row["origin"]) <= 256 and row["origin"].isascii()):
                 raise ValueError("Invalid enrollment state")

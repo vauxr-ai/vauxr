@@ -11,8 +11,8 @@
 ### Components & how to run them (dev mode)
 - **Backend voice gateway** (`src/`, entry `python3 -m server`): one aiohttp process that
   binds **:8765** (device WebSocket, path `/ws`) and **:8080** (HTTP API `/api/*` + serves the
-  built web client). No auth environment variable is required. Owner access requires the trusted HTTPS
-  boundary and explicit console setup in `docs/authz/owner-v1.md`; `DEVICE_TOKEN` grants no access. Run from the repo root —
+  built web client). No auth environment variable is required. Owner access requires an exact HTTP/HTTPS owner origin
+  and explicit console setup in `docs/authz/owner-v1.md`; `DEVICE_TOKEN` grants no access. Run from the repo root —
   static file serving resolves `web-client/dist` relative to the current working directory.
   Example: `DATA_DIR=/workspace/.data python3 -m server`.
 - `DATA_DIR` must be writable (channel registry persists to `<DATA_DIR>/config.json`). Its

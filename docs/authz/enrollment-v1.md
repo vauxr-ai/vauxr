@@ -14,30 +14,31 @@ separate packages. No integration credential is issued by these endpoints.
 
 ## Trust and physical participation
 
-**Authenticate HTTPS before sending any credential, enrollment proof or code.**
-Reuse the exact `OWNER_HTTPS_ORIGIN` and trusted immediate proxy contract in
-[owner-v1.md](owner-v1.md). Discovery/manual URLs only identify candidate servers.
-Clients validate certificate chain, hostname and validity using an already
-trusted root and trustworthy time. No HTTP fallback, certificate-warning
-clickthrough, IP/name exception, learned unauthenticated pin, or TLS bypass.
-API, WSS, firmware download and realtime signaling must use consistently trusted
-names. A proxy must replace forwarding headers, preserve public Host, restrict
-backend access, and suppress bodies, credentials, cookies and query strings in
-logs. Direct TLS is also accepted by the existing owner boundary.
+TLS is optional: the default home-network enrollment/lifecycle path uses HTTP/WS
+with an exact `OWNER_ORIGIN` such as `http://192.168.1.20:8080`, without a domain,
+certificates, reverse proxy or managed service. Apply the mode-specific Host,
+Origin, cookie and proxy rules in [owner-v1.md](owner-v1.md). Discovery/manual URLs
+only identify candidates; choosing the installation still requires explicit setup.
 
-The public `server_id` is a persisted random installation identifier, authenticated
-**by HTTPS**, not a trust anchor. Clients retain the authenticated origin and
-server_id and require explicit setup if either changes. Ordinary leaf certificate
-renewal with the same validated name/root does not change the enrollment identity.
-Root rollover, initial trusted time/root provisioning and first-install trust
-remain #45/firmware obligations. **The TLS provider/DNS/service choice is unresolved
-and remains a release blocker.** Nothing here provisions DNS, certificates,
-services, bootstrap trust or hardware attestation. See the separate TLS work
-package's `docs/auth/tls-server-trust.md` decision record (PR54).
+When HTTPS/WSS is selected, validate chain to a pretrusted root, hostname/IP SAN
+and validity with trustworthy time before sending any credential, proof or code.
+API, WS, firmware download and realtime signaling must honor the selected secure
+transport. No certificate-warning clickthrough, verification bypass, learned
+unauthenticated pin or automatic HTTP/WS fallback. Root/time provisioning and
+optional TLS client acceptance remain downstream obligations, not a requirement
+for the HTTP/WS LAN path. TLS provider/DNS/service choice is not a LAN release blocker.
+
+The public `server_id` is a persisted installation identifier, not a trust anchor.
+HTTPS authenticates it through the validated endpoint; HTTP provides no server
+transport authentication or confidentiality. Clients retain the explicitly chosen
+origin (including scheme) and server_id and require explicit setup if either changes.
+Leaf renewal with the same validated name/root does not change enrollment identity.
+On-path LAN attackers can observe or alter HTTP traffic, including codes and bearer
+credentials. Signed proof and physical confirmation do not remove that boundary.
 
 An anonymous `request` means only “someone submitted a public key.” It is **never
 physical button proof**. A valid `prove` establishes possession of that Ed25519
-private key for this challenge and this authenticated server. It still does not
+private key for this challenge and this selected server. It still does not
 prove a button press, board identity or genuine firmware. For physical enrollment:
 
 1. Firmware requires a deliberate local long-press while unpaired, distinct from
@@ -45,7 +46,8 @@ prove a button press, board identity or genuine firmware. For physical enrollmen
    feedback. Network messages must never open/extend that window. Already paired
    firmware refuses ordinary enrollment until a deliberate physical reset/transfer.
 2. Firmware generates/retains its own Ed25519 key using its maintained crypto
-   library and a secure random source, validates server trust, requests a challenge,
+   library and a secure random source, validates the selected transport (including
+   certificates for HTTPS), requests a challenge,
    checks all binding fields and signs `prove` only while that window is open.
 3. Firmware speaks the returned eight digits **locally**, before any authorized
    voice session exists. It must not use the server voice pipeline or ask an
@@ -107,7 +109,7 @@ keys, extra fields, wrong types and noncanonical hex are rejected. JSON field or
 and insignificant whitespace are irrelevant. No client `physical_verified`,
 `button_pressed`, requested `device_id`, role, credential or TTL fields are accepted.
 
-All actions require the configured trusted HTTPS boundary. Any supplied Origin
+All actions require the configured HTTP/HTTPS boundary. Any supplied Origin
 must exactly equal the configured origin; duplicate Origins are rejected. Native
 clients/integrations may omit Origin. Cookie requests always require exact Origin
 and the owner session's `X-CSRF-Token`, enforced by owner middleware. Browser
@@ -146,7 +148,7 @@ The challenge binding object contains exactly these fields:
 | `version` | integer `1` (not a boolean) |
 | `request_id` | fresh 128-bit random ID, lowercase hex |
 | `server_id` | persistent 128-bit random installation ID, lowercase hex |
-| `origin` | exact configured ASCII HTTPS origin, at most 256 characters |
+| `origin` | exact configured ASCII HTTP or HTTPS origin, at most 256 characters |
 | `kind` | `physical` or `browser` |
 | `public_key` | the submitted canonical raw public key hex |
 | `device_id` | `dev_` followed by lowercase SHA-256 hex of the **raw public key bytes** |
@@ -188,7 +190,8 @@ Strings use ASCII JSON escaping (`ensure_ascii=True`); accepted binding strings
 are ASCII and exclude quote/backslash/control characters in names and hex fields.
 The exact configured origin is serialized as JSON, including any necessary JSON
 escapes. Do not percent-decode, normalize case, ports or URL components. A client
-must compare the returned origin to the TLS-authenticated configured origin and
+must compare the returned origin to the explicitly configured origin
+(TLS-authenticated when HTTPS is selected) and
 verify key/kind/name/device_id and the retained server_id before signing.
 
 Reference algorithm, using the named fields from the challenge:
@@ -298,7 +301,7 @@ Tests in `tests/test_enrollment.py` cover signature/request/code/server substitu
 role and TLS/Origin/CSRF rejection, concurrency across threads/processes, recovery
 and generation races, persistence bounds, malformed input, restart and pre/post
 commit failures. They use synthetic credentials. Real TLS/browser/Voice PE/media
-acceptance and the unresolved TLS provider choice remain blockers, not test claims.
+acceptance remain downstream acceptance work, not test claims or HTTP/WS prerequisites.
 
 An interoperability fixture is committed at
 [`tests/fixtures/enrollment-v1-vector.json`](../../tests/fixtures/enrollment-v1-vector.json):
