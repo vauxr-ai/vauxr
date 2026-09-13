@@ -25,7 +25,7 @@ from config import get_config
 from device_config import VALID_FOLLOW_UP_MODES, parse_button_actions
 from enrollment_http import attach_enrollment
 from lifecycle_http import attach_lifecycle
-from owner_http import attach_owner, owner_middleware, session_principal
+from owner_http import attach_owner, cookie_name, owner_middleware, session_principal
 from protocol import encode_text_message
 
 if TYPE_CHECKING:
@@ -106,7 +106,7 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
         resp = await handler(request)
     # Same-origin owner API never enables credentialed cross-origin access.
     if (not request.path.startswith(("/api/auth/", "/api/enrollment/", "/api/lifecycle/"))
-            and "__Host-vauxr_owner" not in request.cookies):
+            and cookie_name(request) not in request.cookies):
         resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"

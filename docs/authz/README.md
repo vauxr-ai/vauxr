@@ -1,3 +1,8 @@
+> Product decision: TLS is optional. Default home-network lifecycle supports
+> HTTP/WS without domains, certificates, a proxy or a managed service. Optional
+> HTTPS/WSS retains strict certificate validation. The current transport contract
+> is [owner-v1.md](owner-v1.md); earlier TLS-mandatory assumptions are superseded.
+
 # Authorization foundation (#46)
 
 Current lifecycle extension: [credential lifecycle v1](lifecycle-v1.md) defines
@@ -10,7 +15,7 @@ or ordinary enrollment v1 response fields.
 **Enrollment update (#48):** [enrollment-v1.md](enrollment-v1.md) freezes the
 server physical/browser enrollment API, Ed25519 transcript, human matching-code
 boundary and schema 3. It supersedes the reserved pairing descriptions below;
-physical proof is not hardware attestation. TLS deployment/provider choice remains
+physical proof is not hardware attestation. Optional TLS deployment/provider choice remains
 unresolved. Other lifecycle/integration credential operations remain unshipped.
 
 **Stacked owner update (#47):** [owner-v1.md](owner-v1.md) supersedes this

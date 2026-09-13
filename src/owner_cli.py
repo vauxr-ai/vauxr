@@ -1,11 +1,10 @@
 """Explicit local-console owner setup. Never invoked automatically at startup."""
 
 import argparse
-import os
 import sys
 
 from auth import get_store
-from owner_auth import OwnerAuth, OwnerError, environment_token, generate_token, trusted_origin
+from owner_auth import OwnerAuth, OwnerError, configured_origin, environment_token, generate_token
 
 
 def main() -> None:
@@ -19,11 +18,16 @@ def main() -> None:
         if args.command == "generate-token":
             print(generate_token())
             return
-        origin = trusted_origin(os.environ.get("OWNER_HTTPS_ORIGIN", ""))
+        origin = configured_origin()
+        if not origin:
+            raise ValueError("Configure OWNER_ORIGIN before owner setup")
         service = OwnerAuth(get_store(), environment_token())
         # Do not reconcile environment here: only server startup can observe override removal.
         code = service.console_claim(recover=args.command == "recover")
-        print(f"First establish browser-trusted HTTPS at {origin}; never bypass a certificate warning.")
+        if origin.startswith("https://"):
+            print(f"First establish browser-trusted HTTPS at {origin}; never bypass a certificate warning.")
+        else:
+            print(f"Use the configured home-network origin {origin}; HTTP transport is unencrypted.")
         print("Enter this single-use claim code within 5 minutes in the trusted setup flow:")
         print(code)
     except (ValueError, OSError, OwnerError) as exc:

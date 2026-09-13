@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "transport": "POST HTTPS /api/lifecycle/v1/{action}",
+  "transport": "POST HTTP or HTTPS /api/lifecycle/v1/{action}",
   "public_fields": [
     "version",
     "operation_id",
@@ -52,5 +52,17 @@
     "failure_status": 503,
     "failure_error": "transport_teardown_unavailable",
     "retry": "retain failed attempts; observe noncooperative attempts without duplicates"
+  },
+  "transport_policy": {
+    "default": "http/ws",
+    "optional": "https/wss",
+    "origin_setting": "OWNER_ORIGIN",
+    "https_certificate_requirements": [
+      "trusted_chain",
+      "hostname_or_ip_san",
+      "validity",
+      "trusted_time"
+    ],
+    "tls_failure_fallback": false
   }
 }
