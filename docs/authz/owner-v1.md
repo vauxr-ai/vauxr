@@ -1,6 +1,8 @@
 # Owner authentication contract v1 (#47)
 
-This package is stacked on authorization foundation **8451b39 / unmerged PR55**.
+This package is stacked on authorization foundation **7e7fba02f36dac6194c830ffcb9e1f861b50cdac / unmerged PR55**.
+The reviewed stale-principal repair is merged into the owner branch; original
+8451b39 remains an ancestor. Review owner-only changes with `7e7fba0..HEAD`.
 It implements backend owner authentication and a local-console CLI. Browser UI
 belongs to #50; device/integration enrollment and credential lifecycle remain
 #48/#49/#51. This is not a deployable end-to-end auth release by itself.
@@ -182,13 +184,29 @@ a lost ACK response may fail; login with the saved token distinguishes completio
 Device settings and routing config files are never changed by owner recovery.
 
 For downstream #48/#49/#51, `owner_http.session_principal(request)` resolves the
-session to `Principal(Role.OWNER, "owner", generation)`; use the same middleware and
+session to `Principal(Role.OWNER, "owner", session.generation)` with an empty
+`credential_generation`; use the same middleware and
 foundation operation policy for new HTTP handlers. `owner_middleware` enforces the
 transport/Origin/CSRF boundary for all requests carrying the cookie, including new
 routes. New handlers still need the foundation declared authorization boundary and
 an explicit policy check; adding a route is not authorization. Session generations
 are **not credential IDs in the paired-client collection** and must not be sent to
-socket credential validators. No enrollment/lifecycle secret belongs in owner
+socket credential validators or `auth.current()`: that function intentionally
+rejects these policy principals. Resolve the cookie again on each HTTP request via
+`session_principal()`; `OwnerAuth.session()` compares the generation retained at
+login with the durable owner epoch and checks expiry and logout state. Never cache
+the returned policy principal as session authority. The random owner epoch is
+independent of the token verifier: switching environment token A -> B -> A cannot
+revive an A session, even if it was not checked during B.
+
+Paired-client bearer principals instead retain the foundation's authenticated
+`credential_generation` and must pass `auth.current()` when reused (including
+device/integration sockets). Never reconstruct a retained principal using today's
+credential generation by ID. HTTP bearer requests authenticate the supplied token
+afresh; owner bearer records remain rejected. Removing/reissuing a client ID with
+a different verifier cannot revive its old principal and does not revoke owner
+sessions; owner recovery revokes sessions while preserving current client identities.
+No enrollment/lifecycle secret belongs in owner
 status or pairing approval responses.
 
 ## Recovery and validation limits

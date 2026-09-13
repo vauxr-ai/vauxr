@@ -65,7 +65,8 @@ async def owner_middleware(request: web.Request, handler: Handler) -> web.Stream
             if not owner_path or request.path.endswith("/logout"):
                 result = request.app[OWNER].session(cookie)
                 csrf = request.headers.get("X-CSRF-Token", "")
-                if result is None or not hmac.compare_digest(csrf.encode("utf-8"), result[1].csrf.encode("utf-8")):
+                if result is None or not hmac.compare_digest(
+                        csrf.encode("utf-8"), result[1].csrf.encode("utf-8")):
                     raise web.HTTPForbidden()
         response = await handler(request)
     except web.HTTPException as exc:
