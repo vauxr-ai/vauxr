@@ -119,6 +119,24 @@ def test_environment_precedence_change_removal_recovery(tmp_path):
     assert removed.login(new["operator_token"])
 
 
+def test_environment_a_b_a_across_restarts_revokes_original_session(tmp_path):
+    """Restoring A's verifier must not restore the original owner session."""
+    original = service(tmp_path, TOKEN_A)
+    cookie, _ = original.login(TOKEN_A)
+
+    # These distinct services model server restarts that update the durable
+    # store. Keep the original process alive to attempt its stale cookie once
+    # A's verifier has been restored.
+    restarted_with_b = service(tmp_path, TOKEN_B)
+    assert restarted_with_b.status()["state"] == "environment"
+    restarted_with_a = service(tmp_path, TOKEN_A)
+    assert restarted_with_a.status()["state"] == "environment"
+
+    assert original.session(cookie) is None
+    fresh_cookie, _ = restarted_with_a.login(TOKEN_A)
+    assert restarted_with_a.session(fresh_cookie)
+
+
 @pytest.mark.parametrize("token", ["", "password", " " + TOKEN_A, TOKEN_A + "\n", "vx_op_" + "!" * 43])
 def test_invalid_explicit_environment(monkeypatch, token):
     monkeypatch.setenv("OPERATOR_TOKEN", token)
