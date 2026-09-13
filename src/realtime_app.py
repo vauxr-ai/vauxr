@@ -12,8 +12,10 @@ from typing import Any
 
 from aiohttp import web
 
-from auth import validate_token
+from auth import authenticate
+from auth_policy import Operation, allowed, audit_denial
 from config import get_config
+from http_server import transport_boundary
 
 log = logging.getLogger("vauxr.realtime")
 
@@ -58,6 +60,7 @@ def broaden_aiortc_dtls_ciphers() -> None:
     log.info("Patched aiortc DTLS cipher list to include ECDHE-RSA (esp_peer compat)")
 
 
+@transport_boundary
 async def _offer_handler(request: web.Request) -> web.Response:
     try:
         body: dict[str, Any] = await request.json()
@@ -69,30 +72,38 @@ async def _offer_handler(request: web.Request) -> web.Response:
 
     device_id = body.get("device_id")
     token = body.get("token")
-    if not isinstance(device_id, str) or not isinstance(token, str):
-        return web.json_response({"error": "Missing device_id/token"}, status=400)
-    if not validate_token(token).ok:
-        return web.json_response({"error": "Unauthorized"}, status=401)
+    header = request.headers.get("Authorization", "")
+    # Existing device body-token signaling remains scoped; conflicting credentials fail closed.
+    principal = authenticate(
+        (header[7:] if header.startswith("Bearer ") else None) if header else token
+    )
+    if (not allowed(principal, Operation.REALTIME_OFFER, resource=device_id)
+            or (header and token is not None and authenticate(token) != principal)):
+        audit_denial(principal is not None)
+        status = 401 if principal is None else 403
+        return web.json_response({"error": "unauthorized" if status == 401 else "forbidden"}, status=status)
+    # A client-supplied peer handle can select another device's connection in SmallWebRTC.
+    # Re-offers by pc_id are unavailable until peer ownership is enforced in the manager.
+    if body.get("pc_id") is not None or body.get("restart_pc"):
+        audit_denial(True)
+        return web.json_response({"error": "forbidden"}, status=403)
 
     from realtime_session import get_manager
 
     manager = get_manager()
-    # The shared device token authenticates the *caller*, not which device id it
-    # may claim. Require that this id actually has an armed wake (or a live
-    # session for re-offers) so a token holder can't bind WebRTC to someone
-    # else's pre-roll/control relay.
+    # Identity is checked before consulting wake state or creating media resources.
     if not manager.can_accept_offer(device_id):
         log.warning("realtime offer for %s rejected — no active realtime.start", device_id)
         return web.json_response({"error": "No active realtime session"}, status=403)
 
     try:
         answer = await manager.handle_offer(device_id, body)
-    except Exception as e:  # noqa: BLE001
-        log.error("realtime offer failed for %s: %s", device_id, e)
+    except Exception:  # noqa: BLE001
+        log.error("realtime offer failed")
         # End the wake the device armed on realtime.start; otherwise it can sit
         # in listening with no WebRTC path until disconnect or the next wake.
         await manager.abort_wake(device_id)
-        return web.json_response({"error": str(e)}, status=500)
+        return web.json_response({"error": "realtime offer failed"}, status=500)
 
     if answer is None:
         await manager.abort_wake(device_id)

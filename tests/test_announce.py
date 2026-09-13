@@ -37,6 +37,9 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     cfg_mod.reset_config()
     monkeypatch.setenv("DEVICE_TOKEN", "tok-X")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from tests.auth_helpers import seed
+    from auth_policy import Role
+    seed("tok-X", Role.OWNER, "owner")
     monkeypatch.setenv("OPENCLAW_URL", "")
     registry.reset()
     channel_registry._reset_for_tests()
@@ -245,18 +248,18 @@ async def test_firmware_serves_bin(client: TestClient, tmp_path: Path) -> None:
     fw_dir = tmp_path / "firmware"
     fw_dir.mkdir()
     (fw_dir / "satellite1.bin").write_bytes(b"ESPFW")
-    res = await client.get("/firmware/satellite1.bin")
+    res = await client.get("/firmware/satellite1.bin", headers=_auth())
     assert res.status == 200
     assert await res.read() == b"ESPFW"
 
 
 async def test_firmware_missing_is_404(client: TestClient) -> None:
-    res = await client.get("/firmware/missing.bin")
+    res = await client.get("/firmware/missing.bin", headers=_auth())
     assert res.status == 404
 
 
 async def test_firmware_rejects_non_bin_name(client: TestClient) -> None:
-    res = await client.get("/firmware/secret.txt")
+    res = await client.get("/firmware/secret.txt", headers=_auth())
     assert res.status == 404
 
 
@@ -328,8 +331,8 @@ async def test_patch_button_actions(client: TestClient) -> None:
     )
     assert res.status == 200
     body = await res.json()
-    assert body["config"]["button_actions"]["double_press"]["kind"] == "prompt"
-    assert body["config"]["button_actions"]["long_press"]["command"] == "mute"
+    assert "button_actions" not in body["config"]
+    assert registry.get_config_for("dev1")["button_actions"]["long_press"]["command"] == "mute"
 
 
 async def test_patch_button_actions_invalid(client: TestClient) -> None:
@@ -351,40 +354,18 @@ async def test_list_channels_empty(client: TestClient) -> None:
     assert await res.json() == []
 
 
-async def test_create_channel(client: TestClient) -> None:
-    res = await client.post("/api/channels", headers=_auth(), json={"name": "My Channel"})
-    assert res.status == 201
-    body = await res.json()
-    assert body["name"] == "My Channel"
-    assert body["type"] == "openclaw"
-    assert body["token"].startswith("vx_ch_")
+@pytest.mark.parametrize("method,path", [
+    ("POST", "/api/channels"), ("DELETE", "/api/channels/missing"),
+    ("POST", "/api/channels/missing/rotate"),
+])
+async def test_channel_lifecycle_is_explicitly_unshipped(client, method, path):
+    res = await client.request(method, path, headers=_auth(), json={"name": "X"})
+    assert res.status == 501
+    assert await res.json() == {"error": "operation not implemented"}
+    assert channel_registry.get_all() == []
 
 
-async def test_create_channel_missing_name(client: TestClient) -> None:
-    res = await client.post("/api/channels", headers=_auth(), json={})
-    assert res.status == 400
-
-
-async def test_delete_channel(client: TestClient) -> None:
-    created = await (await client.post("/api/channels", headers=_auth(), json={"name": "X"})).json()
-    res = await client.delete(f"/api/channels/{created['id']}", headers=_auth())
+async def test_activate_channel(client):
+    created, _ = await channel_registry.create("X")
+    res = await client.post(f"/api/channels/{created.id}/activate", headers=_auth())
     assert res.status == 200
-
-
-async def test_delete_nonexistent_channel(client: TestClient) -> None:
-    res = await client.delete("/api/channels/does-not-exist", headers=_auth())
-    assert res.status == 404
-
-
-async def test_activate_channel(client: TestClient) -> None:
-    created = await (await client.post("/api/channels", headers=_auth(), json={"name": "X"})).json()
-    res = await client.post(f"/api/channels/{created['id']}/activate", headers=_auth())
-    assert res.status == 200
-
-
-async def test_rotate_token(client: TestClient) -> None:
-    created = await (await client.post("/api/channels", headers=_auth(), json={"name": "X"})).json()
-    res = await client.post(f"/api/channels/{created['id']}/rotate", headers=_auth())
-    assert res.status == 200
-    body = await res.json()
-    assert body["token"].startswith("vx_ch_")
