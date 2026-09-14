@@ -13,11 +13,12 @@ Features grouped by theme. No ordering assigned.
 - ~~**Streaming TTS via idle-pause detection** — flush buffered assistant text to Piper whenever the delta stream goes idle (default 400ms) so the device starts speaking while the agent is still thinking or running tools, instead of waiting for the full reply~~ ✅
 
 ### Device Management
-- **`OPERATOR_TOKEN` for admin auth** — rename `DEVICE_TOKEN` to `OPERATOR_TOKEN` and scope it to admin operations only (channel CRUD, device provisioning, web UI access). Removes the device-side meaning entirely. Solves the bootstrap chicken-and-egg: per-device tokens come from the device-management API, and that API is itself gated by `OPERATOR_TOKEN`. Channel tokens (`vx_ch_…`) remain the auth for HTTP API consumers like the OpenClaw plugin.
-- **Device management REST API remainder** — `GET`/`PATCH /api/devices` already list and rename. Still open: create / revoke, and a unique token per device at registration. Replaces the shared `DEVICE_TOKEN` `.env` bootstrap. Gated by `OPERATOR_TOKEN`.
-- **Device management web UI remainder** — DevicesPanel already lists, names, follow-up, barge-in, buttons, commands, and last-seen. Still open: add/revoke devices and per-device token management.
+- **Scoped authentication initiative [#44](https://github.com/vauxr-ai/vauxr/issues/44)** — implemented server/browser groundwork with release acceptance still open. [Owner v1](docs/authz/owner-v1.md) uses explicit console claim, generated-token save acknowledgement and separate cookie login; no auth environment variable is required. Optional `OPERATOR_TOKEN` is an authoritative owner-login override, never a device or integration bearer.
+- **Enrollment and access management** — [enrollment v1](docs/authz/enrollment-v1.md), [browser v1](docs/authz/browser-v1.md) and [lifecycle v1](docs/authz/lifecycle-v1.md) define separate scoped identities, physical matching-code approval, rotation/save ACK, revocation and explicit same-key recovery. Existing device and speech configuration remains; unrelated legacy identities require reviewed settings transfer.
+- **Breaking migration [#52](https://github.com/vauxr-ai/vauxr/issues/52)** — follow the [installation, backup, rollback and reconnect guide](docs/authz/migration-52.md). `DEVICE_TOKEN` and legacy channel tokens grant no access; there is no compatibility window. The guide pins the unmerged server/plugin dependencies and records the missing firmware artifact and physical acceptance gates in [#53](docs/authz/combined-53.md).
 
 ### Home Assistant Integration
+- Home Assistant and Matter are separate follow-ups, not scoped-auth release requirements.
 - **Vauxr STT/TTS providers for HA** — HA sees stable "Vauxr STT" and "Vauxr TTS" entities that speak the Vauxr WS protocol under the hood. HA users can route their voice pipeline through Vauxr without ever exposing Whisper/Piper TCP ports directly. Distinct from the firmware ROADMAP's HA event forwarder (`vauxr.wake` etc. to `/api/events`) and from the existing webhook dispatcher.
 
 ### Provider Abstraction
@@ -46,9 +47,8 @@ Features grouped by theme. No ordering assigned.
 - ~~Optional plugin for deeper OpenClaw integration~~ ✅
 - ~~**Relay mode**: plugin opens outbound WS from local OpenClaw to Vauxr — no port forwarding needed~~ ✅
 
-Plugin-only remaining work lives in [vauxr-openclaw/ROADMAP.md](https://github.com/vauxr-ai/vauxr-openclaw/blob/develop/ROADMAP.md). Pairing / `/pair` / per-device `/status` are out of scope (the plugin opts out).
+Plugin auth coordination is tracked in [plugin #36 / PR37](https://github.com/vauxr-ai/vauxr-openclaw/pull/37) against [integration v1](docs/authz/integration-v1.md). It provides owner-approved integration setup, protected credential persistence and scoped physical-device pairing. See the [pinned plugin setup and reconnect procedure](docs/authz/migration-52.md#reconnect-openclaw); actual plugin/server/browser/voice acceptance remains open. Other plugin work lives in [vauxr-openclaw/ROADMAP.md](https://github.com/vauxr-ai/vauxr-openclaw/blob/develop/ROADMAP.md).
 
 ### Security
-- **WSS / TLS transport** — currently using plain `ws://`; production deployments should use `wss://`; needs TLS cert handling on the server side and `esp_tls` on the ESP32 (ESP-IDF has built-in support)
-- **Certificate validation** — device should verify server cert; for self-hosted setups, support custom CA bundle baked into firmware
-- **Token rotation** — per-device bearer tokens should be rotatable without re-pairing (channel-token rotate already ships)
+- **Transport and trust** — HTTP/WS is the unencrypted LAN default; optional HTTPS/WSS requires strict chain/name/date verification, explicit trust provisioning and no downgrade. Follow the [proxy, microphone and renewal procedure](docs/authz/migration-52.md#httpws-and-optional-strict-tls). Positive deployed browser/firmware TLS and trustworthy device time remain acceptance work.
+- **Credential lifecycle** — [lifecycle v1](docs/authz/lifecycle-v1.md) implements owner-initiated device/integration rotation with bounded overlap and durable-save ACK, terminal revoke and explicit recovery. Legacy channel export/rotation is replaced. [Rollback](docs/authz/migration-52.md#rollback) must account for revoked credentials returning in older full snapshots; automated tests do not prove physical power-loss safety.

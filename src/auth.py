@@ -1,43 +1,25 @@
-"""Token validation — mirrors `src/auth.ts`."""
+"""Resolve credentials to principals. No shared DEVICE_TOKEN/channel fallback."""
 
-from __future__ import annotations
+from pathlib import Path
 
-import hmac
-from dataclasses import dataclass
-
+from auth_policy import Principal
+from auth_store import CredentialStore
 from config import get_config
 
-
-@dataclass(frozen=True)
-class AuthResult:
-    ok: bool
-    reason: str | None = None
+_store: CredentialStore | None = None
 
 
-def validate_token(token: str) -> AuthResult:
-    """Constant-time comparison against the configured device token."""
-    expected = get_config().device.token
-    a = token.encode("utf-8")
-    b = expected.encode("utf-8")
-    # The Node version short-circuits on length mismatch with the same
-    # "Invalid token" reason, so the API contract is identical either way.
-    if len(a) != len(b):
-        return AuthResult(ok=False, reason="Invalid token")
-    if not hmac.compare_digest(a, b):
-        return AuthResult(ok=False, reason="Invalid token")
-    return AuthResult(ok=True)
+def get_store() -> CredentialStore:
+    global _store
+    path = Path(get_config().data_dir) / "authz.json"
+    if _store is None or _store.path != path:
+        _store = CredentialStore(path)
+    return _store
 
 
-async def validate_channel_http_token(token: str) -> AuthResult:
-    """Channel token check — delegates to the channel registry.
+def authenticate(token: object) -> Principal | None:
+    return get_store().authenticate(token)
 
-    Imported lazily to avoid a circular import (channel_registry pulls in
-    config, which doesn't depend on auth, but channel_registry is a Phase 12
-    module that will live alongside this one).
-    """
-    import channel_registry  # noqa: PLC0415  (lazy import)
 
-    channel = await channel_registry.validate_channel_token(token)
-    if channel is None:
-        return AuthResult(ok=False, reason="Invalid token")
-    return AuthResult(ok=True)
+def current(principal: Principal | None) -> bool:
+    return get_store().current(principal)

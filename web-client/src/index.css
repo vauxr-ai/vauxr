@@ -34,3 +34,14 @@
     @apply outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60 focus-visible:ring-offset-0;
   }
 }
+
+/* Owner controls remain usable independently of voice connection state. */
+.auth-panel { line-height: 1.6; }
+.auth-panel h1, .auth-panel h2, .auth-panel h3 { font-weight: 600; color: #f4f4f5; }
+.auth-panel p, .auth-panel small { color: #a1a1aa; }
+.auth-panel button { border: 1px solid #52525b; border-radius: .4rem; padding: .3rem .65rem; }
+.auth-panel button:hover:not(:disabled) { background: #3730a3; }
+.auth-panel button:disabled { opacity: .45; cursor: not-allowed; }
+.auth-panel input:not([type=checkbox]), .auth-panel select { background: #27272a; color: #fafafa; border: 1px solid #52525b; border-radius: .3rem; padding: .3rem; }
+.auth-panel :focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
+.auth-panel [role=alert] { color: #fca5a5; }

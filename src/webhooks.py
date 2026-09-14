@@ -12,9 +12,11 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from auth_store import atomic_private_json
 from config import get_config
 
 log = logging.getLogger("vauxr.webhooks")
@@ -58,8 +60,7 @@ def _save() -> None:
             for w in _webhooks
         ]
     }
-    with open(_path(), "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    atomic_private_json(Path(_path()), payload)
 
 
 def load() -> None:
@@ -241,7 +242,7 @@ def public_dict(hook: Webhook) -> dict[str, Any]:
     return {
         "id": hook.id,
         "name": hook.name,
-        "url": hook.url,
+        "has_url": bool(hook.url),
         "has_authorization": bool(hook.authorization),
-        "body": hook.body,
+        "has_body": bool(hook.body),
     }

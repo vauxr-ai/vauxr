@@ -34,3 +34,6 @@ data-backup*/
 
 # Local review evidence and working notes
 .codex-logs/
+# Isolated auth/browser verification runtime and disposable server data
+/.auth50-runtime/
+/.browser-test-*/

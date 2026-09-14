@@ -7,10 +7,13 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+import auth
 import config
 import device_registry
 import speech
+from auth_policy import Role
 from speech import Backend, SpeechStore
+from tests.auth_helpers import seed
 from wyoming_protocol import WyomingError, WyomingEvent, encode_event, parse_wyoming_events
 
 
@@ -20,6 +23,7 @@ def neutral_store(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     config.reset_config()
     device_registry.reset()
+    seed("neutral-test", Role.DEVICE, "device")
     store = SpeechStore(tmp_path, (
         Backend("recognizer-a", "stt", "wyoming", "model-a", "127.0.0.1", 10300),
         Backend("speaker-a", "tts", "wyoming", "model-b", "127.0.0.1", 10200, ("voice-a", "voice-b")),
@@ -113,7 +117,7 @@ async def test_transport_paths_resolve_device_selection_once(neutral_store, monk
     monkeypatch.setattr(pipeline, "_route_via_openclaw_direct", route)
     if path == "ws":
         state = AppState(openclaw_client=object(), channel_server=channels)
-        ctx = ConnectionCtx()
+        ctx = ConnectionCtx(device_id="device", principal=auth.authenticate("neutral-test"))
         await _voice_start(state, ws, ctx, {"device_id": "device", "token": "neutral-test"})
         await _voice_end(state, ws, ctx)
         await asyncio.wait_for(done.wait(), 1)

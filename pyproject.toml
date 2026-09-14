@@ -42,6 +42,7 @@ realtime = [
 
 [project.scripts]
 vauxr = "server:main"
+vauxr-owner = "owner_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/vauxr-ai/vauxr"

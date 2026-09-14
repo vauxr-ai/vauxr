@@ -334,7 +334,7 @@ ESP-IDF component will be published to the ESP-IDF Component Registry. Ports to 
 
 - Device auth: per-device bearer token issued at pairing
 - Pairing: approval via OpenClaw `/pair` command or Vauxr UI
-- Transport: TLS (`wss://`) for all production deployments
+- Transport: HTTP/WS for default home-network setup; optional HTTPS/WSS with strict certificate validation
 - Tokens: scoped per device, revocable
 
 

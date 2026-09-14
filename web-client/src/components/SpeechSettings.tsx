@@ -1,3 +1,4 @@
+import { ownerFetch } from "../auth/api";
 import { useCallback, useEffect, useState } from "react";
 
 type Backend = { id: string; kind: "stt" | "tts"; model: string; voices: string[]; readiness: string };
@@ -6,17 +7,17 @@ type View = { defaults: Defaults; overrides: Partial<Defaults>; effective: {
   stt_backend: string; tts_backend: string; voice_id: string;
 } | null; backends: Backend[]; error: string | null };
 
-export default function SpeechSettings({ baseUrl, token, deviceId }: {
-  baseUrl: string; token: string; deviceId?: string;
+export default function SpeechSettings({ deviceId }: {
+  deviceId?: string;
 }) {
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const path = deviceId ? `/api/devices/${encodeURIComponent(deviceId)}/speech` : "/api/speech";
   const request = useCallback(async (patch?: object, signal?: AbortSignal) => {
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await ownerFetch(path, {
       method: patch ? "PATCH" : "GET", signal,
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       ...(patch ? { body: JSON.stringify(patch) } : {}),
     });
     if (!response.ok) throw new Error(`Speech settings request failed (${response.status})`);
@@ -25,7 +26,7 @@ export default function SpeechSettings({ baseUrl, token, deviceId }: {
       throw new Error("Invalid speech settings response");
     }
     return body;
-  }, [baseUrl, token, path]);
+  }, [path]);
   useEffect(() => {
     const controller = new AbortController();
     setData(null);
