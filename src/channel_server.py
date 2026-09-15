@@ -19,6 +19,8 @@ import auth_connections
 import channel_registry
 from auth import authenticate, current
 from auth_policy import Operation, Principal, allowed, audit_denial
+from config import get_config
+from device_config import load_device_display_name
 
 log = logging.getLogger("vauxr.channel_server")
 
@@ -85,17 +87,24 @@ class ChannelServer:
             log.warning("Active channel %s not connected — dropping transcript", active.name)
             return False
 
+        # device_id comes from the authenticated device turn. Display metadata
+        # must never replace it in sessions, response listeners or routing.
+        frame = {
+            "type": "channel.transcript",
+            "deviceId": device_id,
+            "sessionKey": f"vauxr:{device_id}",
+            "text": text,
+        }
+        name = load_device_display_name(get_config().data_dir, device_id)
+        if name is not None:
+            frame["deviceDisplayName"] = name
+
         # Schedule the WS send on the event loop; the pipeline calls this
         # synchronously, so we return True optimistically once we've queued.
         asyncio.create_task(
             _send_json(
                 conn.ws,
-                {
-                    "type": "channel.transcript",
-                    "deviceId": device_id,
-                    "sessionKey": f"vauxr:{device_id}",
-                    "text": text,
-                },
+                frame,
             )
         )
         log.info("Sent transcript")
