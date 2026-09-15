@@ -20,15 +20,17 @@ belongs to #50; device/integration enrollment and credential lifecycle remain
 
 ## Transport modes and configuration
 
-LAN HTTP is the supported default; no domain, certificate, proxy or managed service
-is required. Set `OWNER_HTTP_ORIGIN` to the exact intended local endpoint, for
-example `http://192.168.10.20:8080` or `http://voice.lan:8080`. If absent, the fixed
-origin is `http://localhost:8080` (local browser only); remote LAN use requires the
-explicit local address/name. Neither Host nor discovery nor forwarding headers
-select the origin. HTTP supplies no cryptographic server authentication: select
-the intended endpoint and trust the LAN and setup surface. An on-path LAN attacker
-can observe or modify credentials, cookies and browser code. Console claim codes
-do not encrypt traffic or authenticate the server.
+LAN HTTP is the supported default; no domain, certificate, proxy, managed service,
+or `.env` file is required. With no owner-origin override, the fixed origin is
+`http://localhost:8080` for a browser on the Docker host. If the browser uses a
+different machine, LAN IP/hostname, or external port, set `OWNER_HTTP_ORIGIN` to
+that exact intended origin (for example `http://192.168.10.20:8080` or
+`http://voice.lan:8080`) in the deployment environment; `.env` is only one
+optional mechanism. Neither Host nor discovery nor forwarding headers select the
+origin. HTTP supplies no cryptographic server authentication: select the intended
+endpoint and trust the LAN and setup surface. An on-path LAN attacker can observe
+or modify credentials, cookies and browser code. Console claim codes do not
+encrypt traffic or authenticate the server.
 
 Opt into hardened TLS by setting `OWNER_HTTPS_ORIGIN`, for example
 `https://voice.example.test`. Establish browser-trusted HTTPS before submitting
