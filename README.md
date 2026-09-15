@@ -31,26 +31,14 @@ Any device that speaks the Vauxr WS protocol can connect. The HTTP API (`/api/de
 
 ## Quick Start
 
-1. Clone the repo and copy the example env file:
+1. Clone the repo:
 
 ```bash
 git clone https://github.com/vauxr-ai/vauxr.git
 cd vauxr
-cp .env.example .env
 ```
 
-2. Set the exact LAN owner origin in `.env` (use your server address):
-
-```env
-OWNER_HTTP_ORIGIN=http://192.168.1.20:8080
-```
-
-No auth token is required at startup. Complete the explicit console claim/save
-setup in [owner authentication v1](docs/authz/owner-v1.md). Legacy `DEVICE_TOKEN`
-grants no access. HTTP/WS is the LAN default; optional HTTPS/WSS requires strict
-certificate validation and never falls back to plaintext.
-
-3. Prepare the persistent directory and start the stack:
+2. Prepare the persistent directory and start the stack:
 
 ```bash
 mkdir -p data/piper data/whisper
@@ -64,7 +52,46 @@ The initialization runs through the selected Docker daemon so ownership works
 with both rootful and rootless Docker. Vauxr runs as container UID 100/GID 101;
 do not use host `chown 100:101` for a rootless deployment.
 
-Use the web client or HTTP API at `http://your-server-ip:8080`. Voice devices connect to `ws://your-server-ip:8765`.
+3. On the same machine, open the web client at [http://localhost:8080](http://localhost:8080).
+Then open the local owner claim flow from a private terminal:
+
+```bash
+docker compose exec -it vauxr vauxr-owner claim
+```
+
+Enter the one-time code in the browser, save the generated operator token in a
+password manager, acknowledge that save, and then log in. No auth token or
+`.env` file is required to start Vauxr. Legacy `DEVICE_TOKEN` grants no access.
+
+### Browser on another machine or address
+
+The default owner origin is exactly `http://localhost:8080`, so it is intended
+for a browser on the Docker host. If the browser instead uses a LAN IP,
+hostname, or a different external port, set `OWNER_HTTP_ORIGIN` to that exact
+browser origin before starting Vauxr. A `.env` file is one optional mechanism;
+an exported environment variable or your deployment configuration works too.
+
+```bash
+# Example only: use the exact URL entered in the browser.
+OWNER_HTTP_ORIGIN=http://192.168.1.20:8080 docker compose up -d
+```
+
+Restart the stack and run the claim command with the same deployment
+environment after changing the origin. The server never learns a trusted origin
+from a browser request, Host header, or DNS lookup. See
+[owner authentication v1](docs/authz/owner-v1.md) for the exact-origin boundary.
+
+### Optional HTTPS and proxy
+
+LAN HTTP/WS is the simplest supported path. For browser-trusted HTTPS/WSS, set
+`OWNER_HTTPS_ORIGIN` to the exact HTTPS browser origin and, if TLS terminates at
+a reverse proxy, set `OWNER_TRUSTED_PROXIES` to the proxy's exact address or
+network. Establish a browser-trusted certificate first; malformed TLS/proxy
+configuration fails closed and never downgrades to HTTP. See the owner contract
+before enabling this mode.
+
+Voice devices connect to `ws://localhost:8765` from the Docker host, or to the
+corresponding reachable server authority when they are remote.
 
 ## Connecting to OpenClaw
 

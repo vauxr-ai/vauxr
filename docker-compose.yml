@@ -19,6 +19,11 @@ services:
       piper:
         condition: service_healthy
     environment:
+      # Bare pass-throughs preserve unset versus explicitly empty host values.
+      # Presence of either TLS/proxy setting selects TLS in the owner parser.
+      OWNER_HTTP_ORIGIN:
+      OWNER_HTTPS_ORIGIN:
+      OWNER_TRUSTED_PROXIES:
       # Neutral values win in config.py; empty values use legacy names below.
       STT_URL: ${STT_URL:-}
       TTS_URL: ${TTS_URL:-}
@@ -27,10 +32,11 @@ services:
       PIPER_URL: ${PIPER_URL:-tcp://127.0.0.1:10200}
       OPENCLAW_URL: ${OPENCLAW_URL:-}
       OPENCLAW_TOKEN: ${OPENCLAW_TOKEN:-}
-      DEVICE_TOKEN: ${DEVICE_TOKEN}
+      # Legacy value only; it grants no owner access. Empty is valid so a
+      # clean install does not need a .env file.
+      DEVICE_TOKEN: ${DEVICE_TOKEN:-}
       PIPER_VOICE: ${PIPER_VOICE:-en_US-libritts_r-medium}
       DATA_DIR: /data
-      SSL_CERT_FILE: /certs/root.crt
       # Realtime WebRTC is opt-in (off by default): set REALTIME_ENABLED=1 in
       # your .env to turn it on. When enabled, REALTIME_HOST must be the server's
       # LAN IP/hostname — the device receives an absolute /api/offer URL built
@@ -48,7 +54,6 @@ services:
       VAUXR_RECORD_DIR: ${VAUXR_RECORD_DIR:-}
     volumes:
       - ./data:/data
-      - ./certs/root.crt:/certs/root.crt:ro
       - ./recordings:/data/recordings
       - ./firmware:/data/firmware
 
