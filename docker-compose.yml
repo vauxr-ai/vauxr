@@ -19,6 +19,11 @@ services:
       piper:
         condition: service_healthy
     environment:
+      # Bare pass-throughs preserve unset versus explicitly empty host values.
+      # Presence of either TLS/proxy setting selects TLS in the owner parser.
+      OWNER_HTTP_ORIGIN:
+      OWNER_HTTPS_ORIGIN:
+      OWNER_TRUSTED_PROXIES:
       # Neutral values win in config.py; empty values use legacy names below.
       STT_URL: ${STT_URL:-}
       TTS_URL: ${TTS_URL:-}
