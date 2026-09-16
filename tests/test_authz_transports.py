@@ -337,7 +337,7 @@ async def test_new_unprotected_route_is_denied_by_middleware():
         assert response.status == 401
 
 
-async def test_duplicate_device_identity_retires_old_socket_and_requires_retry():
+async def test_reconnecting_device_immediately_replaces_old_socket():
     async with (
         TestClient(TestServer(make_app())) as client,
         client.ws_connect("/ws") as first,
@@ -348,39 +348,14 @@ async def test_duplicate_device_identity_retires_old_socket_and_requires_retry()
         await first.receive_json(timeout=2)
         original = device_registry.get("speaker").ws
         await second.send_json(hello)
-        assert (await second.receive_json(timeout=2))["code"] == "FORBIDDEN"
-        assert (await first.receive(timeout=2)).type in {
-            WSMsgType.CLOSE,
-            WSMsgType.CLOSED,
-            WSMsgType.CLOSING,
-        }
-        assert device_registry.get("speaker") is None
+        assert (await second.receive_json(timeout=2))["type"] == "hello"
+        replacement = device_registry.get("speaker").ws
+        assert replacement is not original
 
-        async with client.ws_connect("/ws") as retry:
-            await retry.send_json(hello)
-            assert (await retry.receive_json(timeout=2))["type"] == "hello"
-            assert device_registry.get("speaker").ws is not original
-
-
-async def test_duplicate_device_denial_logs_only_internal_reason(caplog):
-    caplog.set_level(logging.INFO)
-    async with (
-        TestClient(TestServer(make_app())) as client,
-        client.ws_connect("/ws") as first,
-        client.ws_connect("/ws") as second,
-    ):
-        await first.send_json(
-            {"type": "hello", "device_id": "speaker", "token": "device-secret"}
-        )
-        await first.receive_json(timeout=2)
-        await second.send_json(
-            {"type": "hello", "device_id": "speaker", "token": "device-secret"}
-        )
-        assert (await second.receive_json(timeout=2))["code"] == "FORBIDDEN"
-
-    logs = "\n".join(r.getMessage() for r in caplog.records if r.name == "vauxr.authz")
-    assert "authorization denied: forbidden (duplicate_device_connection)" in logs
-    assert "speaker" not in logs and "device-secret" not in logs
+        # The superseded socket may remain physically open, but it no longer owns
+        # the authenticated device identity and cannot send another command.
+        await first.send_json({"type": "device.button", "button": "action", "gesture": "single"})
+        assert (await first.receive_json(timeout=2))["code"] == "FORBIDDEN"
 
 
 @pytest.mark.parametrize("header", ["Basic ignored", "Bearer owner-secret", "Bearer other-device-secret"])
