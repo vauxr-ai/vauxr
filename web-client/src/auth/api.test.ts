@@ -30,3 +30,25 @@ it("keeps cookie and bearer authority separate, blocks redirects and cross-origi
     ownerFetch("https://other.example/api/devices"),
   ).rejects.toThrow();
 });
+
+it("ignores an old request's 401 after a newer login, but expires current authority", async () => {
+  let release!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => { release = resolve; })));
+  const expired = vi.fn();
+  window.addEventListener("owner-expired", expired);
+  try {
+    setCsrf("old-session");
+    const old = ownerFetch("/api/devices");
+    setCsrf("new-session");
+    release(new Response("{}", { status: 401 }));
+    await old;
+    expect(expired).not.toHaveBeenCalled();
+    const current = ownerFetch("/api/auth/session");
+    release(new Response("{}", { status: 401 }));
+    await current;
+    expect(expired).toHaveBeenCalledTimes(1);
+  } finally {
+    window.removeEventListener("owner-expired", expired);
+    setCsrf("");
+  }
+});

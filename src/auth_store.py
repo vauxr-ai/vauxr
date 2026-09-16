@@ -84,7 +84,7 @@ def validate_owner_state(state: object) -> None:
     if not isinstance(state, dict):
         raise ValueError("Invalid owner state")  # noqa: TRY004
     required = {"version", "mode", "generation"}
-    optional = {"verifier", "claim", "claim_expires", "claim_attempts", "pending", "attempts"}
+    optional = {"verifier", "claim", "claim_expires", "claim_attempts", "pending", "attempts", "sessions"}
     if (not required <= state.keys() or not state.keys() <= required | optional
             or type(state["version"]) is not int or state["version"] != 1
             or state["mode"] not in ("unclaimed", "recovery", "generated", "environment")
@@ -100,7 +100,7 @@ def validate_owner_state(state: object) -> None:
 
     active = state["mode"] in ("generated", "environment")
     if active:
-        if not digest(state.get("verifier")) or state.keys() - (required | {"verifier", "attempts"}):
+        if not digest(state.get("verifier")) or state.keys() - (required | {"verifier", "attempts", "sessions"}):
             raise ValueError("Invalid owner state")
     elif "verifier" in state:
         raise ValueError("Invalid owner state")
@@ -118,6 +118,16 @@ def validate_owner_state(state: object) -> None:
                 or not digest(pending["verifier"]) or not digest(pending["ack"])
                 or not timestamp(pending["expires"])):
             raise ValueError("Invalid owner state")
+    if "sessions" in state:
+        sessions = state["sessions"]
+        if (not isinstance(sessions, dict) or sessions.keys() != {"origin", "entries"}
+                or not digest(sessions["origin"]) or not isinstance(sessions["entries"], dict)
+                or len(sessions["entries"]) > 100 or (not active and sessions["entries"])):
+            raise ValueError("Invalid owner sessions")
+        for key, row in sessions["entries"].items():
+            if (not digest(key) or not isinstance(row, dict) or row.keys() != {"expires"}
+                    or not timestamp(row["expires"])):
+                raise ValueError("Invalid owner sessions")
     attempts = state.get("attempts", [])
     if not isinstance(attempts, list) or len(attempts) > 10 or not all(timestamp(at) for at in attempts):
         raise ValueError("Invalid owner state")

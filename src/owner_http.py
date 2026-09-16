@@ -52,7 +52,6 @@ def session_principal(request: web.Request) -> Principal | None:
         return None
     if not secure_request(request):
         return None
-    request.app[OWNER].bind_origin(request.app[ORIGIN])
     result = request.app[OWNER].session(request.cookies.get(cookie_name(request), ""))
     return result[0] if result else None
 
@@ -66,7 +65,6 @@ async def owner_middleware(request: web.Request, handler: Handler) -> web.Stream
     try:
         if not secure_request(request):
             raise web.HTTPForbidden()
-        request.app[OWNER].bind_origin(request.app[ORIGIN])
         other_cookie = LAN_COOKIE if cookie_name(request) == COOKIE else COOKIE
         if other_cookie in request.cookies:
             raise web.HTTPForbidden()

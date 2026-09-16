@@ -73,8 +73,8 @@ forwarding headers; this package adds no server certificate configuration.
 duplicate proto values and `Forwarded` fail. The trusted proxy and private backend
 hop are part of the TLS trust boundary.
 
-Restart the single server after configuration changes. Sessions are process-local
-and discarded on every restart, so mode/origin changes, including A -> B -> A,
+Restart the single server after configuration changes. Sessions survive unchanged restarts. Durable
+mode/origin changes, including A -> B -> A,
 require login again with the saved operator token. The internal origin-binding
 operation also clears all sessions before rebinding; live environment mutation
 is unsupported. These transitions do not rotate the operator token or modify
@@ -131,8 +131,7 @@ secret-free error. Format validation cannot prove randomness: generate it using
 the command rather than inventing a value. The env value is authoritative on
 startup for both new and existing installations. Its verifier replaces the
 persisted generated/pending verifier. Unchanged overrides keep the durable owner
-generation; changed overrides replace it. All process-local sessions also expire
-on every process restart, including when the override is unchanged.
+generation; changed overrides replace it. Sessions survive restarts when the override and origin are unchanged.
 
 Removing an override and restarting transitions to **recovery**, clears the env
 verifier, and cannot resurrect any earlier generated token. Run `recover` to
@@ -169,11 +168,18 @@ SameSite=Strict, Path=/, with Max-Age 43200 seconds. The opposite mode's cookie
 is rejected, including when both cookies are supplied. Logout revokes the session
 and expires the selected mode's cookie with its matching attributes. Clients must
 clear stale cookies when explicitly switching modes; HTTP cannot clear a Secure
-`__Host-` cookie. Renaming/replaying an old cookie after restart cannot revive it.
+`__Host-` cookie. Renaming/replaying a revoked cookie cannot revive it.
 Absolute server-side expiry is 12 hours with no sliding refresh. Cookie plaintext exists only in the response/client;
-the in-memory session table keys are SHA-256 verifiers. Sessions are bounded to 100
-per process, expire on restart, and are checked against the durable generation on
-every authenticated HTTP request. Logout revokes one session; recovery/env change
+the durable session table keys are SHA-256 verifiers. CSRF is derived from the
+cookie using domain-separated HMAC and is never persisted. The strict owner schema
+includes an optional `sessions` object with an origin digest and up to 100 entries
+containing absolute expiry times. Existing snapshots migrate on startup. Older binaries reject this additional
+metadata; rollback requires the documented consistent pre-upgrade backup. Sessions
+are bounded to 100 across processes and reloaded under the credential-store lock on
+every authenticated HTTP request. Authority changes atomically clear the table;
+origin changes durably replace its binding even when returning to an earlier origin.
+Old workers cannot rebind the origin during requests. Login and logout use the same
+atomic private snapshot as paired credentials, preserving enrollment and configuration. Logout revokes one session; recovery/env change
 revokes all. Already admitted HTTP operations are not rolled back by later logout.
 Cookie sessions authorize owner HTTP operations through the foundation policy.
 Operator bearer tokens (including old foundation owner records) are rejected by
@@ -244,8 +250,9 @@ an explicit policy check; adding a route is not authorization. Session generatio
 are **not credential IDs in the paired-client collection** and must not be sent to
 socket credential validators or `auth.current()`: that function intentionally
 rejects these policy principals. Resolve the cookie again on each HTTP request via
-`session_principal()`; `OwnerAuth.session()` compares the generation retained at
-login with the durable owner epoch and checks expiry and logout state. Never cache
+`session_principal()`; `OwnerAuth.session()` reloads the durable session table,
+checks its origin binding and absolute expiry, and returns the current owner epoch.
+Every authority transition clears that table in the same atomic owner write. Never cache
 the returned policy principal as session authority. The random owner epoch is
 independent of the token verifier: switching environment token A -> B -> A cannot
 revive an A session, even if it was not checked during B.
