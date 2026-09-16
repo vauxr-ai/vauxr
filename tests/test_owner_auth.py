@@ -317,7 +317,8 @@ async def test_http_complete_session_csrf_and_logout(monkeypatch, tls):
         cookie = response.cookies[name]
         assert bool(cookie["secure"]) == tls
         assert cookie["httponly"] and cookie["samesite"] == "Strict"
-        assert cookie["path"] == "/" and not cookie["domain"] and int(cookie["max-age"]) == 43200
+        assert (cookie["path"] == "/" and not cookie["domain"]
+                and int(cookie["max-age"]) == owner_auth.SESSION_SECONDS)
         headers = {**base_headers, "Cookie": f"{name}={cookie.value}"}
         assert (await client.get("/api/auth/session", headers=headers)).status == 200
         assert (await client.get("/api/devices", headers=headers)).status == 200
@@ -918,7 +919,7 @@ async def test_http_restart_cookie_csrf_logout_and_expiry(monkeypatch, tls):
         cookie = login.cookies[name]
         assert cookie['httponly'] and cookie['samesite'] == 'Strict'
         assert bool(cookie['secure']) == tls
-        assert cookie['max-age'] == '43200'
+        assert cookie['max-age'] == str(owner_auth.SESSION_SECONDS)
         session = await login.json()
         headers['Cookie'] = f'{name}={cookie.value}'
     async with TestClient(TestServer(make_http_app())) as client:

@@ -14,7 +14,10 @@ from auth_store import CredentialStore, verifier
 
 TOKEN_PATTERN = re.compile(r"vx_op_[A-Za-z0-9_-]{43}\Z")
 CLAIM_SECONDS = 300
-SESSION_SECONDS = 43200
+# Persistent owner sessions use the recommended 30-day lifetime. Individual
+# sessions remain revocable by logout, owner-key/recovery changes, or origin
+# changes.
+SESSION_SECONDS = 30 * 24 * 60 * 60
 
 
 def generate_token() -> str:
