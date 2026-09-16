@@ -1,6 +1,8 @@
 // Owner authority is exclusively the same-origin HttpOnly cookie. CSRF stays in memory.
 let csrf = "";
+let authorityRevision = 0;
 export function setCsrf(value: string) {
+  if (csrf !== value) authorityRevision++;
   csrf = value;
 }
 export async function ownerFetch(path: string, init: RequestInit = {}) {
@@ -10,6 +12,7 @@ export async function ownerFetch(path: string, init: RequestInit = {}) {
   headers.delete("Authorization");
   headers.set("Content-Type", "application/json");
   if (csrf) headers.set("X-CSRF-Token", csrf);
+  const revision = authorityRevision;
   const response = await fetch(path, {
     ...init,
     headers,
@@ -18,7 +21,8 @@ export async function ownerFetch(path: string, init: RequestInit = {}) {
     redirect: "error",
     referrerPolicy: "no-referrer",
   });
-  if (response.status === 401) window.dispatchEvent(new Event("owner-expired"));
+  if (response.status === 401 && revision === authorityRevision)
+    window.dispatchEvent(new Event("owner-expired"));
   return response;
 }
 export async function jsonResponse(response: Response) {

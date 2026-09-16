@@ -14,7 +14,10 @@ from auth_store import CredentialStore, verifier
 
 TOKEN_PATTERN = re.compile(r"vx_op_[A-Za-z0-9_-]{43}\Z")
 CLAIM_SECONDS = 300
-SESSION_SECONDS = 43200
+# Persistent owner sessions use the recommended 30-day lifetime. Individual
+# sessions remain revocable by logout, owner-key/recovery changes, or origin
+# changes.
+SESSION_SECONDS = 30 * 24 * 60 * 60
 
 
 def generate_token() -> str:
@@ -89,14 +92,34 @@ class OwnerAuth:
             raise ValueError("Invalid OPERATOR_TOKEN; use vauxr-owner generate-token")
         self.store = store
         self.override = verifier(override) if override is not None else None
-        self.sessions: dict[str, Session] = {}
         self._origin = origin
 
     def bind_origin(self, origin: str) -> None:
         """Transport changes discard all sessions, including an A -> B -> A transition."""
-        if origin != self._origin:
-            self.sessions.clear()
+        with self.store.transaction():
+            state = self._state()
+            if state.get("sessions", {}).get("origin") != verifier(origin):
+                self.store.save_owner({**state, "sessions": {"origin": verifier(origin), "entries": {}}})
             self._origin = origin
+
+    def _save_authority(self, state: dict) -> None:
+        """Changing owner authority revokes sessions but retains the origin binding."""
+        sessions = self.store.owner.get("sessions")
+        if sessions is not None:
+            state = {**state, "sessions": {"origin": sessions["origin"], "entries": {}}}
+        self.store.save_owner(state)
+
+    def _sessions(self, state: dict) -> dict:
+        sessions = state.get("sessions", {})
+        if sessions.get("origin") != verifier(self._origin):
+            raise OwnerError("invalid_login")
+        return sessions["entries"]
+
+    @staticmethod
+    def _csrf(cookie: str) -> str:
+        # Domain separation: neither the stored cookie verifier nor this CSRF
+        # value can be used as a cookie or to reconstruct one.
+        return hmac.digest(cookie.encode("utf-8"), b"vauxr:owner-csrf:v1", "sha256").hex()
 
     def _state(self) -> dict:
         state = self.store.owner
@@ -111,14 +134,17 @@ class OwnerAuth:
             state = self._state()
             if self.override is not None:
                 if state.get("mode") != "environment" or state.get("verifier") != self.override:
-                    self.store.save_owner({"version": 1, "mode": "environment",
+                    self._save_authority({"version": 1, "mode": "environment",
                                            "generation": secrets.token_hex(16), "verifier": self.override})
             elif state.get("mode") == "environment":
-                self.store.save_owner({"version": 1, "mode": "recovery",
+                self._save_authority({"version": 1, "mode": "recovery",
                                        "generation": secrets.token_hex(16)})
             elif not state:
-                self.store.save_owner({"version": 1, "mode": "unclaimed",
+                self._save_authority({"version": 1, "mode": "unclaimed",
                                        "generation": secrets.token_hex(16)})
+
+            if self._origin or "sessions" not in self.store.owner:
+                self.bind_origin(self._origin)
 
     def status(self) -> dict:
         with self.store.transaction():
@@ -140,10 +166,9 @@ class OwnerAuth:
             if not recover and state.get("mode", "unclaimed") != "unclaimed":
                 raise OwnerError("Already claimed; use the explicit recover command")
             code = secrets.token_urlsafe(24)
-            self.store.save_owner({"version": 1, "mode": "recovery" if recover else "unclaimed",
+            self._save_authority({"version": 1, "mode": "recovery" if recover else "unclaimed",
                                    "generation": secrets.token_hex(16), "claim": verifier(code),
                                    "claim_expires": time.time() + CLAIM_SECONDS, "claim_attempts": 0})
-            self.sessions.clear()
             return code
 
     def rate_limit(self) -> None:
@@ -192,7 +217,7 @@ class OwnerAuth:
             if (saved is not True or pending.get("expires", 0) <= time.time()
                     or not self._matches(acknowledgement, pending.get("ack"))):
                 raise OwnerError("invalid_acknowledgement")
-            self.store.save_owner({"version": 1, "mode": "generated", "generation": state["generation"],
+            self._save_authority({"version": 1, "mode": "generated", "generation": state["generation"],
                                    "verifier": pending["verifier"]})
 
     def login(self, token: object) -> tuple[str, Session]:
@@ -202,13 +227,14 @@ class OwnerAuth:
                     token, state.get("verifier")):
                 raise OwnerError("invalid_login")
             now = time.time()
-            self.sessions = {key: value for key, value in self.sessions.items()
-                             if value.expires > now and value.generation == state["generation"]}
-            if len(self.sessions) >= 100:
+            entries = {key: value for key, value in self._sessions(state).items()
+                       if value["expires"] > now}
+            if len(entries) >= 100:
                 raise OwnerError("rate_limited")
             cookie = secrets.token_urlsafe(32)
-            session = Session(state["generation"], now + SESSION_SECONDS, secrets.token_urlsafe(32))
-            self.sessions[verifier(cookie)] = session
+            session = Session(state["generation"], now + SESSION_SECONDS, self._csrf(cookie))
+            entries[verifier(cookie)] = {"expires": session.expires}
+            self.store.save_owner({**state, "sessions": {**state["sessions"], "entries": entries}})
             return cookie, session
 
     def session(self, cookie: str) -> tuple[Principal, Session] | None:
@@ -216,13 +242,18 @@ class OwnerAuth:
             return None
         with self.store.transaction():
             state = self._state()
-            session = self.sessions.get(verifier(cookie))
-            if session is None:
+            if (state.get("mode") not in {"generated", "environment"}
+                    or state.get("sessions", {}).get("origin") != verifier(self._origin)):
                 return None
-            if session.expires <= time.time() or session.generation != state.get("generation"):
-                self.sessions.pop(verifier(cookie), None)
+            row = self._sessions(state).get(verifier(cookie))
+            if row is None or row["expires"] <= time.time():
                 return None
+            session = Session(state["generation"], row["expires"], self._csrf(cookie))
             return Principal(Role.OWNER, "owner", session.generation), session
 
     def logout(self, cookie: str) -> None:
-        self.sessions.pop(verifier(cookie), None)
+        with self.store.transaction():
+            state = self._state()
+            entries = dict(self._sessions(state))
+            if entries.pop(verifier(cookie), None) is not None:
+                self.store.save_owner({**state, "sessions": {**state["sessions"], "entries": entries}})

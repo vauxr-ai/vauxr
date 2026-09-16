@@ -401,7 +401,10 @@ async def test_owner_permission_rechecked_after_middleware(monkeypatch, tls, api
             if invalidate == "logout":
                 owner.logout(cookie)
             elif invalidate == "expiry":
-                session.expires = 0
+                with owner.store.transaction():
+                    state = owner.store.owner
+                    state["sessions"]["entries"][verifier(cookie)]["expires"] = 0
+                    owner.store.save_owner(state)
             elif invalidate == "recovery":
                 owner.console_claim(recover=True)
             else:

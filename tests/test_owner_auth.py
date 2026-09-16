@@ -79,8 +79,8 @@ def test_claim_save_restart_and_redaction(tmp_path, caplog):
         restarted.acknowledge(ack, True)
     cookie, session = restarted.login(token)
     assert restarted.session(cookie)
-    # Process-local sessions intentionally do not survive restart.
-    assert not service(tmp_path).session(cookie)
+    # Same-origin sessions and CSRF intentionally survive restart.
+    assert service(tmp_path).session(cookie)[1] == session
     assert service(tmp_path).login(token)
     for secret in (token, code, ack, cookie, session.csrf):
         assert secret not in owner.store.path.read_text()
@@ -317,7 +317,8 @@ async def test_http_complete_session_csrf_and_logout(monkeypatch, tls):
         cookie = response.cookies[name]
         assert bool(cookie["secure"]) == tls
         assert cookie["httponly"] and cookie["samesite"] == "Strict"
-        assert cookie["path"] == "/" and not cookie["domain"] and int(cookie["max-age"]) == 43200
+        assert (cookie["path"] == "/" and not cookie["domain"]
+                and int(cookie["max-age"]) == owner_auth.SESSION_SECONDS)
         headers = {**base_headers, "Cookie": f"{name}={cookie.value}"}
         assert (await client.get("/api/auth/session", headers=headers)).status == 200
         assert (await client.get("/api/devices", headers=headers)).status == 200
@@ -411,10 +412,9 @@ def test_login_capacity_after_separate_instance_recovery(tmp_path):
     owner.acknowledge(claimed["save_acknowledgement"], True)
     assert owner.store.owner["generation"] != old_generation
     # Leave every stale cookie unexamined until after the fresh login.
-    assert len(owner.sessions) == 100
-    assert all(session.expires > owner_auth.time.time() for session in owner.sessions.values())
+    assert owner.store.owner["sessions"]["entries"] == {}
     fresh_cookie, fresh_session = owner.login(claimed["operator_token"])
-    assert len(owner.sessions) == 1
+    assert len(owner.store.owner["sessions"]["entries"]) == 1
     assert fresh_session.generation == owner.store.owner["generation"]
     assert owner.session(fresh_cookie)
     assert all(owner.session(cookie) is None for cookie in cookies)
@@ -435,7 +435,7 @@ def test_login_capacity_retains_valid_sessions_and_purges_expired(tmp_path, monk
 
     monkeypatch.setattr(owner_auth.time, "time", lambda: expired_session.expires)
     fresh_cookie, _ = owner.login(token)
-    assert len(owner.sessions) == 100
+    assert len(owner.store.owner["sessions"]["entries"]) == 100
     assert owner.session(expired_cookie) is None
     assert all(owner.session(cookie) for cookie in [*valid_cookies, fresh_cookie])
     with pytest.raises(OwnerError, match="^rate_limited$"):
@@ -795,7 +795,8 @@ def test_origin_transition_discards_sessions_and_capacity_without_changing_owner
     owner.bind_origin("http://owner.example")
     assert owner.session(owner.login(token)[0])
     assert all(owner.session(cookie) is None for cookie in cookies)
-    assert owner.store.owner == state
+    assert {k: v for k, v in owner.store.owner.items() if k != "sessions"} == {
+        k: v for k, v in state.items() if k != "sessions"}
 
 
 @pytest.mark.parametrize("origins", [
@@ -868,3 +869,160 @@ def test_direct_tls_boundary_retained_and_never_accepted_as_lan(tls):
         request = make_mocked_request("GET", "https://owner.example/api/auth/status",
                                       headers={"Host": "owner.example", **extra}, app=app)
         assert secure_request(request) == expected
+
+
+def _process_session(path, cookie, token=None):
+    owner = OwnerAuth(CredentialStore(Path(path)), origin=ORIGIN)
+    if token:
+        return owner.login(token)[0]
+    assert owner.session(cookie)
+    owner.logout(cookie)
+    assert owner.session(cookie) is None
+
+
+def test_durable_concurrent_logout_login_and_client_writes(tmp_path):
+    from concurrent.futures import ProcessPoolExecutor
+
+    owner = service(tmp_path)
+    owner.bind_origin(ORIGIN)
+    token = claim_saved(owner)
+    cookie, _ = owner.login(token)
+    with ProcessPoolExecutor(max_workers=3) as pool:
+        logout = pool.submit(_process_session, str(owner.store.path), cookie)
+        logins = [pool.submit(_process_session, str(owner.store.path), '', token) for _ in range(8)]
+        writes = [pool.submit(_process_add, str(owner.store.path), i) for i in range(8)]
+        logout.result(timeout=10)
+        fresh = [f.result(timeout=10) for f in logins]
+        for future in writes:
+            future.result(timeout=10)
+    assert owner.session(cookie) is None
+    restarted = OwnerAuth(CredentialStore(owner.store.path), origin=ORIGIN)
+    restarted.initialize()
+    assert restarted.session(cookie) is None
+    assert all(restarted.session(value) for value in fresh)
+    assert len(restarted.store.records) == 8
+
+
+@pytest.mark.parametrize('tls', [False, True])
+async def test_http_restart_cookie_csrf_logout_and_expiry(monkeypatch, tls):
+    headers = HEADERS.copy()
+    name = COOKIE
+    if not tls:
+        monkeypatch.delenv('OWNER_HTTPS_ORIGIN')
+        monkeypatch.delenv('OWNER_TRUSTED_PROXIES')
+        monkeypatch.setenv('OWNER_HTTP_ORIGIN', 'http://owner.example')
+        headers = {'Host': 'owner.example', 'Origin': 'http://owner.example'}
+        name = LAN_COOKIE
+    async with TestClient(TestServer(make_http_app())) as client:
+        token = claim_saved(client.app[OWNER])
+        login = await client.post('/api/auth/login', headers=headers, json={'operator_token': token})
+        cookie = login.cookies[name]
+        assert cookie['httponly'] and cookie['samesite'] == 'Strict'
+        assert bool(cookie['secure']) == tls
+        assert cookie['max-age'] == str(owner_auth.SESSION_SECONDS)
+        session = await login.json()
+        headers['Cookie'] = f'{name}={cookie.value}'
+    async with TestClient(TestServer(make_http_app())) as client:
+        response = await client.get('/api/auth/session', headers=headers)
+        assert response.status == 200
+        assert await response.json() == session
+        assert (await client.get('/api/channels', headers=headers)).status == 200
+        assert (await client.post('/api/auth/logout', headers=headers, json={})).status == 403
+        headers['X-CSRF-Token'] = session['csrf_token']
+        assert (await client.post('/api/auth/logout', headers=headers, json={})).status == 200
+    async with TestClient(TestServer(make_http_app())) as client:
+        assert (await client.get('/api/auth/session', headers=headers)).status == 401
+        owner = client.app[OWNER]
+        fresh, row = owner.login(token)
+        headers['Cookie'] = f'{name}={fresh}'
+        monkeypatch.setattr(owner_auth.time, 'time', lambda: row.expires)
+        assert (await client.get('/api/auth/session', headers=headers)).status == 401
+        assert (await client.get('/api/channels', headers=headers)).status == 401
+
+
+def test_origin_change_blocks_old_worker_login_without_rebinding(tmp_path):
+    owner = service(tmp_path)
+    owner.bind_origin(ORIGIN)
+    token = claim_saved(owner)
+    cookie, _ = owner.login(token)
+    other = OwnerAuth(CredentialStore(owner.store.path), origin='https://other.example')
+    other.initialize()
+    assert owner.session(cookie) is None
+    with pytest.raises(OwnerError, match='invalid_login'):
+        owner.login(token)
+    restored = OwnerAuth(CredentialStore(owner.store.path), origin=ORIGIN)
+    restored.initialize()
+    assert restored.session(cookie) is None
+    assert owner.session(cookie) is None
+
+
+@pytest.mark.parametrize('bad', [
+    [], {}, {'origin': 'bad', 'entries': {}},
+    {'origin': 'a' * 64, 'entries': [],},
+    {'origin': 'a' * 64, 'entries': {'raw-cookie': {'expires': 1}}},
+    *[{'origin': 'a' * 64, 'entries': {'b' * 64: {'expires': expiry}}}
+      for expiry in (True, -1, float('nan'), float('inf'), '123')],
+    {'origin': 'a' * 64, 'entries': {'b' * 64: {'expires': 1, 'csrf': 'secret'}}},
+    {'origin': 'a' * 64, 'entries': {f'{i:064x}': {'expires': 1} for i in range(101)}},
+])
+def test_corrupt_session_schema_fails_closed(tmp_path, bad):
+    owner = service(tmp_path)
+    cookie, _ = owner.login(claim_saved(owner))
+    payload = json.loads(owner.store.path.read_text())
+    payload['owner']['sessions'] = bad
+    owner.store.path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match='Invalid credential store'):
+        owner.session(cookie)
+    assert owner.store.owner == {}
+    assert owner.store.records == ()
+
+
+def test_legacy_owner_snapshot_migrates_and_read_does_not_write(tmp_path):
+    owner = service(tmp_path)
+    token = claim_saved(owner)
+    with owner.store.transaction():
+        owner.store.save_owner({k: v for k, v in owner.store.owner.items() if k != 'sessions'})
+    restarted = service(tmp_path)
+    cookie, _ = restarted.login(token)
+    before = restarted.store.path.read_bytes()
+    with patch.object(auth_store, 'atomic_private_json', side_effect=AssertionError('read wrote')):
+        assert service(tmp_path).session(cookie)
+    assert restarted.store.path.read_bytes() == before
+
+
+def test_failed_logout_is_not_reported_as_success(tmp_path):
+    owner = service(tmp_path)
+    cookie, _ = owner.login(claim_saved(owner))
+    with (patch.object(auth_store, 'atomic_private_json', side_effect=OSError('synthetic failure')),
+          pytest.raises(OSError)):
+        owner.logout(cookie)
+    assert service(tmp_path).session(cookie)
+
+
+@pytest.mark.parametrize('action', ['login', 'logout'])
+@pytest.mark.parametrize('after_rename', [False, True])
+def test_session_write_failure_tracks_atomic_disk_state(tmp_path, action, after_rename):
+    owner = service(tmp_path)
+    token = claim_saved(owner)
+    cookie, session = owner.login(token)
+    assert owner.session(verifier(cookie)) is None
+    assert owner.session(session.csrf) is None
+    original = auth_store.atomic_private_json
+
+    def fail(path, payload):
+        if after_rename:
+            original(path, payload)
+        raise OSError('synthetic failure')
+
+    with patch.object(auth_store, 'atomic_private_json', fail), pytest.raises(OSError):
+        if action == 'login':
+            owner.login(token)
+        else:
+            owner.logout(cookie)
+    disk = CredentialStore(owner.store.path)
+    assert owner.store.owner == disk.owner
+    if action == 'logout':
+        assert bool(service(tmp_path).session(cookie)) != after_rename
+    else:
+        assert len(disk.owner['sessions']['entries']) == (2 if after_rename else 1)
+        assert service(tmp_path).session(cookie)

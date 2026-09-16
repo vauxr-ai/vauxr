@@ -30,9 +30,14 @@ export function useWebhooks(_baseUrl = "", _token = "") {
     return res;
   }, []);
 
-  const listWebhooks = useCallback(async (): Promise<ApiWebhook[]> => {
+  const listWebhooks = useCallback(async (includeConfiguration = false): Promise<ApiWebhook[]> => {
     const res = await request("/api/webhooks");
-    return await res.json();
+    const hooks: ApiWebhook[] = await res.json();
+    if (!includeConfiguration) return hooks;
+    return await Promise.all(hooks.map(async (hook) => {
+      const detail = await request(`/api/webhooks/${encodeURIComponent(hook.id)}`);
+      return await detail.json() as ApiWebhook;
+    }));
   }, [request]);
 
   const createWebhook = useCallback(

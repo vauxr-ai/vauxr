@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 import channel_registry
+import firmware_delivery
 import device_registry as registry
 import webhooks
 from auth import authenticate
@@ -330,6 +331,18 @@ async def list_webhooks(_request: web.Request) -> web.Response:
     return web.json_response([webhooks.public_dict(w) for w in webhooks.get_all()])
 
 
+@_require_auth
+async def get_webhook_configuration(request: web.Request) -> web.Response:
+    """Owner-only editing detail; keep list metadata and authorization redacted."""
+    hook = webhooks.get(request.match_info["webhook_id"])
+    if hook is None:
+        return web.json_response({"error": "webhook not found"}, status=404)
+    return web.json_response(
+        {**webhooks.public_dict(hook), "url": hook.url, "body": hook.body},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 def _webhook_fields(body: dict[str, Any], *, require_name_url: bool) -> tuple[dict[str, Any], str | None]:
     """Pull name/url/authorization/body from a JSON body. Returns (fields, error)."""
     fields: dict[str, Any] = {}
@@ -434,6 +447,8 @@ async def duplicate_webhook(request: web.Request) -> web.Response:
 
 
 async def serve_static(request: web.Request) -> web.StreamResponse:
+    if request.path == "/firmware-delivery" or request.path.startswith("/firmware-delivery/"):
+        return web.json_response({"error": "not found"}, status=404, headers=firmware_delivery.HEADERS)
     if request.path == "/api" or request.path.startswith("/api/"):
         return web.json_response({"error": "not found"}, status=404)
     rel = request.path.lstrip("/")
@@ -474,6 +489,16 @@ async def serve_firmware(request: web.Request) -> web.StreamResponse:
     )
 
 
+@_require_auth
+async def mint_firmware_delivery(request: web.Request) -> web.Response:
+    return await firmware_delivery.mint(request)
+
+
+@transport_boundary
+async def download_firmware_delivery(request: web.Request) -> web.StreamResponse:
+    return await firmware_delivery.download(request)
+
+
 async def _authorize_speech_management(request: web.Request) -> bool:
     """Owner-only speech management; device selection input is never authority."""
     principal = _http_principal(request)
@@ -507,11 +532,17 @@ def attach_http_routes(app: web.Application) -> None:
     app.router.add_post("/api/channels/{channel_id}/activate", activate_channel)
     app.router.add_post("/api/channels/{channel_id}/rotate", rotate_token)
     app.router.add_get("/api/webhooks", list_webhooks)
+    app.router.add_get("/api/webhooks/{webhook_id}", get_webhook_configuration)
     app.router.add_post("/api/webhooks", create_webhook)
     app.router.add_patch("/api/webhooks/{webhook_id}", update_webhook)
     app.router.add_delete("/api/webhooks/{webhook_id}", delete_webhook)
     app.router.add_post("/api/webhooks/{webhook_id}/duplicate", duplicate_webhook)
     app.router.add_get("/firmware/{filename}", serve_firmware)
+    app[firmware_delivery.DELIVERIES] = {}
+    app.router.add_post("/api/firmware-delivery/{filename}", mint_firmware_delivery)
+    app.router.add_get(
+        "/firmware-delivery/{token}/{filename}", download_firmware_delivery, allow_head=False,
+    )
 
 
 def make_http_app(_channel_server: ChannelServer | None = None) -> web.Application:

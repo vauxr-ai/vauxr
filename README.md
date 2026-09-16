@@ -153,7 +153,26 @@ read access. Enrollment and lifecycle use their versioned contracts below.
 | `PATCH` | `/api/devices/{id}` | Update device config (`name`, `voice`, `follow_up_mode`, `barge_in`, `button_actions`) |
 | `POST` | `/api/devices/{id}/announce` | Push TTS announcement to a device |
 | `POST` | `/api/devices/{id}/command` | Send control command (`set_volume`, `mute`, `unmute`, `reboot`, `ota`, `set_barge_in`) |
-| `GET` | `/firmware/{name}.bin` | Serve an app image from `DATA_DIR/firmware/` for device HTTP OTA |
+| `GET` | `/firmware/{name}.bin` | Authenticated firmware read (owner or device); unchanged |
+| `POST` | `/api/firmware-delivery/{filename}` | Owner session + Origin + CSRF: mint a legacy OTA delivery URL for an existing `.bin` |
+| `GET` | `/firmware-delivery/{token}/{filename}` | Single-use capability download; no Authorization header required |
+
+Mint returns `201` with `{"url": "<configured owner origin>/firmware-delivery/<token>/<filename>",
+"expires_in": 120}`. The configured owner origin must be reachable by the device.
+The URL serves the binary directly, without redirects or query/header authentication.
+Delivery tokens are random (256 bits), stored only as hashes in process memory, bound
+to the exact filename, and expire using a monotonic clock. At most 128 can be live;
+minting returns `503` when full, and expired entries are reclaimed on mint.
+Restarting the process invalidates all outstanding URLs. Route mint and download to
+the same server process if using multiple workers.
+
+A redemption attempt consumes the token before opening/streaming the file, including
+filename mismatches and failed downloads. Retry requires a newly minted URL; HEAD
+cannot redeem it. Invalid, expired, replayed, mismatched and missing artifacts return
+the same `404`. Non-regular files, symlinks and traversal are rejected. Responses are
+`no-store`. Treat the URL as a temporary bearer secret: do not log or persist it.
+The server disables aiohttp access logs; reverse proxies must also disable or redact
+request paths for `/firmware-delivery/` and must not cache these responses.
 
 **Channels** — owner-controlled routing metadata. One channel is active at a time and receives the device's transcript.
 

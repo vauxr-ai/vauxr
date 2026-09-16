@@ -256,3 +256,21 @@ async def test_http_duplicate_webhook(client: TestClient, tmp_path: Path) -> Non
 async def test_http_duplicate_webhook_404(client: TestClient) -> None:
     res = await client.post("/api/webhooks/wh_missing/duplicate", headers=_auth(client))
     assert res.status == 404
+
+
+async def test_owner_edit_detail_preserves_body_and_masks_authorization(client: TestClient) -> None:
+    hook = webhooks.create("HA", "http://ha.local/hook", "Bearer private", {"entity_id": "scene.x"})
+    response = await client.get(f"/api/webhooks/{hook.id}", headers=_auth(client))
+    assert response.status == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    detail = await response.json()
+    assert detail["url"] == hook.url
+    assert detail["body"] == hook.body
+    assert "authorization" not in detail
+    response = await client.patch(
+        f"/api/webhooks/{hook.id}", headers=_auth(client),
+        json={"name": "Renamed", "url": detail["url"], "body": detail["body"]},
+    )
+    assert response.status == 200
+    assert webhooks.get(hook.id).authorization == "Bearer private"
+    assert webhooks.get(hook.id).body == {"entity_id": "scene.x"}

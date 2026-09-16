@@ -164,8 +164,8 @@ test("matching code errors and denial never deliver credentials; legacy forms st
   await expect(page.getByLabel(/shared token|device token|channel token/i)).toHaveCount(0);
 });
 
-test("server restart clears owner sessions but preserves approved integration and speech configuration", async ({ page, context, server }) => {
-  const operator = await login(page, server);
+test("server restart preserves owner session, approved integration and speech configuration", async ({ page, context, server }) => {
+  await login(page, server);
   const { secret, request } = await requestIntegration(server);
   await page.getByRole("button", { name: "Channels", exact: true }).click();
   await page.getByText("Refresh integration requests").click();
@@ -177,21 +177,21 @@ test("server restart clears owner sessions but preserves approved integration an
   const delivery = await client(server, "deliver", secret);
   const credential = save(server, delivery.credential);
   await client(server, "ack", { ...secret, credential, saved: true });
-  const csrf = (await (await context.request.get(server.origin + "/api/auth/session")).json()).csrf_token;
+  const session = await (await context.request.get(server.origin + "/api/auth/session")).json();
+  const csrf = session.csrf_token;
   const speechPath = server.origin + "/api/devices/retained-offline/speech";
   expect((await context.request.patch(speechPath, {
     headers: { Origin: server.origin, "X-CSRF-Token": csrf }, data: { tts_backend: "piper" },
   })).status()).toBe(200);
   const before = await (await context.request.get(speechPath)).json();
   await server.restart();
-  expect((await context.request.get(server.origin + "/api/auth/session")).status()).toBe(401);
-  expect((await context.request.get(speechPath)).status()).toBe(401);
+  const restartedSession = await context.request.get(server.origin + "/api/auth/session");
+  expect(restartedSession.status()).toBe(200);
+  expect(await restartedSession.json()).toEqual(session);
+  expect((await context.request.get(speechPath)).status()).toBe(200);
   expect((await native(server, "/api/devices", undefined, credential)).status).toBe(200);
   expect((await client(server, "ack", { ...secret, credential, saved: true })).state).toBe("completed");
   await page.reload();
-  await expect(page.getByRole("main")).toHaveCount(0);
-  await page.getByLabel("Operator token or console code").fill(operator);
-  await page.getByText("Log in with saved operator token").click();
   await expect(page.getByRole("main")).toBeVisible();
   expect(await (await context.request.get(speechPath)).json()).toEqual(before);
   const connection = await socket(server, "/channel", { type: "channel.auth", token: credential });
