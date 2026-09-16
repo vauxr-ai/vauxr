@@ -25,6 +25,7 @@ configured LAN HTTP or HTTPS origin/Host boundary and explicit local-console pro
 | POST /api/channels/{channel_id}/activate | channel.configure | owner |
 | POST /api/channels/{channel_id}/rotate | credential.rotate | unshipped, owner 501 |
 | GET /api/webhooks | webhook.configure | owner, redacted projection |
+| GET /api/webhooks/{webhook_id} | webhook.configure | owner-only editing detail (URL/body), no-store; authorization remains masked |
 | POST /api/webhooks | webhook.configure | owner |
 | PATCH /api/webhooks/{webhook_id} | webhook.configure | owner |
 | DELETE /api/webhooks/{webhook_id} | webhook.configure | owner |

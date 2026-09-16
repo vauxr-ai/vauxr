@@ -41,6 +41,7 @@ describe("SettingsPanel", () => {
     };
     fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "POST") return Promise.resolve(jsonResponse(created, true, 201));
+      if (String(url).endsWith("/api/webhooks/wh_1")) return Promise.resolve(jsonResponse(created));
       if (String(url).includes("/api/webhooks")) {
         return Promise.resolve(jsonResponse([created]));
       }
@@ -96,6 +97,8 @@ describe("SettingsPanel", () => {
       if (init?.method === "POST" && path.includes("/duplicate")) {
         return Promise.resolve(jsonResponse(cloned, true, 201));
       }
+      if (path.endsWith("/api/webhooks/wh_1")) return Promise.resolve(jsonResponse(existing));
+      if (path.endsWith("/api/webhooks/wh_2")) return Promise.resolve(jsonResponse(cloned));
       if (path.includes("/api/webhooks")) {
         const posted = fetchSpy.mock.calls.some(
           (c) =>
@@ -131,6 +134,29 @@ describe("SettingsPanel", () => {
       );
       expect(post).toBeDefined();
       expect(addLog).toHaveBeenCalledWith("sys", "Webhook duplicated: HA copy");
+    });
+  });
+
+  it("loads owner detail and preserves the body when editing a redacted list item", async () => {
+    const user = userEvent.setup();
+    const summary = { id: "wh_1", name: "HA", has_url: true, has_body: true, has_authorization: true };
+    const detail = { ...summary, url: "http://ha.local/hook", body: { entity_id: "scene.x" } };
+    fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") return Promise.resolve(jsonResponse(summary));
+      if (String(url).endsWith("/api/webhooks/wh_1")) return Promise.resolve(jsonResponse(detail));
+      if (String(url).endsWith("/api/webhooks")) return Promise.resolve(jsonResponse([summary]));
+      return Promise.resolve(jsonResponse([]));
+    });
+    render(<SettingsPanel wsUrl="ws://localhost:8765/ws" token="" wsState="connected" addLog={vi.fn()} />);
+    expect(await screen.findByText(detail.url)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    expect(screen.getByLabelText("Webhook URL")).toHaveValue(detail.url);
+    expect(screen.getByLabelText("Authorization header")).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() => {
+      const patch = fetchSpy.mock.calls.find(c => c[1]?.method === "PATCH");
+      expect(patch).toBeDefined();
+      expect(JSON.parse(patch![1].body)).toEqual({ name: "HA", url: detail.url, body: detail.body });
     });
   });
 

@@ -93,7 +93,7 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
   const refresh = useCallback(async () => {
     setError("");
     try {
-      setHooks(await api.listWebhooks());
+      setHooks(await api.listWebhooks(true));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

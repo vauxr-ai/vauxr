@@ -169,6 +169,7 @@ HTTP_OPERATIONS = {
     "activate_channel": Operation.CHANNEL_CONFIG,
     "rotate_token": Operation.CREDENTIAL_ROTATE,
     "list_webhooks": Operation.WEBHOOK_CONFIG,
+    "get_webhook_configuration": Operation.WEBHOOK_CONFIG,
     "create_webhook": Operation.WEBHOOK_CONFIG,
     "update_webhook": Operation.WEBHOOK_CONFIG,
     "delete_webhook": Operation.WEBHOOK_CONFIG,

@@ -330,6 +330,18 @@ async def list_webhooks(_request: web.Request) -> web.Response:
     return web.json_response([webhooks.public_dict(w) for w in webhooks.get_all()])
 
 
+@_require_auth
+async def get_webhook_configuration(request: web.Request) -> web.Response:
+    """Owner-only editing detail; keep list metadata and authorization redacted."""
+    hook = webhooks.get(request.match_info["webhook_id"])
+    if hook is None:
+        return web.json_response({"error": "webhook not found"}, status=404)
+    return web.json_response(
+        {**webhooks.public_dict(hook), "url": hook.url, "body": hook.body},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 def _webhook_fields(body: dict[str, Any], *, require_name_url: bool) -> tuple[dict[str, Any], str | None]:
     """Pull name/url/authorization/body from a JSON body. Returns (fields, error)."""
     fields: dict[str, Any] = {}
@@ -507,6 +519,7 @@ def attach_http_routes(app: web.Application) -> None:
     app.router.add_post("/api/channels/{channel_id}/activate", activate_channel)
     app.router.add_post("/api/channels/{channel_id}/rotate", rotate_token)
     app.router.add_get("/api/webhooks", list_webhooks)
+    app.router.add_get("/api/webhooks/{webhook_id}", get_webhook_configuration)
     app.router.add_post("/api/webhooks", create_webhook)
     app.router.add_patch("/api/webhooks/{webhook_id}", update_webhook)
     app.router.add_delete("/api/webhooks/{webhook_id}", delete_webhook)

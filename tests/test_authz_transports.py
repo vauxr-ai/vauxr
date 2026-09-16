@@ -60,6 +60,7 @@ ROUTES = [
     ("POST", "/api/channels/missing/activate", "o", 404),
     ("POST", "/api/channels/missing/rotate", "o", 501),
     ("GET", "/api/webhooks", "o", 200),
+    ("GET", "/api/webhooks/missing", "o", 404),
     ("POST", "/api/webhooks", "o", 400),
     ("PATCH", "/api/webhooks/missing", "o", 404),
     ("DELETE", "/api/webhooks/missing", "o", 404),
