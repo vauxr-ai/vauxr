@@ -9,9 +9,35 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Literal, TypedDict
 
 log = logging.getLogger("vauxr.device_config")
+
+_DISPLAY_NAME_CONTROLS = re.compile(r"[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]")
+
+
+def load_device_display_name(data_dir: str, device_id: str) -> str | None:
+    """Read current committed display metadata by stable ID, never live labels.
+
+    Read disk on each transcript so removal, invalid config and failed saves
+    cannot leave a previously learned title in a connection-local cache.
+    """
+    # Read only the display field: malformed unrelated settings must not break
+    # transcript delivery or cause a stale in-memory name to be used.
+    try:
+        with open(device_config_path(data_dir), encoding="utf-8") as source:
+            stored = json.load(source)
+    except (OSError, ValueError):
+        return None
+    entry = stored.get(device_id) if isinstance(stored, dict) else None
+    name = entry.get("name") if isinstance(entry, dict) else None
+    if not isinstance(name, str) or _DISPLAY_NAME_CONTROLS.search(name):
+        return None
+    # JS String.length counts astral characters as two UTF-16 code units.
+    units = sum(2 if ord(char) > 0xFFFF else 1 for char in name)
+    return (name.strip() or None) if units <= 128 else None
+
 
 FollowUpMode = Literal["auto", "always", "never"]
 VALID_FOLLOW_UP_MODES: frozenset[str] = frozenset({"auto", "always", "never"})
