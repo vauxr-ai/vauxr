@@ -21,6 +21,7 @@ class Operation(StrEnum):
     CONTROL = "device.control"
     PLAYBACK = "device.playback"
     FIRMWARE_INITIATE = "firmware.initiate"
+    FIRMWARE_DELIVERY_MINT = "firmware.delivery_mint"
     FIRMWARE_READ = "firmware.read"
     FIRMWARE_PUBLISH = "firmware.publish"
     CHANNEL_LIST = "channel.list"
@@ -85,6 +86,7 @@ _OWNER = frozenset(
         Operation.PLAYBACK,
         Operation.FIRMWARE_INITIATE,
         Operation.FIRMWARE_READ,
+        Operation.FIRMWARE_DELIVERY_MINT,
         Operation.FIRMWARE_PUBLISH,
         Operation.CHANNEL_LIST,
         Operation.CHANNEL_CONFIG,
@@ -174,6 +176,7 @@ HTTP_OPERATIONS = {
     "update_webhook": Operation.WEBHOOK_CONFIG,
     "delete_webhook": Operation.WEBHOOK_CONFIG,
     "duplicate_webhook": Operation.WEBHOOK_CONFIG,
+    "mint_firmware_delivery": Operation.FIRMWARE_DELIVERY_MINT,
     "serve_firmware": Operation.FIRMWARE_READ,
 }
 WS_OPERATIONS = {

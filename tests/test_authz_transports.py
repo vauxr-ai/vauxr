@@ -66,6 +66,7 @@ ROUTES = [
     ("DELETE", "/api/webhooks/missing", "o", 404),
     ("POST", "/api/webhooks/missing/duplicate", "o", 404),
     ("GET", "/firmware/missing.bin", "od", 404),
+    ("POST", "/api/firmware-delivery/missing.bin", "o", 404),
 ]
 
 
@@ -105,13 +106,15 @@ def test_route_inventory_complete():
                 else "/{webhook_id}"
                 if "/webhooks/" in path
                 else "/{device_id}",
-            ).replace("/firmware/{device_id}.bin", "/firmware/{filename}"),
+            ).replace("/firmware/{device_id}.bin", "/firmware/{filename}")
+            .replace("/api/firmware-delivery/{device_id}.bin", "/api/firmware-delivery/{filename}"),
         )
         for method, path, _, _ in ROUTES
     }
     expected |= {("GET", "/api/auth/{action}"), ("POST", "/api/auth/{action}"),
                  ("POST", "/api/enrollment/v1/{action}"), ("POST", "/api/lifecycle/v1/{action}"),
                  ("POST", "/api/integrations/v1/{action}")}
+    expected.add(("GET", "/firmware-delivery/{token}/{filename}"))
     assert actual == expected
     # Speech uses one injected boundary for four path/method combinations.
     assert len(HTTP_OPERATIONS) + 4 == len(ROUTES)
