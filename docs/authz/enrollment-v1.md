@@ -255,8 +255,8 @@ credential is already paired and recovery preserves it; if recovery wins, issuan
 fails. No credentials are delivered to approvers, retained as plaintext or
 redisplayed. A captured list/code alone cannot redeem without the client signature.
 
-Restart preserves pending proofs, counters, approval state and client credentials;
-owner cookie sessions still expire on restart. Disconnect does not extend expiry.
+Restart preserves pending proofs, counters, approval state, client credentials, and
+unchanged-origin owner cookie sessions. Disconnect does not extend expiry.
 A lost response before commit can be retried. After commit, a lost proof response
 cannot redisplay its code: sign cancellation and start a new request in a fresh
 physical window. A lost redemption response leaves `consumed` and a credential

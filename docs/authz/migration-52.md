@@ -395,8 +395,9 @@ or perform security recovery with fresh owner access and replacement/revocation
 of restored client credentials. For a legacy rollback use that version's own
 credential-replacement process on an isolated endpoint; if unavailable, keep it
 offline. Never restore a known-compromised secret or snapshot to an accessible
-service. Close old sessions; restart invalidates cookies but is not client-token
-revocation. Reconnect/re-pair explicitly and repeat acceptance. An old installation
+service. Close old sessions explicitly; durable owner sessions survive unchanged
+restarts, while a restored pre-upgrade snapshot requires explicit owner recovery.
+Reconnect/re-pair explicitly and repeat acceptance. An old installation
 restored in isolation is not a compatibility mode in this server.
 
 ## Troubleshooting and support
@@ -442,7 +443,7 @@ termination or host failure can leave private temporary data under `/tmp`.
 A Python audit guard rejects socket operations; only synthetic settings/generated credentials are used. It
 checks empty and schema 1–5 fixtures, private backup/byte-exact restore, schema-5
 integration enrollment with save/readback/ACK, generated owner setup, override
-precedence/change/removal, restart session invalidation, settings preservation,
+precedence/change/removal, durable restart-session behavior, settings preservation,
 no legacy auth, tombstone preservation and the risk of restoring an older snapshot.
 It calls production storage/auth services; it is not a production migration tool,
 old-binary test, Docker volume test or proof of live client interoperability.

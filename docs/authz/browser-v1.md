@@ -26,7 +26,8 @@ Administration uses only same-origin HttpOnly/SameSite=Strict session cookies.
 CSRF, claim codes, save handles and operator tokens are held in transient memory;
 no operator token is stored in localStorage, sessionStorage, IndexedDB, URLs or
 application logs. Auth fetches reject redirects and use no-store. The owner cookie
-has the contract's absolute 12-hour expiry; restart/recovery invalidates sessions.
+has the contract's absolute 30-day expiry. Unchanged server restarts preserve
+sessions; recovery, owner-key changes, and origin changes revoke them.
 The UI checks sessions once a minute and on every administration request. A 401
 hides administration and stops voice; network failure is not reported as logout.
 

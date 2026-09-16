@@ -164,12 +164,12 @@ are rejected. Auth responses (including errors) use `Cache-Control: no-store` an
 
 TLS uses `__Host-vauxr_owner` with Secure; LAN uses the distinct unprefixed
 `vauxr_owner` without Secure. Both are host-only (no Domain), HttpOnly,
-SameSite=Strict, Path=/, with Max-Age 43200 seconds. The opposite mode's cookie
+SameSite=Strict, Path=/, with Max-Age 2592000 seconds (30 days). The opposite mode's cookie
 is rejected, including when both cookies are supplied. Logout revokes the session
 and expires the selected mode's cookie with its matching attributes. Clients must
 clear stale cookies when explicitly switching modes; HTTP cannot clear a Secure
 `__Host-` cookie. Renaming/replaying a revoked cookie cannot revive it.
-Absolute server-side expiry is 12 hours with no sliding refresh. Cookie plaintext exists only in the response/client;
+Absolute server-side expiry is 30 days with no sliding refresh. Cookie plaintext exists only in the response/client;
 the durable session table keys are SHA-256 verifiers. CSRF is derived from the
 cookie using domain-separated HMAC and is never persisted. The strict owner schema
 includes an optional `sessions` object with an origin digest and up to 100 entries
