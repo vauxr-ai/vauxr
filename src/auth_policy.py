@@ -140,13 +140,10 @@ def allowed(
     )
 
 
-def audit_denial(authenticated: bool, reason: str | None = None) -> None:
+def audit_denial(authenticated: bool) -> None:
     # No client-controlled paths, IDs, tokens, payloads or exception strings.
     category = "forbidden" if authenticated else "unauthorized"
-    if reason in {"duplicate_device_connection"}:
-        log.info("authorization denied: %s (%s)", category, reason)
-    else:
-        log.info("authorization denied: %s", category)
+    log.info("authorization denied: %s", category)
 
 
 @dataclass(frozen=True)
