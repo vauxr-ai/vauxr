@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -632,30 +633,49 @@ def main() -> None:
     app = make_app()
     app.on_startup.append(_startup)
     app.on_cleanup.append(_cleanup)
-    # Single-port mode: both WS and HTTP share the WS port (matching the
-    # Node version, which binds one WS server and one HTTP server). To keep
-    # the existing dual-port contract, bind both ports onto the same
-    # application via two TCPSites.
-    loop = asyncio.new_event_loop()
-
-    async def run() -> None:
-        runner = web.AppRunner(app, access_log=None)
-        await runner.setup()
-        ws_site = web.TCPSite(runner, host="0.0.0.0", port=cfg.ws.port)
-        await ws_site.start()
-        http_site = web.TCPSite(runner, host="0.0.0.0", port=cfg.http.port)
-        await http_site.start()
-        log.info("listening on ws=%d, http=%d", cfg.ws.port, cfg.http.port)
-        # Block forever — aiohttp's run_app does the same.
-        while True:
-            await asyncio.sleep(3600)
-
     try:
-        loop.run_until_complete(run())
-    except KeyboardInterrupt:
-        pass
+        asyncio.run(run_server(app))
+    except asyncio.CancelledError:
+        pass  # SIGINT/SIGTERM cancel startup as well as the running service.
+
+
+async def run_server(app: web.Application) -> None:
+    """Prepare TLS before accepting traffic and reap workers on every exit path."""
+    from native_tls import TLSService
+
+    cfg = get_config()
+    tls = TLSService(cfg.tls) if cfg.tls.enabled else None
+    runner = web.AppRunner(app, access_log=None)
+    task = asyncio.current_task()
+    assert task is not None
+    loop = asyncio.get_running_loop()
+    signals = (signal.SIGINT, signal.SIGTERM)
+    for sig in signals:
+        loop.add_signal_handler(sig, task.cancel)
+    try:
+        if tls:
+            await tls.prepare()
+        await runner.setup()
+        # Preserve the existing HTTP and device listeners on the same app.
+        await web.TCPSite(runner, host="0.0.0.0", port=cfg.ws.port).start()
+        await web.TCPSite(runner, host="0.0.0.0", port=cfg.http.port).start()
+        if tls:
+            await web.TCPSite(runner, host="0.0.0.0", port=cfg.tls.port,
+                              ssl_context=tls.context.listener).start()
+            tls.start()
+            log.info("HTTPS/WSS listening on port %d", cfg.tls.port)
+        log.info("listening on ws=%d, http=%d", cfg.ws.port, cfg.http.port)
+        await asyncio.Event().wait()
     finally:
-        loop.close()
+        try:
+            if tls:
+                await tls.close()
+        finally:
+            try:
+                await runner.cleanup()
+            finally:
+                for sig in signals:
+                    loop.remove_signal_handler(sig)
 
 
 if __name__ == "__main__":

@@ -32,8 +32,9 @@ COPY pyproject.toml README.md ./
 COPY --from=build /wheels /wheels
 # Install the wheel with the `realtime` extra so the in-process Pipecat WebRTC
 # pipeline (aiortc + silero VAD) is available when REALTIME_ENABLED=1. The
-# extra is applied to the built wheel path; deps resolve from the index.
-RUN pip install --no-cache-dir "$(ls /wheels/*.whl)[realtime]"
+# acme extra provides opt-in Certbot Route53 automation in this same container.
+# Extras are applied to the built wheel path; deps resolve from the index.
+RUN pip install --no-cache-dir "$(ls /wheels/*.whl)[realtime,acme]"
 # Pre-seed NLTK punkt data into a default search path so Pipecat's sentence
 # tokenizer (used for TTS chunking) doesn't try to download at runtime and fail
 # on the read-only filesystem with a permission error.
@@ -43,5 +44,6 @@ RUN mkdir -p /data && chown vauxr:vauxr /data
 USER vauxr
 EXPOSE 8765
 EXPOSE 8080
+EXPOSE 8443
 # Flat layout — server modules sit at top level after hatchling's sources=["src"]
 CMD ["python", "-m", "server"]
