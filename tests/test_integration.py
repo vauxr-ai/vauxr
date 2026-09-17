@@ -15,7 +15,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 import auth
 import auth_store
-import channel_registry
+import agent_registry
 import config
 import integration
 from auth_policy import Operation, Role, allowed
@@ -75,7 +75,7 @@ def test_fixture_round_trip_restart_and_secret_projections(env, caplog, tmp_path
     body, approval, result = deliver(env)
     assert set(result) == set(fixture["public_fields"] + fixture["delivery_only_fields"])
     assert not service.store.authenticate(result["credential"])
-    assert not allowed(service.store.authenticate(result["credential"]), Operation.CHANNEL_CONNECT)
+    assert not allowed(service.store.authenticate(result["credential"]), Operation.AGENT_CONNECT)
     listed = service.execute("list", {}, owner)
     assert set(listed["requests"][0]) == set(fixture["public_fields"])
     assert service.execute("status", private(body))["state"] == "delivered"
@@ -90,8 +90,8 @@ def test_fixture_round_trip_restart_and_secret_projections(env, caplog, tmp_path
     service.store = CredentialStore(service.store.path)
     assert service.execute("ack", saved)["state"] == "completed"
     principal = service.store.authenticate(result["credential"])
-    assert principal.role == Role.INTEGRATION and principal.subject == result["channel_id"]
-    for operation in (Operation.VOICE_RESPONSE, Operation.CHANNEL_CONNECT, Operation.DEVICES_LIST,
+    assert principal.role == Role.INTEGRATION and principal.subject == result["agent_id"]
+    for operation in (Operation.VOICE_RESPONSE, Operation.AGENT_CONNECT, Operation.DEVICES_LIST,
                       Operation.ANNOUNCE, Operation.CONTROL, Operation.PLAYBACK, Operation.FIRMWARE_INITIATE):
         assert allowed(principal, operation)
     for operation in (Operation.PAIR_INITIATE, Operation.PAIR_APPROVE):
@@ -113,7 +113,7 @@ def test_duplicate_requests_metadata_mixup_and_code_attempt_limit(env):
     first = service.execute("request", body)
     assert service.execute("request", body) == first
     second = service.execute("request", request_body(2))
-    assert first["channel_id"] != second["channel_id"]
+    assert first["agent_id"] != second["agent_id"]
     with pytest.raises(EnrollmentError, match="conflict"):
         service.execute("request", {**body, "display_name": "Different"})
     with pytest.raises(EnrollmentError, match="unauthorized"):
@@ -244,7 +244,7 @@ def test_concurrent_approval_delivery_and_replay(env):
         results = list(pool.map(run, ["approve", "deliver"] * 8))
     issued = [r for r in results if r and "credential" in r]
     assert len(issued) == 1
-    assert len([r for r in service.store.records if r.subject == issued[0]["channel_id"]]) == 1
+    assert len([r for r in service.store.records if r.subject == issued[0]["agent_id"]]) == 1
 
 
 @pytest.mark.parametrize("competing", ["ack", "cancel"])
@@ -262,7 +262,7 @@ def test_revoke_race_never_resurrects_and_preserves_peers(env, competing):
     with ThreadPoolExecutor(max_workers=2) as pool:
         future = pool.submit(run)
         revoke = pool.submit(life.execute, "revoke", {"operation_id": "f" * 32,
-                            "role": "integration", "subject": result["channel_id"]}, owner)
+                            "role": "integration", "subject": result["agent_id"]}, owner)
         future.result()
         assert revoke.result()["state"] == "revoked"
     assert not service.store.authenticate(result["credential"])
@@ -278,14 +278,14 @@ def test_rotation_and_routing_metadata_survive_independently(env):
     service, owner = env
     body, _, result = deliver(env)
     service.execute("ack", ack_body(body, result))
-    channel = channel_registry.get_by_id(result["channel_id"])
-    assert channel and not channel.active and channel.tokenHash == ""
-    assert channel_registry.activate(channel.id)
-    assert channel_registry.get_active().id == channel.id
+    agent = agent_registry.get_by_id(result["agent_id"])
+    assert agent and not agent.active and agent.tokenHash == ""
+    assert agent_registry.activate(agent.id)
+    assert agent_registry.get_active().id == agent.id
     service.store = CredentialStore(service.store.path)
-    assert channel_registry.get_active().id == channel.id
+    assert agent_registry.get_active().id == agent.id
     life = Lifecycle(service.store, ORIGIN)
-    control = {"operation_id": "a" * 32, "role": "integration", "subject": channel.id}
+    control = {"operation_id": "a" * 32, "role": "integration", "subject": agent.id}
     assert life.execute("rotate", control, owner)["state"] == "queued"
     resolve = lambda: service.store.authenticate(result["credential"])
     assert life.execute("poll", {}, resolve)["state"] == "pending"
@@ -354,7 +354,7 @@ async def test_http_owner_csrf_native_boundary_and_no_cors(tmp_path, monkeypatch
         assert (await http.post(path + "ack", headers=headers, json=ack_body(body, result))).status == 200
         bearer = {**headers, "Authorization": "Bearer " + result["credential"]}
         assert (await http.get("/api/devices", headers=bearer)).status == 200
-        assert (await http.get("/api/channels", headers=bearer)).status == 403
+        assert (await http.get("/api/agents", headers=bearer)).status == 403
         assert (await http.post(path + "approve", headers=bearer, json=approval)).status == 400
         assert (await http.post(path + "status?credential=synthetic", headers=headers, json=private(body))).status == 403
         assert (await http.post(path + "status", headers=headers, data='{"request_id":1,"request_id":2}',
@@ -363,35 +363,35 @@ async def test_http_owner_csrf_native_boundary_and_no_cors(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize("action", ["rotate", "revoke"])
-async def test_retiring_channel_connected_before_activation_tears_down_dependents(
-    env, monkeypatch, action, alternate_channel
+async def test_retiring_agent_connected_before_activation_tears_down_dependents(
+    env, monkeypatch, action, alternate_agent
 ):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     import auth_connections
     import device_registry
-    from channel_server import ChannelServer, _Connection
+    from agent_server import AgentServer, _Connection
 
     service, owner = env
     body, _, issued = deliver(env)
     service.execute("ack", ack_body(body, issued))
-    server = ChannelServer()
+    server = AgentServer()
     socket = SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock())
     connection = _Connection(socket)
     await server._handle_auth(connection, issued["credential"])
     try:
-        assert not connection.channel.active
-        assert channel_registry.activate(issued["channel_id"])
+        assert not connection.agent.active
+        assert agent_registry.activate(issued["agent_id"])
         assert server.is_active_connected()
         errors = []
         server.add_response_listener("speaker", {"on_error": lambda *args: errors.append(args)})
         abort = asyncio.Event()
-        server.retain_media_turn(issued["channel_id"], abort)
+        server.retain_media_turn(issued["agent_id"], abort)
         monkeypatch.setattr(device_registry, "get_all", lambda: [SimpleNamespace(id="speaker")])
         monkeypatch.setattr(config, "get_config", lambda: SimpleNamespace(realtime=SimpleNamespace(enabled=False)))
         lifecycle = Lifecycle(service.store, ORIGIN)
-        control = {"operation_id": "a" * 32, "role": "integration", "subject": issued["channel_id"]}
+        control = {"operation_id": "a" * 32, "role": "integration", "subject": issued["agent_id"]}
         lifecycle.execute(action, control, owner)
         if action == "rotate":
             current = lambda: service.store.authenticate(issued["credential"])
@@ -401,7 +401,7 @@ async def test_retiring_channel_connected_before_activation_tears_down_dependent
                               lambda: service.store.authenticate(replacement["credential"]))
             assert service.store.authenticate(replacement["credential"])
         if action == "revoke":
-            assert channel_registry.get_active().id == alternate_channel.id
+            assert agent_registry.get_active().id == alternate_agent.id
             server.add_response_listener("alternate-speaker", {"on_error": lambda *args: errors.append(args)})
             monkeypatch.setattr(device_registry, "get_all", lambda: [
                 SimpleNamespace(id="speaker"), SimpleNamespace(id="alternate-speaker")])
@@ -415,52 +415,52 @@ async def test_retiring_channel_connected_before_activation_tears_down_dependent
 
 
 @pytest.fixture
-def alternate_channel(monkeypatch, tmp_path):
+def alternate_agent(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     config.reset_config()
-    channel_registry._reset_for_tests()
-    channel = channel_registry.Channel("alternate", "Alternate", "openclaw", "", True, "")
-    channel_registry._set_active_for_tests(channel)
-    yield channel
-    channel_registry._reset_for_tests()
+    agent_registry._reset_for_tests()
+    agent = agent_registry.Agent("alternate", "Alternate", "openclaw", "", True, "")
+    agent_registry._set_active_for_tests(agent)
+    yield agent
+    agent_registry._reset_for_tests()
     config.reset_config()
 
 
-def assert_retired_routing(service, channel_id, alternate):
-    assert service.store.integration["active_channel"] == ""
-    assert CredentialStore(service.store.path).integration["active_channel"] == ""
-    assert channel_registry.get_by_id(channel_id) is None
-    assert channel_id not in {c.id for c in channel_registry.get_all()}
-    assert channel_registry.get_active().id == alternate.id
-    assert next(c for c in channel_registry.get_all() if c.id == alternate.id).active
-    assert not channel_registry.activate(channel_id)
-    assert channel_registry.get_active().id == alternate.id
+def assert_retired_routing(service, agent_id, alternate):
+    assert service.store.integration["active_agent"] == ""
+    assert CredentialStore(service.store.path).integration["active_agent"] == ""
+    assert agent_registry.get_by_id(agent_id) is None
+    assert agent_id not in {c.id for c in agent_registry.get_all()}
+    assert agent_registry.get_active().id == alternate.id
+    assert next(c for c in agent_registry.get_all() if c.id == alternate.id).active
+    assert not agent_registry.activate(agent_id)
+    assert agent_registry.get_active().id == alternate.id
 
 
-def test_owner_revoke_clears_selection_before_sweep_and_restart(env, alternate_channel):
+def test_owner_revoke_clears_selection_before_sweep_and_restart(env, alternate_agent):
     service, owner = env
     body, _, result = deliver(env)
     service.execute("ack", ack_body(body, result))
-    assert channel_registry.activate(result["channel_id"])
-    assert channel_registry.get_active().id == result["channel_id"]
-    assert not next(c for c in channel_registry.get_all() if c.id == alternate_channel.id).active
+    assert agent_registry.activate(result["agent_id"])
+    assert agent_registry.get_active().id == result["agent_id"]
+    assert not next(c for c in agent_registry.get_all() if c.id == alternate_agent.id).active
     Lifecycle(service.store, ORIGIN).execute("revoke", {
-        "operation_id": "d" * 32, "role": "integration", "subject": result["channel_id"]}, owner)
-    assert_retired_routing(service, result["channel_id"], alternate_channel)
+        "operation_id": "d" * 32, "role": "integration", "subject": result["agent_id"]}, owner)
+    assert_retired_routing(service, result["agent_id"], alternate_agent)
     service.sweep()
     service.store = CredentialStore(service.store.path)
     assert service.store.integration["requests"][body["request_id"]]["state"] == "revoked"
-    assert_retired_routing(service, result["channel_id"], alternate_channel)
+    assert_retired_routing(service, result["agent_id"], alternate_agent)
 
 
 @pytest.mark.parametrize("cause", ["expiry", "origin", "owner", "revoked"])
 @pytest.mark.parametrize("after", [False, True])
-def test_retirement_and_selection_clear_are_one_atomic_write(env, alternate_channel, monkeypatch, cause, after):
+def test_retirement_and_selection_clear_are_one_atomic_write(env, alternate_agent, monkeypatch, cause, after):
     service, _ = env
     body, _, result = deliver(env)
     # Reproduce the old version's selected, credential-bearing unfinished row.
     payload = json.loads(service.store.path.read_text())
-    payload["integration"]["active_channel"] = result["channel_id"]
+    payload["integration"]["active_agent"] = result["agent_id"]
     auth_store.atomic_private_json(service.store.path, payload)
     service.store.load()
     if cause == "expiry":
@@ -492,7 +492,7 @@ def test_retirement_and_selection_clear_are_one_atomic_write(env, alternate_chan
     if not after:
         assert service.store.path.read_text() == before
     else:
-        assert disk.integration["active_channel"] == ""
+        assert disk.integration["active_agent"] == ""
         assert not disk.authenticate(result["credential"])
         assert disk.integration["requests"][body["request_id"]]["state"] in {"expired", "stale", "revoked"}
     monkeypatch.setattr(auth_store, "atomic_private_json", save)
@@ -500,7 +500,7 @@ def test_retirement_and_selection_clear_are_one_atomic_write(env, alternate_chan
     expected = {"expiry": "expired", "origin": "stale", "owner": "stale", "revoked": "revoked"}[cause]
     assert service.store.integration["requests"][body["request_id"]]["state"] == expected
     assert not service.store.authenticate(result["credential"])
-    assert_retired_routing(service, result["channel_id"], alternate_channel)
+    assert_retired_routing(service, result["agent_id"], alternate_agent)
 
 
 @pytest.mark.parametrize("state", sorted(integration.TERMINAL - {"completed"}) + ["pending", "approved", "delivered"])
@@ -508,26 +508,26 @@ def test_invalid_credential_bearing_rows_cannot_displace_valid_selection(env, st
     service, _ = env
     good_body, _, good = deliver(env)
     service.execute("ack", ack_body(good_body, good))
-    assert channel_registry.activate(good["channel_id"])
+    assert agent_registry.activate(good["agent_id"])
     body, _, invalid = deliver(env, 2)
     with service.store.transaction():
         service.store.integration["requests"][body["request_id"]]["state"] = state
         # Even an enabled credential does not make an unfinished/terminal row routable.
         service.store.replace(tuple(replace(r, enabled=True) for r in service.store.records))
     before = service.store.path.read_text()
-    assert channel_registry.get_by_id(invalid["channel_id"]) is None
-    assert not channel_registry.activate(invalid["channel_id"])
-    assert not channel_registry._activate_integration(invalid["channel_id"])
+    assert agent_registry.get_by_id(invalid["agent_id"]) is None
+    assert not agent_registry.activate(invalid["agent_id"])
+    assert not agent_registry._activate_integration(invalid["agent_id"])
     assert service.store.path.read_text() == before
-    assert channel_registry.get_active().id == good["channel_id"]
+    assert agent_registry.get_active().id == good["agent_id"]
 
 
 @pytest.mark.parametrize("invalidity", ["disabled", "blocked"])
-def test_completed_row_requires_current_authority(env, alternate_channel, invalidity):
+def test_completed_row_requires_current_authority(env, alternate_agent, invalidity):
     service, _ = env
     body, _, result = deliver(env)
     service.execute("ack", ack_body(body, result))
-    assert channel_registry.activate(result["channel_id"])
+    assert agent_registry.activate(result["agent_id"])
     with service.store.transaction():
         records = service.store.records
         if invalidity == "blocked":
@@ -536,17 +536,17 @@ def test_completed_row_requires_current_authority(env, alternate_channel, invali
         else:
             records = tuple(replace(r, enabled=False) if r.id == result["credential_id"] else r for r in records)
         service.store.replace(records)
-    assert_retired_routing(service, result["channel_id"], alternate_channel)
+    assert_retired_routing(service, result["agent_id"], alternate_agent)
 
 
 @pytest.mark.parametrize("after_rename", [False, True])
 def test_owner_revoke_fsync_failure_keeps_routing_and_authority_atomic(
-    env, alternate_channel, monkeypatch, after_rename
+    env, alternate_agent, monkeypatch, after_rename
 ):
     service, owner = env
     body, _, result = deliver(env)
     service.execute("ack", ack_body(body, result))
-    assert channel_registry.activate(result["channel_id"])
+    assert agent_registry.activate(result["agent_id"])
     before = service.store.path.read_bytes()
     fsync = os.fsync
 
@@ -555,7 +555,7 @@ def test_owner_revoke_fsync_failure_keeps_routing_and_authority_atomic(
             raise OSError("synthetic fsync failure")
         fsync(fd)
 
-    control = {"operation_id": "d" * 32, "role": "integration", "subject": result["channel_id"]}
+    control = {"operation_id": "d" * 32, "role": "integration", "subject": result["agent_id"]}
     with monkeypatch.context() as patch:
         patch.setattr(auth_store.os, "fsync", fail)
         with pytest.raises(OSError, match="synthetic fsync"):
@@ -568,34 +568,34 @@ def test_owner_revoke_fsync_failure_keeps_routing_and_authority_atomic(
     if after_rename:
         assert not disk.authenticate(result["credential"])
         assert disk.lifecycle["operations"][control["operation_id"]]["state"] == "revoked"
-        assert_retired_routing(service, result["channel_id"], alternate_channel)
+        assert_retired_routing(service, result["agent_id"], alternate_agent)
     else:
         assert service.store.path.read_bytes() == before
         assert disk.authenticate(result["credential"])
-        assert channel_registry.get_active().id == result["channel_id"]
+        assert agent_registry.get_active().id == result["agent_id"]
     Lifecycle(service.store, ORIGIN).execute("revoke", control, owner)
-    assert_retired_routing(service, result["channel_id"], alternate_channel)
+    assert_retired_routing(service, result["agent_id"], alternate_agent)
 
 
 @pytest.mark.parametrize("finish", ["ack", "overlap_expiry", "queued_expiry"])
-def test_rotation_preserves_valid_routing_and_retires_only_unusable_channel(
-    env, alternate_channel, monkeypatch, finish
+def test_rotation_preserves_valid_routing_and_retires_only_unusable_agent(
+    env, alternate_agent, monkeypatch, finish
 ):
     service, owner = env
     body, _, result = deliver(env)
     service.execute("ack", ack_body(body, result))
-    channel_id = result["channel_id"]
-    assert channel_registry.activate(channel_id)
+    agent_id = result["agent_id"]
+    assert agent_registry.activate(agent_id)
     life = Lifecycle(service.store, ORIGIN)
-    control = {"operation_id": "a" * 32, "role": "integration", "subject": channel_id}
+    control = {"operation_id": "a" * 32, "role": "integration", "subject": agent_id}
     queued = life.execute("rotate", control, owner)
 
     def assert_selected():
         service.sweep()
         assert service.store.integration["requests"][body["request_id"]]["state"] == "completed"
-        assert CredentialStore(service.store.path).integration["active_channel"] == channel_id
-        assert channel_registry.get_active().id == channel_id
-        assert channel_registry.activate(channel_id)
+        assert CredentialStore(service.store.path).integration["active_agent"] == agent_id
+        assert agent_registry.get_active().id == agent_id
+        assert agent_registry.activate(agent_id)
 
     assert_selected()
     original = lambda: service.store.authenticate(result["credential"])
@@ -612,10 +612,10 @@ def test_rotation_preserves_valid_routing_and_retires_only_unusable_channel(
     if finish == "overlap_expiry":
         monkeypatch.setattr(integration.time, "time", lambda: rotated["overlap_until"])
         # Read-time filtering protects routing before maintenance persists expiry.
-        assert channel_registry.get_active().id == alternate_channel.id
-        assert not channel_registry.activate(channel_id)
+        assert agent_registry.get_active().id == alternate_agent.id
+        assert not agent_registry.activate(agent_id)
         life.sweep()
-        assert_retired_routing(service, channel_id, alternate_channel)
+        assert_retired_routing(service, agent_id, alternate_agent)
         assert not original() and not replacement()
     else:
         life.execute("ack", {"operation_id": control["operation_id"], "saved": True}, replacement)
@@ -635,7 +635,7 @@ def test_rotation_preserves_valid_routing_and_retires_only_unusable_channel(
 @pytest.mark.parametrize("revoke", [False, True])
 @pytest.mark.parametrize("replacement_turn", [False, True])
 async def test_revoke_after_response_end_aborts_only_originating_media(
-    env, alternate_channel, monkeypatch, replacement_turn, disconnect_socket, revoke
+    env, alternate_agent, monkeypatch, replacement_turn, disconnect_socket, revoke
 ):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -643,18 +643,18 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
     import auth_connections
     import device_registry
     import pipeline
-    from channel_server import ChannelServer, _Connection
+    from agent_server import AgentServer, _Connection
     from tests.test_pipeline import FakeWs
 
     service, owner = env
     body, _, issued = deliver(env)
     service.execute("ack", ack_body(body, issued))
-    server = ChannelServer()
+    server = AgentServer()
     from aiohttp import WSMsgType
 
     disconnected, authenticated = asyncio.Event(), asyncio.Event()
 
-    class ChannelSocket:
+    class AgentSocket:
         closed = False
 
         async def send_str(self, text):
@@ -666,18 +666,18 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
 
         async def __aiter__(self):
             yield SimpleNamespace(type=WSMsgType.TEXT, data=json.dumps({
-                "type": "channel.auth", "token": issued["credential"]}))
+                "type": "agent.auth", "token": issued["credential"]}))
             await disconnected.wait()
 
-    socket = ChannelSocket()
+    socket = AgentSocket()
     socket_task = asyncio.create_task(server.handle_connection(socket))
     await asyncio.wait_for(authenticated.wait(), 1)
-    connection = server._connections[issued["channel_id"]]
+    connection = server._connections[issued["agent_id"]]
     b_body, _, b_issued = deliver(env, 2)
     service.execute("ack", ack_body(b_body, b_issued))
     b_connection = _Connection(SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock()))
     await server._handle_auth(b_connection, b_issued["credential"])
-    assert channel_registry.activate(issued["channel_id"])
+    assert agent_registry.activate(issued["agent_id"])
     ready, draining, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
     original_add = server.add_response_listener
     original_done = pipeline.SegmentQueue.done
@@ -718,18 +718,18 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
             await asyncio.wait_for(socket_task, 1)
             assert connection.authority not in auth_connections._connections
             assert media_authority in auth_connections._connections
-            assert issued["channel_id"] not in server._connections
+            assert issued["agent_id"] not in server._connections
         # Switch selection before revocation; optionally replace this same device's turn.
-        assert channel_registry.activate(b_issued["channel_id"])
+        assert agent_registry.activate(b_issued["agent_id"])
         replacement_listener = {"on_delta": lambda *args: None, "on_end": lambda *args: None,
                                 "on_error": lambda *args: pytest.fail("replacement notified")}
         if replacement_turn:
             device.abort_event = replacement_abort
-            server.retain_media_turn(b_issued["channel_id"], replacement_abort)
+            server.retain_media_turn(b_issued["agent_id"], replacement_abort)
             server.add_response_listener("speaker", replacement_listener)
         if revoke:
             Lifecycle(service.store, ORIGIN).execute(
-                "revoke", {"operation_id": "e" * 32, "role": "integration", "subject": issued["channel_id"]},
+                "revoke", {"operation_id": "e" * 32, "role": "integration", "subject": issued["agent_id"]},
                 owner)
             from lifecycle_http import LIFECYCLE, disconnect_media
 
@@ -752,7 +752,7 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
         assert not replacement_abort.is_set()
         if replacement_turn:
             assert server.get_response_listener("speaker") is replacement_listener
-            assert server._media_turns[replacement_abort] == b_issued["channel_id"]
+            assert server._media_turns[replacement_abort] == b_issued["agent_id"]
     finally:
         release.set()
         if not task.done():
@@ -766,15 +766,15 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
         device_registry.reset()
 
 
-async def test_fallback_b_cannot_dispatch_to_a_listener_while_a_teardown_held(env, alternate_channel):
+async def test_fallback_b_cannot_dispatch_to_a_listener_while_a_teardown_held(env, alternate_agent):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
     import auth_connections
-    from channel_server import ChannelServer, _Connection
+    from agent_server import AgentServer, _Connection
 
     service, owner = env
-    server = ChannelServer()
+    server = AgentServer()
     connections = []
     for index in (1, 2):
         body, _, issued = deliver(env, index)
@@ -784,8 +784,8 @@ async def test_fallback_b_cannot_dispatch_to_a_listener_while_a_teardown_held(en
         connections.append(conn)
     a, b = connections
     # B is the configured fallback; A is selected in the integration snapshot.
-    channel_registry._set_active_for_tests(b.channel)
-    assert channel_registry.activate(a.channel.id)
+    agent_registry._set_active_for_tests(b.agent)
+    assert agent_registry.activate(a.agent.id)
     listener = {"on_delta": Mock(), "on_end": Mock(), "on_error": Mock()}
     server.add_response_listener("speaker", listener)
     entered, release = asyncio.Event(), asyncio.Event()
@@ -798,15 +798,15 @@ async def test_fallback_b_cannot_dispatch_to_a_listener_while_a_teardown_held(en
 
     a.authority.close = held_close
     Lifecycle(service.store, ORIGIN).execute(
-        "revoke", {"operation_id": "f" * 32, "role": "integration", "subject": a.channel.id}, owner)
+        "revoke", {"operation_id": "f" * 32, "role": "integration", "subject": a.agent.id}, owner)
     teardown = asyncio.create_task(auth_connections.disconnect_stale(service.store))
     try:
         await asyncio.wait_for(entered.wait(), 1)
-        assert channel_registry.get_active().id == b.channel.id
+        assert agent_registry.get_active().id == b.agent.id
         assert server.is_active_connected()
         for kind in ("delta", "end", "error"):
             await server._handle_authenticated_message(b, {
-                "type": "channel.response." + kind, "deviceId": "speaker", "runId": "b",
+                "type": "agent.response." + kind, "deviceId": "speaker", "runId": "b",
                 "text": "Wrong origin", "message": "Wrong origin"})
         for callback in listener.values():
             callback.assert_not_called()
@@ -822,16 +822,16 @@ async def test_fallback_b_cannot_dispatch_to_a_listener_while_a_teardown_held(en
 
 
 @pytest.mark.parametrize("finish", ["drain", "revoke", "switch", "retry"])
-async def test_realtime_disconnected_channel_retains_exact_peer_until_drain(env, monkeypatch, finish):
+async def test_realtime_disconnected_agent_retains_exact_peer_until_drain(env, monkeypatch, finish):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     import auth_connections
     import realtime_session
-    from channel_server import ChannelServer, _Connection
+    from agent_server import AgentServer, _Connection
 
     service, owner = env
-    server = ChannelServer()
+    server = AgentServer()
     manager = realtime_session.RealtimeManager()
     monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
     connections = []
@@ -842,29 +842,29 @@ async def test_realtime_disconnected_channel_retains_exact_peer_until_drain(env,
         await server._handle_auth(conn, issued["credential"])
         connections.append(conn)
     a, b = connections
-    assert channel_registry.activate(a.channel.id)
+    assert agent_registry.activate(a.agent.id)
     old = realtime_session.RealtimeSession("speaker", server)
     replacement = realtime_session.RealtimeSession("speaker", server)
     old._connection = SimpleNamespace(disconnect=AsyncMock(), audio_input_track=lambda: None)
     replacement._connection = SimpleNamespace(disconnect=AsyncMock(), audio_input_track=lambda: None)
     try:
-        complete = await old._channel_turn_complete_callback()
-        abort, = old._channel_media
+        complete = await old._agent_turn_complete_callback()
+        abort, = old._agent_media
         authority = server._media_authorities[abort]
         old._bot_speaking = 1  # Hold playback independently of response.end.
         await complete(False, "Queued A speech")
         assert len(old._pending_ends) == 1
         assert authority in auth_connections._connections
         auth_connections.release(a.authority)
-        server._connections.pop(a.channel.id)
-        assert channel_registry.activate(b.channel.id)
+        server._connections.pop(a.agent.id)
+        assert agent_registry.activate(b.agent.id)
         if finish == "switch":
             # A shared Pipecat queue must retire before accepting a different origin.
-            assert await old._channel_turn_complete_callback() is None
+            assert await old._agent_turn_complete_callback() is None
             assert old._closed
         manager._sessions["speaker"] = replacement
-        await replacement._channel_turn_complete_callback()
-        b_abort, = replacement._channel_media
+        await replacement._agent_turn_complete_callback()
+        b_abort, = replacement._agent_media
         if finish == "drain":
             old._bot_speaking = 0
             await complete.output_drained()
@@ -872,14 +872,14 @@ async def test_realtime_disconnected_channel_retains_exact_peer_until_drain(env,
             old._connection.disconnect.assert_not_awaited()
         else:
             Lifecycle(service.store, ORIGIN).execute(
-                "revoke", {"operation_id": "d" * 32, "role": "integration", "subject": a.channel.id}, owner)
+                "revoke", {"operation_id": "d" * 32, "role": "integration", "subject": a.agent.id}, owner)
             if finish == "retry":
                 old._connection.disconnect.side_effect = [RuntimeError("synthetic teardown failure"), None]
                 with pytest.raises(RuntimeError, match="transport_teardown_unavailable"):
                     await auth_connections.disconnect_stale(service.store)
                 assert abort.is_set()
                 assert authority in auth_connections._connections
-                assert server._media_turns[abort] == a.channel.id
+                assert server._media_turns[abort] == a.agent.id
                 assert not b_abort.is_set()
             await auth_connections.disconnect_stale(service.store)
             if finish in {"revoke", "retry"}:
@@ -889,9 +889,9 @@ async def test_realtime_disconnected_channel_retains_exact_peer_until_drain(env,
         assert abort not in server._media_turns
         assert abort not in server._media_authorities
         assert authority not in auth_connections._connections
-        assert not old._channel_media
+        assert not old._agent_media
         assert not b_abort.is_set()
-        assert server._media_turns[b_abort] == b.channel.id
+        assert server._media_turns[b_abort] == b.agent.id
         assert manager._sessions["speaker"] is replacement
         replacement._connection.disconnect.assert_not_awaited()
     finally:
@@ -902,15 +902,15 @@ async def test_realtime_disconnected_channel_retains_exact_peer_until_drain(env,
 
 
 @pytest.mark.parametrize("kind", ["delta", "end", "error"])
-async def test_response_dispatch_requires_principal_channel_ownership(env, kind):
+async def test_response_dispatch_requires_principal_agent_ownership(env, kind):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
     import auth_connections
-    from channel_server import ChannelServer, _Connection
+    from agent_server import AgentServer, _Connection
 
     service, _ = env
-    server = ChannelServer()
+    server = AgentServer()
     connections = []
     for index in (1, 2):
         body, _, issued = deliver(env, index)
@@ -920,13 +920,13 @@ async def test_response_dispatch_requires_principal_channel_ownership(env, kind)
         connections.append(conn)
     a, b = connections
     try:
-        assert channel_registry.activate(a.channel.id)
+        assert agent_registry.activate(a.agent.id)
         listener = {"on_delta": Mock(), "on_end": Mock(), "on_error": Mock()}
         server.add_response_listener("speaker", listener)
         # Even a current, scoped B credential cannot speak as registered A.
         a.principal = b.principal
         await server._handle_authenticated_message(a, {
-            "type": "channel.response." + kind, "deviceId": "speaker", "runId": "a",
+            "type": "agent.response." + kind, "deviceId": "speaker", "runId": "a",
             "text": "Wrong owner", "message": "Wrong owner"})
         for callback in listener.values():
             callback.assert_not_called()

@@ -32,7 +32,7 @@ export default function AccessPanel() {
   const [devices, setDevices] = useState<
     { id: string; name: string; state?: string }[]
   >([]);
-  const [channels, setChannels] = useState<{ id: string; name: string }[]>([]);
+  const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
   const [operations, setOperations] = useState<Operation[]>(() => {
     try {
       return JSON.parse(sessionStorage.getItem("vauxr-operations") || "[]");
@@ -64,7 +64,7 @@ export default function AccessPanel() {
     setPairs(p.requests);
     const d = await jsonResponse(await ownerFetch("/api/devices"));
     setDevices(Array.isArray(d) ? d : d.devices);
-    setChannels(await jsonResponse(await ownerFetch("/api/channels")));
+    setAgents(await jsonResponse(await ownerFetch("/api/agents")));
   }
   useEffect(() => {
     void run(refresh);
@@ -162,9 +162,9 @@ export default function AccessPanel() {
       <h3>Integration credentials</h3>
       <p>
         New connections require owner-approved integration enrollment. Existing integration
-        rotation/revocation uses lifecycle v1; it never reveals a channel token.
+        rotation/revocation uses lifecycle v1; it never reveals a agent token.
       </p>
-      {channels.map((c) => (
+      {agents.map((c) => (
         <div key={c.id}>
           {c.name} — {c.id}
           {["rotate", "revoke"].map((a) => (

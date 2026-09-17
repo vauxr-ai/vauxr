@@ -1,7 +1,7 @@
-"""Routing-channel registry.
+"""Routing-agent registry.
 
-Port of `src/channel-registry.ts`. Channels are stored in `channels.json`
-with bcrypt-hashed tokens. The virtual `openclaw-direct` channel exists
+Port of `src/agent-registry.ts`. Agents are stored in `agents.json`
+with bcrypt-hashed tokens. The virtual `openclaw-direct` agent exists
 when `OPENCLAW_URL` is configured. The active selection persists in
 `config.json` so it survives restarts.
 """
@@ -22,18 +22,18 @@ import bcrypt
 from config import get_config
 
 BCRYPT_COST = 10
-TOKEN_PREFIX = "vx_ch_"
+TOKEN_PREFIX = "vx_ag_"
 TOKEN_HEX_LEN = 64
 
 
-ChannelType = Literal["openclaw", "openclaw-direct"]
+AgentType = Literal["openclaw", "openclaw-direct"]
 
 
 @dataclass
-class Channel:
+class Agent:
     id: str
     name: str
-    type: ChannelType
+    type: AgentType
     tokenHash: str
     active: bool
     createdAt: str
@@ -41,22 +41,22 @@ class Channel:
 
 
 @dataclass(frozen=True)
-class ChannelPublic:
+class AgentPublic:
     id: str
     name: str
-    type: ChannelType
+    type: AgentType
     active: bool
     createdAt: str
     builtin: bool | None = None
 
 
-_channels: list[Channel] = []
+_agents: list[Agent] = []
 _openclaw_direct_active = False
 _loaded = False
 
 
-def _channels_path() -> str:
-    return os.path.join(get_config().data_dir, "channels.json")
+def _agents_path() -> str:
+    return os.path.join(get_config().data_dir, "agents.json")
 
 
 def _config_path() -> str:
@@ -67,7 +67,7 @@ def _ensure_data_dir() -> None:
     os.makedirs(get_config().data_dir, exist_ok=True)
 
 
-def _save_channels() -> None:
+def _save_agents() -> None:
     _ensure_data_dir()
     serialized = [
         {
@@ -79,9 +79,9 @@ def _save_channels() -> None:
             "createdAt": c.createdAt,
             **({"builtin": c.builtin} if c.builtin is not None else {}),
         }
-        for c in _channels
+        for c in _agents
     ]
-    with open(_channels_path(), "w", encoding="utf-8") as f:
+    with open(_agents_path(), "w", encoding="utf-8") as f:
         json.dump(serialized, f, indent=2)
 
 
@@ -92,16 +92,16 @@ def _save_config() -> None:
 
 
 def load() -> None:
-    """(Re)load channels.json + config.json from disk."""
-    global _channels, _openclaw_direct_active, _loaded
+    """(Re)load agents.json + config.json from disk."""
+    global _agents, _openclaw_direct_active, _loaded
     _ensure_data_dir()
 
-    p = _channels_path()
+    p = _agents_path()
     if os.path.exists(p):
         with open(p, encoding="utf-8") as f:
             raw = json.load(f)
-        _channels = [
-            Channel(
+        _agents = [
+            Agent(
                 id=str(c.get("id")),
                 name=str(c.get("name")),
                 type=c.get("type"),
@@ -113,14 +113,14 @@ def load() -> None:
             for c in raw
         ]
     else:
-        _channels = []
+        _agents = []
 
     cp = _config_path()
     if os.path.exists(cp):
         with open(cp, encoding="utf-8") as f:
             cfg = json.load(f)
         _openclaw_direct_active = bool(cfg.get("openclawDirectActive", False))
-    elif get_config().openclaw.url and not _channels:
+    elif get_config().openclaw.url and not _agents:
         # First-run default: openclaw-direct active when URL configured.
         _openclaw_direct_active = True
         _save_config()
@@ -134,10 +134,10 @@ def _generate_token() -> str:
     return TOKEN_PREFIX + secrets.token_hex(TOKEN_HEX_LEN // 2)
 
 
-def _openclaw_direct_channel() -> Channel | None:
+def _openclaw_direct_agent() -> Agent | None:
     if not get_config().openclaw.url:
         return None
-    return Channel(
+    return Agent(
         id="openclaw-direct",
         name="OpenClaw Direct",
         type="openclaw-direct",
@@ -148,20 +148,20 @@ def _openclaw_direct_channel() -> Channel | None:
     )
 
 
-def _public(c: Channel) -> ChannelPublic:
-    return ChannelPublic(
+def _public(c: Agent) -> AgentPublic:
+    return AgentPublic(
         id=c.id, name=c.name, type=c.type, active=c.active, createdAt=c.createdAt, builtin=c.builtin
     )
 
 
-def get_all() -> list[ChannelPublic]:
-    out: list[ChannelPublic] = []
-    direct = _openclaw_direct_channel()
+def get_all() -> list[AgentPublic]:
+    out: list[AgentPublic] = []
+    direct = _openclaw_direct_agent()
     if direct is not None:
         out.append(_public(direct))
-    for c in _channels:
+    for c in _agents:
         out.append(_public(c))
-    integrations = _integration_channels()
+    integrations = _integration_agents()
     if any(c.active for c in integrations):
         from dataclasses import replace
 
@@ -170,39 +170,39 @@ def get_all() -> list[ChannelPublic]:
     return out
 
 
-def get_by_id(channel_id: str) -> Channel | None:
-    enrolled = next((c for c in _integration_channels() if c.id == channel_id), None)
+def get_by_id(agent_id: str) -> Agent | None:
+    enrolled = next((c for c in _integration_agents() if c.id == agent_id), None)
     if enrolled is not None:
         return enrolled
-    if channel_id == "openclaw-direct":
-        return _openclaw_direct_channel()
-    for c in _channels:
-        if c.id == channel_id:
+    if agent_id == "openclaw-direct":
+        return _openclaw_direct_agent()
+    for c in _agents:
+        if c.id == agent_id:
             return c
     return None
 
 
-def get_active() -> Channel | None:
-    enrolled = next((c for c in _integration_channels() if c.active), None)
+def get_active() -> Agent | None:
+    enrolled = next((c for c in _integration_agents() if c.active), None)
     if enrolled is not None:
         return enrolled
-    direct = _openclaw_direct_channel()
+    direct = _openclaw_direct_agent()
     if direct is not None and direct.active:
         return direct
-    for c in _channels:
+    for c in _agents:
         if c.active:
             return c
     return None
 
 
-async def create(name: str, type_: str = "openclaw") -> tuple[ChannelPublic, str]:
+async def create(name: str, type_: str = "openclaw") -> tuple[AgentPublic, str]:
     if type_ != "openclaw":
         raise ValueError("invalid type, must be 'openclaw'")
     token = _generate_token()
     token_hash = await asyncio.to_thread(
         bcrypt.hashpw, token.encode("utf-8"), bcrypt.gensalt(BCRYPT_COST)
     )
-    channel = Channel(
+    agent = Agent(
         id=str(uuid.uuid4()),
         name=name,
         type="openclaw",
@@ -210,68 +210,68 @@ async def create(name: str, type_: str = "openclaw") -> tuple[ChannelPublic, str
         active=False,
         createdAt=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     )
-    _channels.append(channel)
-    _save_channels()
-    return _public(channel), token
+    _agents.append(agent)
+    _save_agents()
+    return _public(agent), token
 
 
-def remove(channel_id: str) -> bool:
-    global _channels
-    if channel_id == "openclaw-direct":
+def remove(agent_id: str) -> bool:
+    global _agents
+    if agent_id == "openclaw-direct":
         return False
-    before = len(_channels)
-    _channels = [c for c in _channels if c.id != channel_id]
-    if len(_channels) == before:
+    before = len(_agents)
+    _agents = [c for c in _agents if c.id != agent_id]
+    if len(_agents) == before:
         return False
-    _save_channels()
+    _save_agents()
     return True
 
 
-def activate(channel_id: str) -> bool:
+def activate(agent_id: str) -> bool:
     global _openclaw_direct_active
-    if get_by_id(channel_id) is None:
+    if get_by_id(agent_id) is None:
         return False
-    if _activate_integration(channel_id):
+    if _activate_integration(agent_id):
         return True
-    if channel_id == "openclaw-direct":
-        direct = _openclaw_direct_channel()
+    if agent_id == "openclaw-direct":
+        direct = _openclaw_direct_agent()
         if direct is None:
             return False
-        for c in _channels:
+        for c in _agents:
             c.active = False
-        _save_channels()
+        _save_agents()
         _openclaw_direct_active = True
         _save_config()
         return True
 
-    target = next((c for c in _channels if c.id == channel_id), None)
+    target = next((c for c in _agents if c.id == agent_id), None)
     if target is None:
         return False
-    for c in _channels:
+    for c in _agents:
         c.active = False
     _openclaw_direct_active = False
     _save_config()
     target.active = True
-    _save_channels()
+    _save_agents()
     return True
 
 
-async def rotate_token(channel_id: str) -> str | None:
-    if channel_id == "openclaw-direct":
+async def rotate_token(agent_id: str) -> str | None:
+    if agent_id == "openclaw-direct":
         return None
-    target = next((c for c in _channels if c.id == channel_id), None)
+    target = next((c for c in _agents if c.id == agent_id), None)
     if target is None:
         return None
     token = _generate_token()
     target.tokenHash = (
         await asyncio.to_thread(bcrypt.hashpw, token.encode("utf-8"), bcrypt.gensalt(BCRYPT_COST))
     ).decode("utf-8")
-    _save_channels()
+    _save_agents()
     return token
 
 
-async def validate_channel_token(raw_token: str) -> Channel | None:
-    # Filter on prefix first: only `vx_ch_` tokens are channel tokens. This
+async def validate_agent_token(raw_token: str) -> Agent | None:
+    # Filter on prefix first: only `vx_ag_` tokens are agent tokens. This
     # also short-circuits the bcrypt path for device tokens and stray Bearer
     # values, which matters because bcrypt.checkpw raises ValueError when the
     # input exceeds bcrypt's 72-byte password limit — without this guard, an
@@ -282,7 +282,7 @@ async def validate_channel_token(raw_token: str) -> Channel | None:
     token_bytes = raw_token.encode("utf-8")
     if len(token_bytes) > 72:
         return None
-    for c in _channels:
+    for c in _agents:
         try:
             ok = await asyncio.to_thread(
                 bcrypt.checkpw, token_bytes, c.tokenHash.encode("utf-8")
@@ -300,46 +300,46 @@ async def validate_channel_token(raw_token: str) -> Channel | None:
 
 
 def _reset_for_tests() -> None:
-    global _channels, _openclaw_direct_active, _loaded
-    _channels = []
+    global _agents, _openclaw_direct_active, _loaded
+    _agents = []
     _openclaw_direct_active = False
     _loaded = False
 
 
-def _set_active_for_tests(channel: Channel | None) -> None:
+def _set_active_for_tests(agent: Agent | None) -> None:
     """Used in pipeline tests where we don't want disk I/O."""
     global _openclaw_direct_active
-    if channel is None:
-        for c in _channels:
+    if agent is None:
+        for c in _agents:
             c.active = False
         _openclaw_direct_active = False
         return
-    if channel.id == "openclaw-direct":
-        for c in _channels:
+    if agent.id == "openclaw-direct":
+        for c in _agents:
             c.active = False
         _openclaw_direct_active = True
         return
     # Insert if missing so get_active() finds it.
-    if not any(c.id == channel.id for c in _channels):
-        _channels.append(channel)
-    for c in _channels:
-        c.active = c.id == channel.id
+    if not any(c.id == agent.id for c in _agents):
+        _agents.append(agent)
+    for c in _agents:
+        c.active = c.id == agent.id
     _openclaw_direct_active = False
 
 
-def _integration_channels() -> list[Channel]:
-    """Project atomically enrolled routing metadata; never copy credentials to channels.json."""
+def _integration_agents() -> list[Agent]:
+    """Project atomically enrolled routing metadata; never copy credentials to agents.json."""
     from auth import get_store
 
     store = get_store()
     state = store.integration
-    return [Channel(id=row["channel_id"], name=row["display_name"], type="openclaw", tokenHash="",
-                    active=state.get("active_channel") == row["channel_id"],
+    return [Agent(id=row["agent_id"], name=row["display_name"], type="openclaw", tokenHash="",
+                    active=state.get("active_agent") == row["agent_id"],
                     createdAt=datetime.fromtimestamp(row["created_at"], tz=UTC).isoformat())
-            for row in state.get("requests", {}).values() if store.integration_channel_valid(row)]
+            for row in state.get("requests", {}).values() if store.integration_agent_valid(row)]
 
 
-def _activate_integration(channel_id: str) -> bool:
+def _activate_integration(agent_id: str) -> bool:
     import copy
 
     from auth import get_store
@@ -349,12 +349,12 @@ def _activate_integration(channel_id: str) -> bool:
         state = copy.deepcopy(store.integration)
         if not state:
             return False
-        found = any(r["channel_id"] == channel_id and store.integration_channel_valid(r)
+        found = any(r["agent_id"] == agent_id and store.integration_agent_valid(r)
                     for r in state["requests"].values())
         # A row may have been retired since activate() looked it up.
-        if not found and any(r["channel_id"] == channel_id for r in state["requests"].values()):
+        if not found and any(r["agent_id"] == agent_id for r in state["requests"].values()):
             return False
-        state["active_channel"] = channel_id if found else ""
+        state["active_agent"] = agent_id if found else ""
         store.integration = state
         try:
             store.replace(store.records)

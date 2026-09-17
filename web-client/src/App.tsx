@@ -1,3 +1,5 @@
+import SpeechSettings from "./components/SpeechSettings";
+import { useRealtime } from "./hooks/useRealtime";
 import OwnerGate from "./auth/OwnerGate";
 import AccessPanel from "./components/AccessPanel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,7 +10,7 @@ import ResizableSplit from "./components/ResizableSplit";
 import StatusBar from "./components/StatusBar";
 import EventLog from "./components/EventLog";
 import ConfigPanel from "./components/ConfigPanel";
-import ChannelsPanel from "./components/ChannelsPanel";
+import AgentsPanel from "./components/AgentsPanel";
 import DevicesPanel from "./components/DevicesPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -30,6 +32,8 @@ export default function App() {
 }
 
 function OwnerApp() {
+  const [voiceMode, setVoiceMode] = useState<"standard" | "realtime">("standard");
+  const credential = useRef("");
   const [transcript, setTranscript] = useState("");
   const [talking, setTalking] = useState(false);
   const [followUpListening, setFollowUpListening] = useState(false);
@@ -78,6 +82,8 @@ function OwnerApp() {
   );
 
   const ws = useWebSocket(wsOpts);
+  const realtime = useRealtime(ws.sendJson);
+  Object.assign(wsOpts, { onControl: realtime.control });
   const audio = useAudio({
     onPcmChunk: useCallback(
       (pcm: Int16Array) => {
@@ -98,6 +104,7 @@ function OwnerApp() {
       setTalking(false);
       audio.stopCapture();
       audio.stopPlayback();
+      realtime.stop();
       ws.disconnect();
     };
     window.addEventListener("voice-stop", stop);
@@ -108,6 +115,7 @@ function OwnerApp() {
   }, []);
   useEffect(() => {
     if (ws.state === "disconnected") {
+      realtime.stop();
       captureGeneration.current++;
       captureReadyRef.current = false;
       talkingRef.current = false;
@@ -133,6 +141,7 @@ function OwnerApp() {
 
   const handleConnect = useCallback(
     (url: string, dev: string, token: string) => {
+      credential.current = token;
       setWsUrl(url);
 
       setDeviceId(dev);
@@ -140,6 +149,13 @@ function OwnerApp() {
     },
     [ws],
   );
+
+  useEffect(() => {
+    realtime.stop();
+    audio.stopCapture(); audio.stopPlayback();
+    captureGeneration.current++; talkingRef.current = false; setTalking(false);
+  }, [voiceMode]);
+  useEffect(() => realtime.volume(outputVolume, outputMuted), [outputVolume, outputMuted, realtime.state]);
 
   const startActualTalking = useCallback(async () => {
     if (talkingRef.current) return;
@@ -280,8 +296,17 @@ function OwnerApp() {
           }
         />
       }
-      talk={
-        <TalkPanel
+      talk={<div>
+        {deviceId && <SpeechSettings deviceId={deviceId} onModeChange={setVoiceMode} />}
+        {voiceMode === "realtime" ? <section aria-label="Realtime voice" className="card space-y-3 p-4">
+          <p>{realtime.state === "listening" ? "Listening — speak naturally, including during playback." : realtime.state}</p>
+          {realtime.error && <p role="alert">{realtime.error}</p>}
+          {realtime.state === "stopped" ? <button disabled={!isConnected || micUnavailable}
+            onClick={() => void realtime.start(deviceId, credential.current)}>Start Realtime</button>
+            : <button onClick={realtime.stop}>Stop Realtime</button>}
+          <p>Stopping voice leaves backend actions running. Check the Agent before retrying an action.</p>
+          <p aria-live="polite">{realtime.transcript}</p>
+        </section> : <TalkPanel
           connectionState={ws.state}
           isConnected={isConnected}
           micUnavailable={micUnavailable}
@@ -298,8 +323,8 @@ function OwnerApp() {
           onToggleMute={handleToggleMute}
           onSetTalkMode={setTalkMode}
           onInterrupt={handleInterrupt}
-        />
-      }
+        />}
+      </div>}
     />
   );
 }
@@ -324,8 +349,8 @@ function renderSection(id: SectionId, props: SectionProps) {
           onDisconnect={props.onDisconnect}
         />
       );
-    case "channels":
-      return <ChannelsPanel />;
+    case "agents":
+      return <AgentsPanel />;
     case "devices":
       return (
         <DevicesPanel

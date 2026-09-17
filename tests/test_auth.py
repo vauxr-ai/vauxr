@@ -24,8 +24,8 @@ MATRIX = {
     O.FIRMWARE_DELIVERY_MINT: "o",
     O.FIRMWARE_READ: "od",
     O.FIRMWARE_PUBLISH: "o",
-    O.CHANNEL_LIST: "o",
-    O.CHANNEL_CONFIG: "o",
+    O.AGENT_LIST: "o",
+    O.AGENT_CONFIG: "o",
     O.CREDENTIAL_CREATE: "o",
     O.CREDENTIAL_DISCLOSE: "o",
     O.CREDENTIAL_ROTATE: "o",
@@ -40,7 +40,7 @@ MATRIX = {
     O.DEVICE_CONTROL: "d",
     O.DEVICE_BUTTON: "d",
     O.REALTIME_OFFER: "d",
-    O.CHANNEL_CONNECT: "i",
+    O.AGENT_CONNECT: "i",
     O.VOICE_RESPONSE: "i",
 }
 

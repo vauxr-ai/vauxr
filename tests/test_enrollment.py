@@ -34,7 +34,7 @@ def setup(tmp_path):
     cookie, _ = owner.login(result["operator_token"])
     with store.transaction():
         store.replace(
-            (Credential("integration", Role.INTEGRATION, "channel", verifier("synthetic-integration")),)
+            (Credential("integration", Role.INTEGRATION, "agent", verifier("synthetic-integration")),)
         )
     return Enrollment(store, ORIGIN), owner, cookie
 
@@ -452,7 +452,7 @@ async def client(monkeypatch, tmp_path):
         client.owner_headers = {**HEADERS, "Cookie": f"{COOKIE}={cookie}", "X-CSRF-Token": session.csrf}
         with owner.store.transaction():
             owner.store.replace(
-                (Credential("integration", Role.INTEGRATION, "channel", verifier("synthetic-integration")),)
+                (Credential("integration", Role.INTEGRATION, "agent", verifier("synthetic-integration")),)
             )
         yield client
     config.reset_config()

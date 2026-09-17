@@ -1,7 +1,7 @@
-"""Channel-plugin WS endpoint (`/channel`).
+"""Agent-plugin WS endpoint (`/agent`).
 
-Port of `src/channel-server.ts`. Each plugin connection authenticates with
-a channel token, then exchanges `channel.transcript` / `channel.response.*`
+Port of `src/agent-server.ts`. Each plugin connection authenticates with
+a agent token, then exchanges `agent.transcript` / `agent.response.*`
 messages with the active device pipeline.
 """
 
@@ -10,19 +10,20 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 from collections.abc import Awaitable, Callable
 from typing import Any, TypedDict
 
 from aiohttp import WSMsgType, web
 
 import auth_connections
-import channel_registry
+import agent_registry
 from auth import authenticate, current
 from auth_policy import Operation, Principal, allowed, audit_denial
 from config import get_config
 from device_config import load_device_display_name
 
-log = logging.getLogger("vauxr.channel_server")
+log = logging.getLogger("vauxr.agent_server")
 
 _AUTH_TIMEOUT_S = 10.0
 
@@ -34,11 +35,11 @@ class DeviceResponseListener(TypedDict):
 
 
 class _Connection:
-    __slots__ = ("authenticated", "authority", "channel", "principal", "ws")
+    __slots__ = ("authenticated", "authority", "agent", "principal", "ws")
 
     def __init__(self, ws: web.WebSocketResponse) -> None:
         self.ws: web.WebSocketResponse = ws
-        self.channel: channel_registry.Channel | None = None
+        self.agent: agent_registry.Agent | None = None
         self.authenticated = False
         self.principal: Principal | None = None
         self.authority: auth_connections.Connection | None = None
@@ -53,21 +54,43 @@ async def _send_json(ws: web.WebSocketResponse, obj: dict[str, Any]) -> None:
         pass
 
 
-class ChannelServer:
+class AgentServer:
     def __init__(self) -> None:
+        self._realtime_requests: dict[str, tuple[_Connection, str, asyncio.Future]] = {}
         self._connections: dict[str, _Connection] = {}
         self._response_listeners: dict[str, DeviceResponseListener] = {}
-        self._response_channels: dict[str, str] = {}
+        self._response_agents: dict[str, str] = {}
         self._media_turns: dict[asyncio.Event, str] = {}
         self._media_authorities: dict[asyncio.Event, auth_connections.Connection] = {}
 
+    async def realtime_request(
+        self, agent_id: str, device_id: str, session: str, operation: str,
+        payload: dict[str, Any] | None = None, *, timeout: float = 30,
+    ) -> dict[str, Any]:
+        active = agent_registry.get_active()
+        conn = self._connections.get(agent_id)
+        if (active is None or active.id != agent_id or conn is None or conn.ws.closed
+                or not current(conn.principal)):
+            raise RuntimeError("Selected Agent is not connected; connect and activate the OpenClaw integration")
+        request_id = secrets.token_hex(16)
+        future = asyncio.get_running_loop().create_future()
+        self._realtime_requests[request_id] = (conn, device_id, future)
+        try:
+            await _send_json(conn.ws, {"type": "agent.realtime.request", "requestId": request_id,
+                                      "deviceId": device_id, "session": session, "operation": operation,
+                                      "payload": payload or {}})
+            return await asyncio.wait_for(future, timeout)
+        finally:
+            # Cancelling the waiting media session never sends backend cancellation.
+            self._realtime_requests.pop(request_id, None)
+
     # --- Pipeline-facing API ---
 
-    def get_active_channel(self) -> channel_registry.Channel | None:
-        return channel_registry.get_active()
+    def get_active_agent(self) -> agent_registry.Agent | None:
+        return agent_registry.get_active()
 
     def is_active_connected(self) -> bool:
-        active = channel_registry.get_active()
+        active = agent_registry.get_active()
         if active is None:
             return False
         if active.type == "openclaw-direct":
@@ -76,21 +99,21 @@ class ChannelServer:
         return conn is not None and not conn.ws.closed and current(conn.principal)
 
     def send_transcript(self, device_id: str, text: str) -> bool:
-        active = channel_registry.get_active()
+        active = agent_registry.get_active()
         if active is None:
-            log.warning("No active channel — dropping transcript")
+            log.warning("No active agent — dropping transcript")
             return False
         if active.type == "openclaw-direct":
             return False
         conn = self._connections.get(active.id)
         if conn is None or conn.ws.closed or not current(conn.principal):
-            log.warning("Active channel %s not connected — dropping transcript", active.name)
+            log.warning("Active agent %s not connected — dropping transcript", active.name)
             return False
 
         # device_id comes from the authenticated device turn. Display metadata
         # must never replace it in sessions, response listeners or routing.
         frame = {
-            "type": "channel.transcript",
+            "type": "agent.transcript",
             "deviceId": device_id,
             "sessionKey": f"vauxr:{device_id}",
             "text": text,
@@ -111,14 +134,14 @@ class ChannelServer:
         return True
 
     def retain_media_turn(
-        self, channel_id: str, abort: asyncio.Event,
+        self, agent_id: str, abort: asyncio.Event,
         close: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Keep exact turn authority until all queued media has completed."""
         if abort in self._media_turns:
             raise ValueError("media turn already retained")
-        self._media_turns[abort] = channel_id
-        conn = self._connections.get(channel_id)
+        self._media_turns[abort] = agent_id
+        conn = self._connections.get(agent_id)
         if conn is not None and conn.principal is not None:
             async def close_revoked() -> None:
                 # A completed entry may already be in a teardown snapshot.
@@ -138,8 +161,8 @@ class ChannelServer:
 
     def add_response_listener(self, device_id: str, listener: DeviceResponseListener) -> None:
         self._response_listeners[device_id] = listener
-        active = channel_registry.get_active()
-        self._response_channels[device_id] = active.id if active else ""
+        active = agent_registry.get_active()
+        self._response_agents[device_id] = active.id if active else ""
 
     def remove_response_listener(
         self, device_id: str, listener: DeviceResponseListener | None = None
@@ -150,7 +173,7 @@ class ChannelServer:
         if listener is not None and self._response_listeners.get(device_id) is not listener:
             return
         self._response_listeners.pop(device_id, None)
-        self._response_channels.pop(device_id, None)
+        self._response_agents.pop(device_id, None)
 
     def get_response_listener(self, device_id: str) -> DeviceResponseListener | None:
         return self._response_listeners.get(device_id)
@@ -158,7 +181,7 @@ class ChannelServer:
     # --- WS handler ---
 
     async def handle_connection(self, ws: web.WebSocketResponse) -> None:
-        log.info("new channel connection")
+        log.info("new agent connection")
         conn = _Connection(ws)
         auth_done = asyncio.Event()
 
@@ -192,7 +215,7 @@ class ChannelServer:
                     continue
 
                 if not conn.authenticated:
-                    if payload.get("type") == "channel.auth":
+                    if payload.get("type") == "agent.auth":
                         await self._handle_auth(conn, payload.get("token", ""))
                         auth_done.set()
                     else:
@@ -212,19 +235,19 @@ class ChannelServer:
             auth_connections.release(conn.authority)
             auth_done.set()
             timeout_task.cancel()
-            if conn.authenticated and conn.channel is not None:
-                log.info("channel disconnected: %s (%s)", conn.channel.name, conn.channel.id)
+            if conn.authenticated and conn.agent is not None:
+                log.info("agent disconnected: %s (%s)", conn.agent.name, conn.agent.id)
                 # Only remove if this conn is still the current one (a
                 # replacement might have superseded it during auth).
-                if self._connections.get(conn.channel.id) is conn:
-                    self._connections.pop(conn.channel.id, None)
+                if self._connections.get(conn.agent.id) is conn:
+                    self._connections.pop(conn.agent.id, None)
             else:
-                log.info("unauthenticated channel connection closed")
+                log.info("unauthenticated agent connection closed")
 
     async def _handle_auth(self, conn: _Connection, token: str) -> None:
         principal = authenticate(token)
-        channel = channel_registry.get_by_id(principal.subject) if principal else None
-        if not allowed(principal, Operation.CHANNEL_CONNECT) or channel is None:
+        agent = agent_registry.get_by_id(principal.subject) if principal else None
+        if not allowed(principal, Operation.AGENT_CONNECT) or agent is None:
             audit_denial(principal is not None)
             await _send_json(
                 conn.ws,
@@ -235,17 +258,17 @@ class ChannelServer:
             return
         conn.principal = principal
         conn.authenticated = True
-        conn.channel = channel
+        conn.agent = agent
 
         teardown: list[auth_connections.Teardown] = []
 
         async def close_revoked() -> None:
             if not teardown:
                 teardown.append(auth_connections.Teardown(conn.ws.close))
-                if self._connections.get(channel.id) is conn:
-                    self._connections.pop(channel.id, None)
+                if self._connections.get(agent.id) is conn:
+                    self._connections.pop(agent.id, None)
                     dependents = {device_id: listener for device_id, listener in self._response_listeners.items()
-                                  if self._response_channels.get(device_id) == channel.id}
+                                  if self._response_agents.get(device_id) == agent.id}
                     for device_id, listener in dependents.items():
                         async def notify(device_id=device_id, listener=listener) -> None:
                             listener["on_error"](device_id, "integration_revoked")
@@ -255,7 +278,7 @@ class ChannelServer:
 
         conn.authority = auth_connections.retain(principal, close_revoked)
 
-        existing = self._connections.get(channel.id)
+        existing = self._connections.get(agent.id)
         if existing is not None and existing is not conn:
             # Kick the previous connection — store ours afterward so the
             # kicked one's close-cleanup (see handle_connection) sees a
@@ -266,23 +289,23 @@ class ChannelServer:
         if not current(principal) or conn.ws.closed:
             await conn.ws.close()
             return
-        self._connections[channel.id] = conn
+        self._connections[agent.id] = conn
         await _send_json(
             conn.ws,
-            {"type": "channel.ready", "channelId": channel.id, "name": channel.name},
+            {"type": "agent.ready", "agentId": agent.id, "name": agent.name},
         )
-        log.info("channel authenticated: %s (%s)", channel.name, channel.id)
+        log.info("agent authenticated: %s (%s)", agent.name, agent.id)
 
     async def _handle_authenticated_message(self, conn: _Connection, msg: dict[str, Any]) -> None:
-        active = channel_registry.get_active()
+        active = agent_registry.get_active()
         authenticated = current(conn.principal)
         if (not authenticated or not allowed(conn.principal, Operation.VOICE_RESPONSE)
-                or conn.channel is None or conn.principal.subject != conn.channel.id
-                or active is None or active.id != conn.channel.id
-                or self._connections.get(conn.channel.id) is not conn
+                or conn.agent is None or conn.principal.subject != conn.agent.id
+                or active is None or active.id != conn.agent.id
+                or self._connections.get(conn.agent.id) is not conn
                 or not isinstance(msg.get("type"), str)
                 or msg.get("type") not in {
-                    "channel.response.delta", "channel.response.end", "channel.response.error"
+                    "agent.response.delta", "agent.response.end", "agent.response.error", "agent.realtime.result"
                 }):
             audit_denial(authenticated)
             await _send_json(conn.ws, {"type": "error",
@@ -290,32 +313,42 @@ class ChannelServer:
                                       "message": "Access denied"})
             await conn.ws.close()
             return
+        if msg.get("type") == "agent.realtime.result":
+            pending = self._realtime_requests.get(msg.get("requestId", ""))
+            if pending and pending[0] is conn and pending[1] == msg.get("deviceId"):
+                future = pending[2]
+                if not future.done():
+                    if msg.get("error"):
+                        future.set_exception(RuntimeError("Backend realtime operation failed; check backend action status"))
+                    elif isinstance(msg.get("result"), dict):
+                        future.set_result(msg["result"])
+            return
         device_id = msg.get("deviceId")
         run_id = msg.get("runId")
         msg_type = msg.get("type")
         if not isinstance(device_id, str) or not isinstance(run_id, str):
-            channel_name = conn.channel.name if conn.channel else "?"
-            log.warning("%s: ignoring %s — missing deviceId or runId", channel_name, msg_type)
+            agent_name = conn.agent.name if conn.agent else "?"
+            log.warning("%s: ignoring %s — missing deviceId or runId", agent_name, msg_type)
             return
         listener = self._response_listeners.get(device_id)
         if listener is None:
-            channel_name = conn.channel.name if conn.channel else "?"
-            log.warning("%s: no listener for %s (%s)", channel_name, device_id, msg_type)
+            agent_name = conn.agent.name if conn.agent else "?"
+            log.warning("%s: no listener for %s (%s)", agent_name, device_id, msg_type)
             return
 
-        if self._response_channels.get(device_id) != conn.channel.id:
+        if self._response_agents.get(device_id) != conn.agent.id:
             audit_denial(True)
-            log.warning("Ignoring response from channel other than listener origin")
+            log.warning("Ignoring response from agent other than listener origin")
             return
 
-        if msg_type == "channel.response.delta":
+        if msg_type == "agent.response.delta":
             text = msg.get("text")
             if isinstance(text, str):
                 listener["on_delta"](run_id, text)
-        elif msg_type == "channel.response.end":
+        elif msg_type == "agent.response.end":
             listener["on_end"](run_id)
-        elif msg_type == "channel.response.error":
-            listener["on_error"](run_id, str(msg.get("message", "Channel error")))
+        elif msg_type == "agent.response.error":
+            listener["on_error"](run_id, str(msg.get("message", "Agent error")))
         else:
             await _send_json(
                 conn.ws,

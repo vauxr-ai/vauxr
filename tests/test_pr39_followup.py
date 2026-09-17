@@ -12,7 +12,7 @@ import button_dispatch
 import config
 import device_registry as registry
 import realtime_session
-from channel_server import ChannelServer
+from agent_server import AgentServer
 from realtime_session import RealtimeSession
 
 
@@ -30,7 +30,7 @@ def isolated(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 async def test_empty_completion_behind_interrupted_audio_end() -> None:
     ws = SimpleNamespace(closed=False, send_str=AsyncMock())
     registry.register("review", ws=ws)
-    session = RealtimeSession("review", channel_server=object())
+    session = RealtimeSession("review", agent_server=object())
     realtime_session.get_manager()._sessions[session.device_id] = session
     session._on_bot_started_speaking()
     await session._on_turn_complete(False, "Interrupted answer.")
@@ -49,7 +49,7 @@ async def test_empty_completion_behind_interrupted_audio_end() -> None:
 
 
 async def test_delivered_quiet_end_with_intervening_explicit_pause() -> None:
-    session = RealtimeSession("review", channel_server=object())
+    session = RealtimeSession("review", agent_server=object())
     realtime_session.get_manager()._sessions[session.device_id] = session
 
     async def send(_data: str) -> None:
@@ -70,13 +70,13 @@ async def test_warm_ws_prompt_completion_matches_mic_and_registry(
 
     ws = SimpleNamespace(closed=False, send_str=AsyncMock(), send_bytes=AsyncMock())
     registry.register("review", ws=ws)
-    session = RealtimeSession("review", channel_server=object())
+    session = RealtimeSession("review", agent_server=object())
     session.set_mic_paused(True)
     manager = realtime_session.RealtimeManager()
     manager._sessions["review"] = session
     monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
-    channel = ChannelServer()
-    monkeypatch.setattr(channel, "get_active_channel", lambda: SimpleNamespace(type="openclaw-direct"))
+    agent = AgentServer()
+    monkeypatch.setattr(agent, "get_active_agent", lambda: SimpleNamespace(type="openclaw-direct"))
 
     async def chat(_key: str, _text: str, on_delta: Callable[[str], None]) -> None:
         on_delta("Another question?" if follow_up else "Done.")
@@ -85,7 +85,7 @@ async def test_warm_ws_prompt_completion_matches_mic_and_registry(
         yield b"\x01\x00" * 320
 
     monkeypatch.setattr(pipeline, "synthesize", synthesize)
-    await button_dispatch._dispatch_prompt("review", "Hello", SimpleNamespace(chat=chat), channel)
+    await button_dispatch._dispatch_prompt("review", "Hello", SimpleNamespace(chat=chat), agent)
     ends = [json.loads(call.args[0]) for call in ws.send_str.call_args_list
             if json.loads(call.args[0])["type"] == "audio.end"]
     assert ends == [{"type": "audio.end", "follow_up": follow_up}]
@@ -118,7 +118,7 @@ async def test_old_prompt_does_not_complete_or_clear_new_owner(
         await send_audio_end(True)
 
     monkeypatch.setattr(button_dispatch, "run_text_turn", run)
-    await button_dispatch._dispatch_prompt("review", "Hello", None, ChannelServer())
+    await button_dispatch._dispatch_prompt("review", "Hello", None, AgentServer())
     completion.assert_not_awaited()
     assert registry.get("review").abort_event is new_abort
     assert registry.get("review").state == "processing"
@@ -140,7 +140,7 @@ async def test_aborted_prompt_does_not_reopen_follow_up(
         await send_audio_end(True)
 
     monkeypatch.setattr(button_dispatch, "run_text_turn", run)
-    await button_dispatch._dispatch_prompt("review", "Hello", None, ChannelServer())
+    await button_dispatch._dispatch_prompt("review", "Hello", None, AgentServer())
     completion.assert_not_awaited()
     assert registry.get("review").abort_event is None
     assert registry.get("review").state == "idle"

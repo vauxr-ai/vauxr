@@ -21,8 +21,8 @@ beforeEach(() => {
     async (path) =>
       new Response(
         JSON.stringify(
-          path.endsWith("channels")
-            ? [{ id: "channel-1", name: "OpenClaw" }]
+          path.endsWith("agents")
+            ? [{ id: "agent-1", name: "OpenClaw" }]
             : [],
         ),
       ),
@@ -59,7 +59,7 @@ it("retains integration revoke ID before a possibly committed error and retries 
   expect(operations[0]).toEqual(operations[1]);
   expect(operations[0]).toMatchObject({
     role: "integration",
-    subject: "channel-1",
+    subject: "agent-1",
   });
 });
 it("shows expired pairing as terminal and never infers consent from its name", async () => {

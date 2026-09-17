@@ -88,13 +88,13 @@ def _audio_ends(ws: _FakeWs) -> list[dict[str, object]]:
 
 @pytest.mark.asyncio
 async def test_empty_timeout_completion_does_not_force_follow_up() -> None:
-    """Channel timeout completes with (False, ''); do not reopen the mic."""
+    """Agent timeout completes with (False, ''); do not reopen the mic."""
     from realtime_session import RealtimeSession
 
     ws = _FakeWs()
     dev_reg.register("dev-empty", ws=ws)
     try:
-        session = RealtimeSession("dev-empty", channel_server=object())
+        session = RealtimeSession("dev-empty", agent_server=object())
         realtime_session.get_manager()._sessions[session.device_id] = session
         await session._on_turn_complete(False, "")
         ends = _audio_ends(ws)
@@ -117,7 +117,7 @@ async def test_idle_interruption_does_not_force_follow_up() -> None:
     ws = _FakeWs()
     dev_reg.register("dev-idle-int", ws=ws)
     try:
-        session = RealtimeSession("dev-idle-int", channel_server=object())
+        session = RealtimeSession("dev-idle-int", agent_server=object())
         realtime_session.get_manager()._sessions[session.device_id] = session
         session._on_interruption()
         assert session._user_barged_in is False
@@ -142,7 +142,7 @@ async def test_barge_in_during_reply_keeps_listening() -> None:
     ws = _FakeWs()
     dev_reg.register("dev-barge-int", ws=ws)
     try:
-        session = RealtimeSession("dev-barge-int", channel_server=object())
+        session = RealtimeSession("dev-barge-int", agent_server=object())
         realtime_session.get_manager()._sessions[session.device_id] = session
         session._bot_speaking = 1
         session._on_interruption()
@@ -165,7 +165,7 @@ def test_turns_suppressed_when_barge_in_disabled(monkeypatch: pytest.MonkeyPatch
     from realtime_session import RealtimeSession
 
     monkeypatch.setattr(dev_reg, "get_config_for", lambda _id: {"barge_in": False})
-    session = RealtimeSession("dev-bi", channel_server=object())
+    session = RealtimeSession("dev-bi", agent_server=object())
     realtime_session.get_manager()._sessions[session.device_id] = session
     session._awaiting_reply = False
     session._bot_speaking = 1
@@ -180,7 +180,7 @@ def test_turns_not_suppressed_during_tts_when_barge_in_enabled(
     from realtime_session import RealtimeSession
 
     monkeypatch.setattr(dev_reg, "get_config_for", lambda _id: {"barge_in": True})
-    session = RealtimeSession("dev-bi", channel_server=object())
+    session = RealtimeSession("dev-bi", agent_server=object())
     realtime_session.get_manager()._sessions[session.device_id] = session
     session._awaiting_reply = False
     session._bot_speaking = 1
@@ -192,7 +192,7 @@ def test_turns_not_suppressed_during_tts_when_barge_in_enabled(
 def test_turns_suppressed_when_mic_paused() -> None:
     from realtime_session import RealtimeSession
 
-    session = RealtimeSession("dev-pause", channel_server=object())
+    session = RealtimeSession("dev-pause", agent_server=object())
     realtime_session.get_manager()._sessions[session.device_id] = session
     assert session._turns_suppressed() is False
     session.set_mic_paused(True)
@@ -220,26 +220,26 @@ def test_is_cold_wait_lifecycle() -> None:
 
 async def test_ws_pipeline_records_turn_into_log(monkeypatch: pytest.MonkeyPatch) -> None:
     """A completed WS turn must flow through the record_turn choke point."""
-    import channel_registry
+    import agent_registry
     import pipeline
     import realtime_session
     import wyoming_stt
     import wyoming_tts
-    from channel_server import ChannelServer
+    from agent_server import AgentServer
     from pipeline import run_voice_turn
 
     # Fresh manager singleton so the log starts empty.
     realtime_session._manager = None  # type: ignore[attr-defined]
 
-    ch = channel_registry.Channel(
+    ch = agent_registry.Agent(
         id="ch-1",
-        name="My Channel",
+        name="My Agent",
         type="openclaw",
         tokenHash="hash",
         active=True,
         createdAt="2026-05-17T00:00:00Z",
     )
-    channel_registry._set_active_for_tests(ch)
+    agent_registry._set_active_for_tests(ch)
 
     async def fake_stt(*_a, **_k):
         return "what's the weather"
@@ -262,7 +262,7 @@ async def test_ws_pipeline_records_turn_into_log(monkeypatch: pytest.MonkeyPatch
     ws = _Ws()
     dev_reg.register("dev-rec", ws=ws)
 
-    cs = ChannelServer()
+    cs = AgentServer()
 
     def send_transcript_stub(device_id: str, _text: str) -> bool:
         import asyncio
@@ -293,7 +293,7 @@ async def test_ws_pipeline_records_turn_into_log(monkeypatch: pytest.MonkeyPatch
     assert assistant and assistant[-1]["content"] == "It is sunny."
 
     dev_reg.unregister("dev-rec")
-    channel_registry._set_active_for_tests(None)
+    agent_registry._set_active_for_tests(None)
     realtime_session._manager = None  # type: ignore[attr-defined]
 
 
@@ -423,7 +423,7 @@ async def test_text_completion_leaves_barge_in_open_until_late_tts_drain(
     monkeypatch.setattr(dev_reg, "get_config_for", lambda _id: {"barge_in": True})
     ws = _FakeWs()
     dev_reg.register("dev-drain", ws=ws)
-    session = realtime_session.RealtimeSession("dev-drain", channel_server=object())
+    session = realtime_session.RealtimeSession("dev-drain", agent_server=object())
     realtime_session.get_manager()._sessions[session.device_id] = session
     try:
         session._awaiting_reply = True
@@ -469,7 +469,7 @@ async def test_text_completion_leaves_barge_in_open_until_late_tts_drain(
 async def test_late_completion_preserves_explicit_mic_state(paused: bool) -> None:
     from realtime_session import RealtimeSession
 
-    session = RealtimeSession("dev-explicit", channel_server=object())
+    session = RealtimeSession("dev-explicit", agent_server=object())
     realtime_session.get_manager()._sessions[session.device_id] = session
     session.set_mic_paused(paused)
     await session._on_turn_complete(not paused, "")
@@ -482,7 +482,7 @@ async def test_completion_after_teardown_does_not_queue_or_send(terminal: str) -
 
     ws = _FakeWs()
     dev_reg.register("dev-ended", ws=ws)
-    session = RealtimeSession("dev-ended", channel_server=object())
+    session = RealtimeSession("dev-ended", agent_server=object())
     realtime_session.get_manager()._sessions[session.device_id] = session
     try:
         setattr(session, terminal, True)
@@ -500,7 +500,7 @@ async def test_explicit_pause_resume_routes_to_existing_session(
     import realtime_session
 
     manager = RealtimeManager()
-    session = realtime_session.RealtimeSession("dev1", channel_server=object())
+    session = realtime_session.RealtimeSession("dev1", agent_server=object())
     manager._sessions["dev1"] = session
     monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
     async with client.ws_connect("/ws") as ws:
@@ -523,7 +523,7 @@ async def test_empty_barge_in_completion_releases_processing_before_old_audio_dr
 
     ws = _FakeWs()
     dev_reg.register("dev-empty-barge", ws=ws)
-    session = RealtimeSession("dev-empty-barge", channel_server=object())
+    session = RealtimeSession("dev-empty-barge", agent_server=object())
     realtime_session.get_manager()._sessions[session.device_id] = session
     try:
         old_complete = session._turn_complete_callback()

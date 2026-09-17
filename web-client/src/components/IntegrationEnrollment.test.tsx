@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import IntegrationEnrollment from "./IntegrationEnrollment";
 import { ownerPost } from "../auth/api";
 vi.mock("../auth/api", () => ({ ownerPost: vi.fn() }));
-const request = { request_id: "a".repeat(32), channel_id: "int_test", origin: "http://localhost",
+const request = { request_id: "a".repeat(32), agent_id: "int_test", origin: "http://localhost",
   server_id: "b".repeat(32), display_name: "Test client", state: "pending", expires_at: 1800000300 };
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -19,19 +19,19 @@ test("discloses fixed grants, exclusions and physical pairing limits immediately
   const disclosure = within(row).getByRole("region", { name: "Integration permissions" });
   expect(disclosure).toBeVisible();
   for (const text of [
-    /fixed permissions after it acknowledges durable credential save, even while its channel is inactive/,
+    /fixed permissions after it acknowledges durable credential save, even while its agent is inactive/,
     /List devices, send device announcements, and issue allowed device controls/,
     /Initiate firmware updates, including OTA/,
     /Initiate and approve physical device pairing/,
     /Each pairing approval still requires a fresh verified physical pairing window/,
     /confirmation of the matching code spoken by the device/,
-    /Connect to its own channel and respond to existing voice requests on that channel when active/,
-    /Channel activation selects voice routing; it does not grant these permissions or gate device access/,
+    /Connect to its own agent and respond to existing voice requests on that agent when active/,
+    /Agent activation selects voice routing; it does not grant these permissions or gate device access/,
     /Device playback is reserved; no playback URL endpoint is available/,
     /does not grant owner administration/,
     /credential creation, disclosure, rotation or revocation/,
     /device configuration, button mappings or speech\/provider settings/,
-    /channel listing or configuration; webhook configuration; server management/,
+    /agent listing or configuration; webhook configuration; server management/,
     /firmware image reading, upload or publication; or device impersonation/,
     /cannot approve browser enrollment or known-device recovery/,
     /choose a replacement device key, or receive a device credential/,

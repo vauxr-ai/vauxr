@@ -1,7 +1,7 @@
 import { ownerFetch } from "../auth/api";
 import { useCallback } from "react";
 
-export interface ApiChannel {
+export interface ApiAgent {
   id: string;
   name: string;
   type: "openclaw" | "openclaw-direct";
@@ -10,7 +10,7 @@ export interface ApiChannel {
   builtin?: boolean;
 }
 
-export function useChannels(_baseUrl = "", _token = "") {
+export function useAgents(_baseUrl = "", _token = "") {
   const request = useCallback(async (path: string, init?: RequestInit): Promise<Response> => {
     const res = await ownerFetch(path, {
       ...init,
@@ -31,14 +31,14 @@ export function useChannels(_baseUrl = "", _token = "") {
     return res;
   }, []);
 
-  const listChannels = useCallback(async (): Promise<ApiChannel[]> => {
-    const res = await request("/api/channels");
+  const listAgents = useCallback(async (): Promise<ApiAgent[]> => {
+    const res = await request("/api/agents");
     return await res.json();
   }, [request]);
 
-  const activateChannel = useCallback(async (id: string): Promise<void> => {
-    await request(`/api/channels/${encodeURIComponent(id)}/activate`, { method: "POST" });
+  const activateAgent = useCallback(async (id: string): Promise<void> => {
+    await request(`/api/agents/${encodeURIComponent(id)}/activate`, { method: "POST" });
   }, [request]);
 
-  return { listChannels, activateChannel };
+  return { listAgents, activateAgent };
 }

@@ -1,4 +1,4 @@
-"""PR38 wire contract at the real authenticated aiohttp device/channel boundary."""
+"""PR38 wire contract at the real authenticated aiohttp device/agent boundary."""
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +12,7 @@ from aiohttp import ClientWebSocketResponse
 from aiohttp.test_utils import TestClient, TestServer
 
 import auth
-import channel_registry as channels
+import agent_registry as agents
 import config
 import device_registry as devices
 import pipeline
@@ -31,26 +31,26 @@ async def wire(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncIterator
     monkeypatch.setenv("OPENCLAW_URL", "")
     monkeypatch.setenv("REALTIME_ENABLED", "0")
     auth._store = None
-    channels._reset_for_tests()
+    agents._reset_for_tests()
     devices.reset()
     monkeypatch.setattr(pipeline, "transcribe", AsyncMock(return_value="hello"))
     for device_id in (A, B):
         seed(device_id + "-secret", Role.DEVICE, device_id)
-    channel, _ = await channels.create("Raw channel label", "openclaw")
-    seed("integration-secret", Role.INTEGRATION, channel.id)
-    channels.activate(channel.id)
+    agent, _ = await agents.create("Raw agent label", "openclaw")
+    seed("integration-secret", Role.INTEGRATION, agent.id)
+    agents.activate(agent.id)
     async with TestClient(TestServer(make_app())) as client:
         yield client
     devices.reset()
-    channels._reset_for_tests()
+    agents._reset_for_tests()
     auth._store = None
     config.reset_config()
 
 
-async def connect_channel(client: TestClient) -> ClientWebSocketResponse:
-    ws = await client.ws_connect("/channel")
-    await ws.send_json({"type": "channel.auth", "token": "integration-secret"})
-    assert (await ws.receive_json(timeout=3))["type"] == "channel.ready"
+async def connect_agent(client: TestClient) -> ClientWebSocketResponse:
+    ws = await client.ws_connect("/agent")
+    await ws.send_json({"type": "agent.auth", "token": "integration-secret"})
+    assert (await ws.receive_json(timeout=3))["type"] == "agent.ready"
     return ws
 
 
@@ -71,14 +71,14 @@ async def start_turn(ws: ClientWebSocketResponse) -> None:
     assert await ws.receive_json(timeout=3) == {"type": "transcript", "text": "hello"}
 
 
-async def finish_turn(channel: ClientWebSocketResponse, device: ClientWebSocketResponse,
+async def finish_turn(agent: ClientWebSocketResponse, device: ClientWebSocketResponse,
                       device_id: str, run_id: str) -> None:
-    await channel.send_json({"type": "channel.response.end", "deviceId": device_id, "runId": run_id})
+    await agent.send_json({"type": "agent.response.end", "deviceId": device_id, "runId": run_id})
     assert (await device.receive_json(timeout=3))["type"] == "audio.end"
 
 
 def expected(device_id: str, name: str | None) -> dict[str, str]:
-    frame = {"type": "channel.transcript", "deviceId": device_id,
+    frame = {"type": "agent.transcript", "deviceId": device_id,
              "sessionKey": f"vauxr:{device_id}", "text": "hello"}
     if name is not None:
         frame["deviceDisplayName"] = name
@@ -88,49 +88,49 @@ def expected(device_id: str, name: str | None) -> dict[str, str]:
 async def test_persisted_names_rename_duplicates_reconnect_restart(wire: TestClient) -> None:
     devices.update_config(A, {"name": "  Living Room  "})
     devices.update_config(B, {"name": "Office"})
-    channel = await connect_channel(wire)
+    agent = await connect_agent(wire)
     a, b = await connect_device(wire, A), await connect_device(wire, B)
     await start_turn(a)
     assert devices.get(A).name == "Raw voice label"
-    assert await channel.receive_json(timeout=3) == expected(A, "Living Room")
-    await finish_turn(channel, a, A, "first")
+    assert await agent.receive_json(timeout=3) == expected(A, "Living Room")
+    await finish_turn(agent, a, A, "first")
 
     # Persisted rename takes effect without refreshing the live name or session.
     devices.update_config(A, {"name": "Office"})
     await start_turn(a)
     await start_turn(b)
-    assert await channel.receive_json(timeout=3) == expected(A, "Office")
-    assert await channel.receive_json(timeout=3) == expected(B, "Office")
-    await finish_turn(channel, b, B, "second-b")
+    assert await agent.receive_json(timeout=3) == expected(A, "Office")
+    assert await agent.receive_json(timeout=3) == expected(B, "Office")
+    await finish_turn(agent, b, B, "second-b")
     # Reverse completion must leave A's stable-ID listener untouched.
-    cs = wire.app[APP_STATE].channel_server
+    cs = wire.app[APP_STATE].agent_server
     assert cs.get_response_listener(A) is not None
-    await finish_turn(channel, a, A, "second-a")
+    await finish_turn(agent, a, A, "second-a")
 
     await a.close()
     await b.close()
-    await channel.close()
-    channel = await connect_channel(wire)
+    await agent.close()
+    agent = await connect_agent(wire)
     a = await connect_device(wire, A)
     await start_turn(a)
-    assert await channel.receive_json(timeout=3) == expected(A, "Office")
-    await finish_turn(channel, a, A, "reconnect")
+    assert await agent.receive_json(timeout=3) == expected(A, "Office")
+    await finish_turn(agent, a, A, "reconnect")
     await a.close()
-    await channel.close()
+    await agent.close()
 
     # Recreate the application and all stores from the same persisted directory.
     devices.reset()
-    channels._reset_for_tests()
-    channels.load()
+    agents._reset_for_tests()
+    agents.load()
     auth._store = None
     async with TestClient(TestServer(make_app())) as restarted:
-        channel = await connect_channel(restarted)
+        agent = await connect_agent(restarted)
         a = await connect_device(restarted, A)
         await start_turn(a)
-        assert await channel.receive_json(timeout=3) == expected(A, "Office")
-        await finish_turn(channel, a, A, "restart")
+        assert await agent.receive_json(timeout=3) == expected(A, "Office")
+        await finish_turn(agent, a, A, "restart")
         await a.close()
-        await channel.close()
+        await agent.close()
 
 
 @pytest.mark.parametrize("name,wanted", [
@@ -144,42 +144,42 @@ async def test_persisted_names_rename_duplicates_reconnect_restart(wire: TestCli
 async def test_each_wire_frame_clears_or_repeats_current_name(
     wire: TestClient, tmp_path: Path, name: object, wanted: str | None,
 ) -> None:
-    channel = await connect_channel(wire)
+    agent = await connect_agent(wire)
     devices.update_config(A, {"name": "Previously valid"})
     device = await connect_device(wire, A)
-    cs = wire.app[APP_STATE].channel_server
+    cs = wire.app[APP_STATE].agent_server
     assert cs.send_transcript(A, "hello")
-    assert await channel.receive_json(timeout=3) == expected(A, "Previously valid")
+    assert await agent.receive_json(timeout=3) == expected(A, "Previously valid")
     # Write through disk to cover malformed legacy data and stale registry config.
     (tmp_path / "devices.json").write_text(json.dumps({A: {"name": name}}))
     for _ in range(2):
         assert cs.send_transcript(A, "hello")
-        assert await channel.receive_json(timeout=3) == expected(A, wanted)
+        assert await agent.receive_json(timeout=3) == expected(A, wanted)
     (tmp_path / "devices.json").unlink()
     assert cs.send_transcript(A, "hello")
-    assert await channel.receive_json(timeout=3) == expected(A, None)
+    assert await agent.receive_json(timeout=3) == expected(A, None)
     await device.close()
-    await channel.close()
+    await agent.close()
 
 
 async def test_wrong_device_identity_cannot_select_another_stored_name(wire: TestClient) -> None:
     devices.update_config(B, {"name": "Private name"})
-    channel = await connect_channel(wire)
+    agent = await connect_agent(wire)
     device = await connect_device(wire, A)
     await device.send_json({"type": "voice.start", "device_id": B, "name": "Private name"})
     assert (await device.receive_json(timeout=3))["code"] == "FORBIDDEN"
     with pytest.raises(asyncio.TimeoutError):
-        await channel.receive(timeout=0.1)
+        await agent.receive(timeout=0.1)
     await device.close()
-    await channel.close()
+    await agent.close()
 
 
 async def test_failed_save_and_corrupt_store_never_use_cached_name(
     wire: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    channel = await connect_channel(wire)
+    agent = await connect_agent(wire)
     devices.update_config(A, {"name": "Committed"})
-    cs = wire.app[APP_STATE].channel_server
+    cs = wire.app[APP_STATE].agent_server
 
     def fail_save(*_: object) -> None:
         raise OSError("simulated failed save")
@@ -189,21 +189,21 @@ async def test_failed_save_and_corrupt_store_never_use_cached_name(
         devices.update_config(A, {"name": "Uncommitted"})
     assert devices.get_config_for(A)["name"] == "Uncommitted"
     assert cs.send_transcript(A, "hello")
-    assert await channel.receive_json(timeout=3) == expected(A, "Committed")
+    assert await agent.receive_json(timeout=3) == expected(A, "Committed")
     path = tmp_path / "devices.json"
     for raw in (b'{', b'\xff', b'[]', b'null', json.dumps({A: []}).encode()):
         path.write_bytes(raw)
         assert cs.send_transcript(A, "hello")
-        assert await channel.receive_json(timeout=3) == expected(A, None)
+        assert await agent.receive_json(timeout=3) == expected(A, None)
     # A malformed unrelated field/device must not prevent a valid title lookup.
     path.write_text(json.dumps({A: {"name": "Committed"}, B: {"output_sample_rate": float("inf")}}))
     assert cs.send_transcript(A, "hello")
-    assert await channel.receive_json(timeout=3) == expected(A, "Committed")
+    assert await agent.receive_json(timeout=3) == expected(A, "Committed")
     path.unlink()
     path.mkdir()  # Unreadable as a file.
     assert cs.send_transcript(A, "hello")
-    assert await channel.receive_json(timeout=3) == expected(A, None)
-    await channel.close()
+    assert await agent.receive_json(timeout=3) == expected(A, None)
+    await agent.close()
 
 
 async def test_pr38_production_bridge_session_contract(wire: TestClient, tmp_path: Path) -> None:
@@ -222,7 +222,7 @@ async def test_pr38_production_bridge_session_contract(wire: TestClient, tmp_pat
     helper = Path(__file__).parent / "fixtures" / "friendly_plugin.mjs"
     process = await asyncio.create_subprocess_exec(
         "node", str(helper), plugin, str(tmp_path), str(wire.make_url("/")).rstrip("/"),
-        channels.get_active().id, A, B,
+        agents.get_active().id, A, B,
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
 
@@ -235,7 +235,7 @@ async def test_pr38_production_bridge_session_contract(wire: TestClient, tmp_pat
         process.stdin.write((json.dumps(value) + "\n").encode())
         await process.stdin.drain()
 
-    cs = wire.app[APP_STATE].channel_server
+    cs = wire.app[APP_STATE].agent_server
     replies: dict[str, list[tuple[str, str]]] = {A: [], B: []}
     ends: dict[str, asyncio.Future[str]] = {}
 

@@ -13,7 +13,7 @@ import button_dispatch
 import config as cfg_mod
 import device_registry as registry
 import webhooks
-from channel_server import ChannelServer
+from agent_server import AgentServer
 
 
 class FakeWs:
@@ -51,7 +51,7 @@ async def test_unmapped_gesture_is_noop() -> None:
         button="action",
         gesture="double_press",
         openclaw_client=None,
-        channel_server=ChannelServer(),
+        agent_server=AgentServer(),
     )
     assert ws.text == []
 
@@ -68,7 +68,7 @@ async def test_command_mute_sends_device_control() -> None:
         button="action",
         gesture="long_press",
         openclaw_client=None,
-        channel_server=ChannelServer(),
+        agent_server=AgentServer(),
     )
     assert any('"command":"mute"' in t or '"command": "mute"' in t for t in ws.text)
 
@@ -91,7 +91,7 @@ async def test_prompt_calls_run_text_turn(monkeypatch: pytest.MonkeyPatch) -> No
         button="action",
         gesture="double_press",
         openclaw_client=None,
-        channel_server=ChannelServer(),
+        agent_server=AgentServer(),
     )
     assert called == ["lights off"]
 
@@ -111,7 +111,7 @@ async def test_prompt_dropped_when_listening(monkeypatch: pytest.MonkeyPatch) ->
         button="action",
         gesture="double_press",
         openclaw_client=None,
-        channel_server=ChannelServer(),
+        agent_server=AgentServer(),
     )
     fake.assert_not_called()
 
@@ -137,7 +137,7 @@ async def test_prompt_uses_ws_turn_even_with_live_realtime_session(
         button="action",
         gesture="double_press",
         openclaw_client=None,
-        channel_server=ChannelServer(),
+        agent_server=AgentServer(),
     )
     manager.seed_text_turn.assert_not_awaited()
     fake.assert_awaited_once()
@@ -172,7 +172,7 @@ async def test_prompt_second_dropped_while_processing(
             button="action",
             gesture="double_press",
             openclaw_client=None,
-            channel_server=ChannelServer(),
+            agent_server=AgentServer(),
         )
     )
     await started.wait()
@@ -181,7 +181,7 @@ async def test_prompt_second_dropped_while_processing(
         button="action",
         gesture="double_press",
         openclaw_client=None,
-        channel_server=ChannelServer(),
+        agent_server=AgentServer(),
     )
     assert calls == 1
     assert registry.get("dev1").state == "processing"
@@ -207,7 +207,7 @@ async def test_prompt_failure_restores_idle(monkeypatch: pytest.MonkeyPatch) -> 
         button="action",
         gesture="double_press",
         openclaw_client=None,
-        channel_server=ChannelServer(),
+        agent_server=AgentServer(),
     )
     assert registry.get("dev1").state == "idle"
 
@@ -253,7 +253,7 @@ async def test_webhook_posts_payload(monkeypatch: pytest.MonkeyPatch) -> None:
         button="action",
         gesture="triple_press",
         openclaw_client=None,
-        channel_server=ChannelServer(),
+        agent_server=AgentServer(),
     )
     assert len(posted) == 1
     assert posted[0]["url"] == "http://ha.example/hook"
@@ -306,7 +306,7 @@ async def test_webhook_posts_configured_body(monkeypatch: pytest.MonkeyPatch) ->
         button="action",
         gesture="double_press",
         openclaw_client=None,
-        channel_server=ChannelServer(),
+        agent_server=AgentServer(),
     )
     assert posted[0]["json"] == {"entity_id": "scene.lights_low"}
     assert posted[0]["url"] == "http://ha.example/api/services/scene/turn_on"
@@ -330,15 +330,15 @@ async def test_warm_prompt_emits_ws_audio_and_records_conversation(
         "button_actions": {"double_press": {"kind": "prompt", "text": "Say hello"}},
     })
     manager = realtime_session.RealtimeManager()
-    session = realtime_session.RealtimeSession("dev1", channel_server=object())
+    session = realtime_session.RealtimeSession("dev1", agent_server=object())
     session.set_mic_paused(paused)
     manager._sessions["dev1"] = session
     monkeypatch.setattr(session, "is_peer_live", lambda: True)
     monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
     seed = AsyncMock()
     monkeypatch.setattr(manager, "seed_text_turn", seed)
-    channel = ChannelServer()
-    monkeypatch.setattr(channel, "get_active_channel", lambda: SimpleNamespace(type="openclaw-direct"))
+    agent = AgentServer()
+    monkeypatch.setattr(agent, "get_active_agent", lambda: SimpleNamespace(type="openclaw-direct"))
 
     async def chat(_key: str, _text: str, on_delta: Callable[[str], None]) -> None:
         on_delta("Hello?" if follow_up else "Hello.")
@@ -349,7 +349,7 @@ async def test_warm_prompt_emits_ws_audio_and_records_conversation(
     monkeypatch.setattr(pipeline, "synthesize", synthesize)
     await button_dispatch.handle_device_button(
         device_id="dev1", button="action", gesture="double_press",
-        openclaw_client=SimpleNamespace(chat=chat), channel_server=channel,
+        openclaw_client=SimpleNamespace(chat=chat), agent_server=agent,
     )
     seed.assert_not_awaited()
     assert ws.binary and all(frame[0] == 0x02 for frame in ws.binary)

@@ -48,13 +48,13 @@ class Integration:
     def sweep(self) -> None:
         with self.store.transaction():
             state = copy.deepcopy(self.store.integration) or empty_state()
-            changed = bool(state["active_channel"]) and not any(
-                row["channel_id"] == state["active_channel"] and self.store.integration_channel_valid(row)
+            changed = bool(state["active_agent"]) and not any(
+                row["agent_id"] == state["active_agent"] and self.store.integration_agent_valid(row)
                 for row in state["requests"].values()
             )
             for row in state["requests"].values():
                 if row["state"] == "completed":
-                    matching = [r for r in self.store.records if r.subject == row["channel_id"]]
+                    matching = [r for r in self.store.records if r.subject == row["agent_id"]]
                     if matching and all(r.verifier in self.store.lifecycle.get("blocked", []) for r in matching):
                         row["state"] = "revoked"
                         changed = True
@@ -132,7 +132,7 @@ class Integration:
                     self.store.enrollment = enrollment
                     code = user_code(body["request_id"], body["request_secret"], body["expires_at"])
                     row = {"request_id": body["request_id"], "server_id": enrollment["server_id"],
-                           "origin": self.origin, "channel_id": "int_" + body["request_id"],
+                           "origin": self.origin, "agent_id": "int_" + body["request_id"],
                            "display_name": body["display_name"], "expires_at": body["expires_at"],
                            "created_at": time.time(), "state": "pending", "attempts": 0,
                            "secret_hash": verifier(body["request_secret"]), "code_hash": verifier(code),
@@ -192,7 +192,7 @@ class Integration:
                 if row["state"] != "approved":
                     raise EnrollmentError("unavailable")
                 token = "vx_int_" + secrets.token_urlsafe(32)
-                credential = Credential(secrets.token_hex(16), Role.INTEGRATION, row["channel_id"],
+                credential = Credential(secrets.token_hex(16), Role.INTEGRATION, row["agent_id"],
                                         verifier(token), enabled=False)
                 row.update(state="delivered", credential_id=credential.id)
                 self._save(state, (*self.store.records, credential))

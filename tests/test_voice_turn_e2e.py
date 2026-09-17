@@ -11,7 +11,7 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
-import channel_registry
+import agent_registry
 import config as cfg_mod
 import device_registry as registry
 import pipeline
@@ -30,10 +30,10 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("OPENCLAW_URL", "wss://stub.invalid/")
     seed("tok-E", Role.DEVICE, "dev1")
     registry.reset()
-    channel_registry._reset_for_tests()
-    channel_registry._openclaw_direct_active = True  # type: ignore[attr-defined]
+    agent_registry._reset_for_tests()
+    agent_registry._openclaw_direct_active = True  # type: ignore[attr-defined]
     yield
-    channel_registry._reset_for_tests()
+    agent_registry._reset_for_tests()
     registry.reset()
     cfg_mod.reset_config()
 

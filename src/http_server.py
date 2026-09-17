@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-import channel_registry
+import agent_registry
 import firmware_delivery
 import device_registry as registry
 import webhooks
@@ -31,7 +31,7 @@ from owner_http import ORIGIN, attach_owner, cookie_name, owner_middleware, secu
 from protocol import encode_text_message
 
 if TYPE_CHECKING:
-    from channel_server import ChannelServer
+    from agent_server import AgentServer
 
 log = logging.getLogger("vauxr.http")
 
@@ -265,12 +265,12 @@ async def device_command(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-# --- /api/channels ---
+# --- /api/agents ---
 
 
 @_require_auth
-async def list_channels(_request: web.Request) -> web.Response:
-    channels = [
+async def list_agents(_request: web.Request) -> web.Response:
+    agents = [
         {
             "id": c.id,
             "name": c.name,
@@ -279,29 +279,29 @@ async def list_channels(_request: web.Request) -> web.Response:
             "createdAt": c.createdAt,
             **({"builtin": c.builtin} if c.builtin is not None else {}),
         }
-        for c in channel_registry.get_all()
+        for c in agent_registry.get_all()
     ]
-    log.info("200 channels listed: %d", len(channels))
-    return web.json_response(channels)
+    log.info("200 agents listed: %d", len(agents))
+    return web.json_response(agents)
 
 
 @_require_auth
-async def create_channel(request: web.Request) -> web.Response:
+async def create_agent(request: web.Request) -> web.Response:
     # Replaced by the independently scoped enrollment/lifecycle packages.
     return web.json_response({"error": "operation not implemented"}, status=501)
 
 
 @_require_auth
-async def delete_channel(request: web.Request) -> web.Response:
+async def delete_agent(request: web.Request) -> web.Response:
     # Replaced by the independently scoped enrollment/lifecycle packages.
     return web.json_response({"error": "operation not implemented"}, status=501)
 
 
 @_require_auth
-async def activate_channel(request: web.Request) -> web.Response:
-    channel_id = request.match_info["channel_id"]
-    if not channel_registry.activate(channel_id):
-        return web.json_response({"error": "channel not found"}, status=404)
+async def activate_agent(request: web.Request) -> web.Response:
+    agent_id = request.match_info["agent_id"]
+    if not agent_registry.activate(agent_id):
+        return web.json_response({"error": "agent not found"}, status=404)
     return web.json_response({"ok": True})
 
 
@@ -526,11 +526,11 @@ def attach_http_routes(app: web.Application) -> None:
     app.router.add_patch("/api/devices/{device_id}", update_device)
     app.router.add_post("/api/devices/{device_id}/announce", announce)
     app.router.add_post("/api/devices/{device_id}/command", device_command)
-    app.router.add_get("/api/channels", list_channels)
-    app.router.add_post("/api/channels", create_channel)
-    app.router.add_delete("/api/channels/{channel_id}", delete_channel)
-    app.router.add_post("/api/channels/{channel_id}/activate", activate_channel)
-    app.router.add_post("/api/channels/{channel_id}/rotate", rotate_token)
+    app.router.add_get("/api/agents", list_agents)
+    app.router.add_post("/api/agents", create_agent)
+    app.router.add_delete("/api/agents/{agent_id}", delete_agent)
+    app.router.add_post("/api/agents/{agent_id}/activate", activate_agent)
+    app.router.add_post("/api/agents/{agent_id}/rotate", rotate_token)
     app.router.add_get("/api/webhooks", list_webhooks)
     app.router.add_get("/api/webhooks/{webhook_id}", get_webhook_configuration)
     app.router.add_post("/api/webhooks", create_webhook)
@@ -545,7 +545,7 @@ def attach_http_routes(app: web.Application) -> None:
     )
 
 
-def make_http_app(_channel_server: ChannelServer | None = None) -> web.Application:
+def make_http_app(_agent_server: AgentServer | None = None) -> web.Application:
     app = web.Application(middlewares=[owner_middleware, cors_middleware, policy_middleware])
     attach_http_routes(app)
     app.router.add_get("/{tail:.*}", serve_static)

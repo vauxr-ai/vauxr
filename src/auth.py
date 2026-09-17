@@ -1,4 +1,4 @@
-"""Resolve credentials to principals. No shared DEVICE_TOKEN/channel fallback."""
+"""Resolve credentials to principals. No shared DEVICE_TOKEN/agent fallback."""
 
 from pathlib import Path
 

@@ -9,7 +9,7 @@ from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
 import auth
-import channel_registry
+import agent_registry
 import config
 import device_registry
 from auth_policy import HTTP_OPERATIONS, WS_OPERATIONS, Role
@@ -32,14 +32,14 @@ def isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENCLAW_URL", "")
     monkeypatch.setenv("REALTIME_ENABLED", "0")
     auth._store = None
-    for role, subject in [(Role.OWNER, "owner"), (Role.INTEGRATION, "channel"), (Role.DEVICE, "speaker")]:
+    for role, subject in [(Role.OWNER, "owner"), (Role.INTEGRATION, "agent"), (Role.DEVICE, "speaker")]:
         seed(role.value + "-secret", role, subject)
     seed("other-device-secret", Role.DEVICE, "other")
-    channel_registry._reset_for_tests()
+    agent_registry._reset_for_tests()
     device_registry.reset()
     yield
     auth._store = None
-    channel_registry._reset_for_tests()
+    agent_registry._reset_for_tests()
     device_registry.reset()
     config.reset_config()
 
@@ -54,11 +54,11 @@ ROUTES = [
     ("PATCH", "/api/devices/missing", "o", 404),
     ("POST", "/api/devices/missing/announce", "oi", 404),
     ("POST", "/api/devices/missing/command", "oi", 404),
-    ("GET", "/api/channels", "o", 200),
-    ("POST", "/api/channels", "o", 501),
-    ("DELETE", "/api/channels/missing", "o", 501),
-    ("POST", "/api/channels/missing/activate", "o", 404),
-    ("POST", "/api/channels/missing/rotate", "o", 501),
+    ("GET", "/api/agents", "o", 200),
+    ("POST", "/api/agents", "o", 501),
+    ("DELETE", "/api/agents/missing", "o", 501),
+    ("POST", "/api/agents/missing/activate", "o", 404),
+    ("POST", "/api/agents/missing/rotate", "o", 501),
     ("GET", "/api/webhooks", "o", 200),
     ("GET", "/api/webhooks/missing", "o", 404),
     ("POST", "/api/webhooks", "o", 400),
@@ -101,8 +101,8 @@ def test_route_inventory_complete():
             method,
             path.replace(
                 "/missing",
-                "/{channel_id}"
-                if "/channels/" in path
+                "/{agent_id}"
+                if "/agents/" in path
                 else "/{webhook_id}"
                 if "/webhooks/" in path
                 else "/{device_id}",
@@ -176,7 +176,7 @@ async def test_sensitive_metadata_projection():
     device.config["button_actions"] = {"double_press": {"kind": "prompt", "text": "PROMPT_SECRET"}}
     device.config["token"] = "DEVICE_SECRET"
     async with TestClient(TestServer(make_http_app())) as client:
-        for path in ["/api/webhooks", "/api/devices", "/api/channels"]:
+        for path in ["/api/webhooks", "/api/devices", "/api/agents"]:
             response = await client.get(path, headers=owner_headers(client))
             assert response.status == 200
             assert "SECRET" not in await response.text()
@@ -284,22 +284,22 @@ async def test_auth_denials_log_no_client_values(caplog):
 
 
 @pytest.mark.parametrize("token", ["owner-secret", "device-secret", "legacy-shared-token", None, ["invalid"]])
-async def test_channel_rejects_wrong_principal(token):
-    async with TestClient(TestServer(make_app())) as client, client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as ws:
-        await ws.send_json({"type": "channel.auth", "token": token})
+async def test_agent_rejects_wrong_principal(token):
+    async with TestClient(TestServer(make_app())) as client, client.ws_connect("/agent", headers=TRANSPORT_HEADERS) as ws:
+        await ws.send_json({"type": "agent.auth", "token": token})
         assert (await ws.receive_json(timeout=2))["code"] in {"UNAUTHORIZED", "FORBIDDEN"}
         assert (await ws.receive(timeout=2)).type == WSMsgType.CLOSE
 
 
-async def test_inactive_channel_cannot_inject_voice_response():
+async def test_inactive_agent_cannot_inject_voice_response():
 
-    from channel_server import ChannelServer
+    from agent_server import AgentServer
 
-    active, _ = await channel_registry.create("Active")
-    inactive, _ = await channel_registry.create("Inactive")
-    channel_registry.activate(active.id)
-    seed("idle-channel-secret", Role.INTEGRATION, inactive.id)
-    cs = ChannelServer()
+    active, _ = await agent_registry.create("Active")
+    inactive, _ = await agent_registry.create("Inactive")
+    agent_registry.activate(active.id)
+    seed("idle-agent-secret", Role.INTEGRATION, inactive.id)
+    cs = AgentServer()
     delivered = []
     cs.add_response_listener(
         "speaker",
@@ -312,12 +312,12 @@ async def test_inactive_channel_cannot_inject_voice_response():
     app = make_app()
     from server import APP_STATE
 
-    app[APP_STATE].channel_server = cs
-    async with TestClient(TestServer(app)) as client, client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as ws:
-        await ws.send_json({"type": "channel.auth", "token": "idle-channel-secret"})
-        assert (await ws.receive_json(timeout=2))["type"] == "channel.ready"
+    app[APP_STATE].agent_server = cs
+    async with TestClient(TestServer(app)) as client, client.ws_connect("/agent", headers=TRANSPORT_HEADERS) as ws:
+        await ws.send_json({"type": "agent.auth", "token": "idle-agent-secret"})
+        assert (await ws.receive_json(timeout=2))["type"] == "agent.ready"
         await ws.send_json(
-            {"type": "channel.response.delta", "deviceId": "speaker", "runId": "run", "text": "injected"}
+            {"type": "agent.response.delta", "deviceId": "speaker", "runId": "run", "text": "injected"}
         )
         assert (await ws.receive_json(timeout=2))["code"] == "FORBIDDEN"
     assert delivered == []
@@ -408,14 +408,14 @@ async def test_reissued_device_rejects_already_authenticated_socket(restart: boo
 
 
 @pytest.mark.parametrize("restart", [False, True])
-async def test_reissued_channel_rejects_existing_connection_in_both_directions(restart: bool) -> None:
-    from channel_server import ChannelServer
+async def test_reissued_agent_rejects_existing_connection_in_both_directions(restart: bool) -> None:
+    from agent_server import AgentServer
     from server import APP_STATE
 
-    channel, _ = await channel_registry.create("Active")
-    channel_registry.activate(channel.id)
-    seed("channel-secret", Role.INTEGRATION, channel.id)
-    cs = ChannelServer()
+    agent, _ = await agent_registry.create("Active")
+    agent_registry.activate(agent.id)
+    seed("agent-secret", Role.INTEGRATION, agent.id)
+    cs = AgentServer()
     delivered = []
     cs.add_response_listener(
         "speaker",
@@ -426,22 +426,22 @@ async def test_reissued_channel_rejects_existing_connection_in_both_directions(r
         },
     )
     app = make_app()
-    app[APP_STATE].channel_server = cs
-    async with TestClient(TestServer(app)) as client, client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as ws:
-        await ws.send_json({"type": "channel.auth", "token": "channel-secret"})
-        assert (await ws.receive_json(timeout=2))["type"] == "channel.ready"
+    app[APP_STATE].agent_server = cs
+    async with TestClient(TestServer(app)) as client, client.ws_connect("/agent", headers=TRANSPORT_HEADERS) as ws:
+        await ws.send_json({"type": "agent.auth", "token": "agent-secret"})
+        assert (await ws.receive_json(timeout=2))["type"] == "agent.ready"
         assert cs.is_active_connected()
-        reissue_credential(channel.id, restart)
+        reissue_credential(agent.id, restart)
         assert not cs.is_active_connected()
         assert not cs.send_transcript("speaker", "must not leak")
-        response = {"type": "channel.response.end", "deviceId": "speaker", "runId": "run"}
+        response = {"type": "agent.response.end", "deviceId": "speaker", "runId": "run"}
         await ws.send_json(response)
         assert (await ws.receive_json(timeout=2))["code"] == "UNAUTHORIZED"
         assert (await ws.receive(timeout=2)).type == WSMsgType.CLOSE
         assert delivered == []
-        async with client.ws_connect("/channel", headers=TRANSPORT_HEADERS) as fresh:
-            await fresh.send_json({"type": "channel.auth", "token": "replacement-secret"})
-            assert (await fresh.receive_json(timeout=2))["type"] == "channel.ready"
+        async with client.ws_connect("/agent", headers=TRANSPORT_HEADERS) as fresh:
+            await fresh.send_json({"type": "agent.auth", "token": "replacement-secret"})
+            assert (await fresh.receive_json(timeout=2))["type"] == "agent.ready"
             assert cs.is_active_connected()
             assert cs.send_transcript("speaker", "fresh transcript")
             assert (await fresh.receive_json(timeout=2))["text"] == "fresh transcript"
@@ -461,13 +461,13 @@ async def test_lifecycle_revoke_closes_idle_socket_before_owner_response(role):
     path = "/ws"
     frame = {"type": "hello", "device_id": subject, "token": token}
     if role == "integration":
-        channel, _ = await channel_registry.create("Lifecycle test")
-        channel_registry.activate(channel.id)
-        subject = channel.id
+        agent, _ = await agent_registry.create("Lifecycle test")
+        agent_registry.activate(agent.id)
+        subject = agent.id
         token = "lifecycle-integration-secret"
         seed(token, Role.INTEGRATION, subject)
-        path = "/channel"
-        frame = {"type": "channel.auth", "token": token}
+        path = "/agent"
+        frame = {"type": "agent.auth", "token": token}
     app = make_app()
     async with TestClient(TestServer(app)) as client, client.ws_connect(path, headers=TRANSPORT_HEADERS) as ws:
         await ws.send_json(frame)
@@ -532,19 +532,19 @@ async def test_integration_revocation_stops_media_without_plugin_socket(monkeypa
     from unittest.mock import AsyncMock
 
     import auth_connections
-    from channel_server import ChannelServer, _Connection
+    from agent_server import AgentServer, _Connection
 
-    channel, _ = await channel_registry.create("Orphaned media")
-    channel_registry.activate(channel.id)
-    seed("media-integration-secret", Role.INTEGRATION, channel.id)
-    server = ChannelServer()
+    agent, _ = await agent_registry.create("Orphaned media")
+    agent_registry.activate(agent.id)
+    seed("media-integration-secret", Role.INTEGRATION, agent.id)
+    server = AgentServer()
     conn = _Connection(SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock()))
     await server._handle_auth(conn, "media-integration-secret")
     abort = asyncio.Event()
     close_peer = AsyncMock()
-    server.retain_media_turn(channel.id, abort, close_peer)
+    server.retain_media_turn(agent.id, abort, close_peer)
     auth_connections.release(conn.authority)
-    server._connections.pop(channel.id)
+    server._connections.pop(agent.id)
     app = make_http_app()
     try:
         async with TestClient(TestServer(app)) as client:
@@ -554,7 +554,7 @@ async def test_integration_revocation_stops_media_without_plugin_socket(monkeypa
             entry.abort_event = replacement_abort
             response = await client.post(
                 "/api/lifecycle/v1/revoke", headers=headers,
-                json={"operation_id": "1" * 32, "role": "integration", "subject": channel.id},
+                json={"operation_id": "1" * 32, "role": "integration", "subject": agent.id},
             )
             assert response.status == 200
             assert abort.is_set()
@@ -573,9 +573,9 @@ async def test_realtime_media_retains_integration_generation(monkeypatch):
     from lifecycle_http import LIFECYCLE
     from owner_http import OWNER
 
-    channel, _ = await channel_registry.create("Media dependency")
-    channel_registry.activate(channel.id)
-    seed("media-integration-secret", Role.INTEGRATION, channel.id)
+    agent, _ = await agent_registry.create("Media dependency")
+    agent_registry.activate(agent.id)
+    seed("media-integration-secret", Role.INTEGRATION, agent.id)
     app = make_http_app()
     app.router.add_post("/api/offer", _offer_handler)
     stop = AsyncMock()
@@ -600,7 +600,7 @@ async def test_realtime_media_retains_integration_generation(monkeypatch):
         from auth_policy import Principal
 
         app[LIFECYCLE].execute(
-            "revoke", {"operation_id": "1" * 32, "role": "integration", "subject": channel.id},
+            "revoke", {"operation_id": "1" * 32, "role": "integration", "subject": agent.id},
             lambda: Principal(Role.OWNER, "owner", app[OWNER].store.owner["generation"]),
         )
         await auth_connections.disconnect_stale(app[LIFECYCLE].store)
@@ -619,9 +619,9 @@ async def test_lifecycle_http_teardown_timeout_and_maintenance_retry(monkeypatch
     subject = "speaker"
     token = "device-secret"
     if role == "integration":
-        channel, _ = await channel_registry.create("Teardown failure")
-        channel_registry.activate(channel.id)
-        subject = channel.id
+        agent, _ = await agent_registry.create("Teardown failure")
+        agent_registry.activate(agent.id)
+        subject = agent.id
         token = "synthetic-hanging-integration"
         seed(token, Role.INTEGRATION, subject)
     monkeypatch.setattr(auth_connections, "CLOSE_SECONDS", 0.02)

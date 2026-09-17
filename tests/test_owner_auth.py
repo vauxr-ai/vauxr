@@ -173,7 +173,7 @@ def test_recovery_preserves_clients_and_settings(tmp_path):
     token = claim_saved(owner)
     cookie, _ = owner.login(token)
     clients = (Credential("device-1", Role.DEVICE, "speaker", verifier("synthetic-device")),
-               Credential("integration-1", Role.INTEGRATION, "channel", verifier("synthetic-integration")))
+               Credential("integration-1", Role.INTEGRATION, "agent", verifier("synthetic-integration")))
     with owner.store.transaction():
         owner.store.replace(clients)
     settings = tmp_path / "devices.json"
@@ -509,14 +509,14 @@ async def test_owner_http_session_independent_of_reissued_client(role):
         principal, _ = owner.session(cookie)
         assert principal.credential_generation == ""
         assert not store.current(principal)
-        assert (await client.get("/api/channels", headers=headers)).status == 200
+        assert (await client.get("/api/agents", headers=headers)).status == 200
         with store.transaction():
             store.replace(())
         restarted = CredentialStore(store.path)
         with restarted.transaction():
             restarted.replace((Credential(old.id, role, old.subject, verifier("synthetic-new-client")),))
         # Session lookup reloads the shared schema-2 store without changing its epoch.
-        assert (await client.get("/api/channels", headers=headers)).status == 200
+        assert (await client.get("/api/agents", headers=headers)).status == 200
         assert not store.current(stale)
         fresh = store.authenticate("synthetic-new-client")
         assert store.current(fresh)
@@ -526,7 +526,7 @@ async def test_owner_http_session_independent_of_reissued_client(role):
             response = await client.get("/api/devices", headers={**HEADERS, "Authorization": f"Bearer {bearer}"})
             assert response.status == expected
         OwnerAuth(CredentialStore(store.path)).console_claim(recover=True)
-        assert (await client.get("/api/channels", headers=headers)).status == 401
+        assert (await client.get("/api/agents", headers=headers)).status == 401
         assert store.current(fresh)
         assert not store.current(stale)
 
@@ -926,7 +926,7 @@ async def test_http_restart_cookie_csrf_logout_and_expiry(monkeypatch, tls):
         response = await client.get('/api/auth/session', headers=headers)
         assert response.status == 200
         assert await response.json() == session
-        assert (await client.get('/api/channels', headers=headers)).status == 200
+        assert (await client.get('/api/agents', headers=headers)).status == 200
         assert (await client.post('/api/auth/logout', headers=headers, json={})).status == 403
         headers['X-CSRF-Token'] = session['csrf_token']
         assert (await client.post('/api/auth/logout', headers=headers, json={})).status == 200
@@ -937,7 +937,7 @@ async def test_http_restart_cookie_csrf_logout_and_expiry(monkeypatch, tls):
         headers['Cookie'] = f'{name}={fresh}'
         monkeypatch.setattr(owner_auth.time, 'time', lambda: row.expires)
         assert (await client.get('/api/auth/session', headers=headers)).status == 401
-        assert (await client.get('/api/channels', headers=headers)).status == 401
+        assert (await client.get('/api/agents', headers=headers)).status == 401
 
 
 def test_origin_change_blocks_old_worker_login_without_rebinding(tmp_path):

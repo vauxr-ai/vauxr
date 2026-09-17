@@ -60,7 +60,7 @@ def delivered(service, owner, role="device", subject="speaker"):
     return result
 
 
-@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "channel")])
+@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "agent")])
 def test_durable_save_ack_lost_response_and_exact_restoration(env, role, subject):
     service, _, owner = env
     old = next(r for r in service.store.records if r.role == role)
@@ -166,7 +166,7 @@ def test_revoke_invalidates_both_enrollment_actors_transactionally(env):
         enrollment.execute("approve", {"request_id": row["request_id"], "code": code},
                            owner if actor_first else client(service, "integration"))
         rows.append((key, row))
-    control(service, owner, action="revoke", role="integration", subject="channel")
+    control(service, owner, action="revoke", role="integration", subject="agent")
     assert all(service.store.enrollment["requests"][row["request_id"]]["state"] == "stale" for _, row in rows)
     with service.store.transaction():
         service.store.replace(tuple(replace(r, enabled=True) if r.id == old.id else r
@@ -280,7 +280,7 @@ def test_corruption_clears_grants(env, mutation):
 
 
 @pytest.mark.parametrize("scheme", ["http", "https"])
-@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "channel")])
+@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "agent")])
 async def test_http_transport_csrf_roles_subject_delivery_and_no_cors(
         tmp_path, monkeypatch, scheme, role, subject):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -358,7 +358,7 @@ def test_recovery_consumption_failure_preserves_transaction(env, monkeypatch, af
     assert not disk.authenticate(original["device_token"])
 
 
-@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "channel")])
+@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "agent")])
 def test_competing_deliver_revoke_cannot_leave_live_credential(env, role, subject):
     service, _, owner = env
     control(service, owner, role=role, subject=subject)
@@ -434,7 +434,7 @@ def test_owner_settings_and_disabled_records_survive_lifecycle(env, tmp_path):
     with pytest.raises(EnrollmentError, match="recovery_unavailable"):
         control(service, owner, action="recover", subject="disabled", oid="2" * 32)
     with pytest.raises(EnrollmentError, match="recovery_unavailable"):
-        control(service, owner, action="recover", role="integration", subject="channel", oid="2" * 32)
+        control(service, owner, action="recover", role="integration", subject="agent", oid="2" * 32)
 
 
 @pytest.mark.parametrize("body", [None, [], {"operation_id": []}, {"operation_id": "a" * 32, "extra": True}])
@@ -444,7 +444,7 @@ def test_strict_request_fields(env, body):
         service.execute("status", body, owner)
 
 
-@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "channel")])
+@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "agent")])
 def test_interoperability_fixture(env, monkeypatch, role, subject):
     from pathlib import Path
 
@@ -544,7 +544,7 @@ def test_owner_origin_transition_does_not_revive_operation(env, phase):
 
 def test_expiring_pending_integration_invalidates_its_approvals(env, monkeypatch):
     service, enrollment, owner = env
-    result = delivered(service, owner, "integration", "channel")
+    result = delivered(service, owner, "integration", "agent")
     key, row, code = ready(enrollment)
     approve(enrollment, row, code, client(service, token=result["credential"]))
     monkeypatch.setattr(lifecycle.time, "time", lambda: result["overlap_until"])
@@ -591,7 +591,7 @@ def test_client_storage_crash_and_restart_ack(env, tmp_path, saved_before_crash)
         assert service.store.lifecycle["operations"]["1" * 32]["state"] == "delivered"
 
 
-@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "channel")])
+@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "agent")])
 def test_exhausted_history_reserves_revocation_and_permanent_retries(env, role, subject):
     from lifecycle_schema import LIMIT
 
@@ -620,11 +620,11 @@ def test_exhausted_history_reserves_revocation_and_permanent_retries(env, role, 
             control(service, owner, role=role, subject=subject, oid="f" * 32)
         with pytest.raises(EnrollmentError, match="capacity"):
             control(service, owner, "revoke", role, subject, "d" * 32)
-    other_role, other_subject = ("integration", "channel") if role == "device" else ("device", "speaker")
+    other_role, other_subject = ("integration", "agent") if role == "device" else ("device", "speaker")
     assert control(service, owner, "revoke", other_role, other_subject, "c" * 32)["state"] == "revoked"
 
 
-@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "channel")])
+@pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "agent")])
 @pytest.mark.parametrize("resource", ["tombstones", "operations"])
 def test_admission_enforces_last_revocation_headroom(env, role, subject, resource):
     from lifecycle_schema import OPERATION_LIMIT, TOMBSTONE_LIMIT
@@ -656,7 +656,7 @@ def test_admission_enforces_last_revocation_headroom(env, role, subject, resourc
     service.store.load()
     assert not service.store.authenticate("synthetic-fresh")
     assert control(service, owner, "revoke", role, subject, "f" * 32)["state"] == "revoked"
-    other_role, other_subject = ("integration", "channel") if role == "device" else ("device", "speaker")
+    other_role, other_subject = ("integration", "agent") if role == "device" else ("device", "speaker")
     assert control(service, owner, "revoke", other_role, other_subject, "e" * 32)["state"] == "revoked"
 
 
@@ -782,14 +782,14 @@ async def test_rotation_teardown_cannot_untrack_replacement_realtime_offer(env, 
 
     from aiohttp import web
 
-    import channel_registry
+    import agent_registry
     import realtime_app
     import realtime_session
 
     service, _, owner = env
     manager = realtime_session.RealtimeManager()
     monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
-    monkeypatch.setattr(channel_registry, "get_active", lambda: None)
+    monkeypatch.setattr(agent_registry, "get_active", lambda: None)
     monkeypatch.setattr(realtime_app, "_media_authorities", {})
     monkeypatch.setattr(auth_connections, "_connections", set())
     # Only SDP/media construction is synthetic. Keep the production HTTP offer,

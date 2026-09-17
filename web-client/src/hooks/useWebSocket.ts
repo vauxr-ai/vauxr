@@ -14,6 +14,7 @@ export interface LogEntry {
 }
 
 interface UseWebSocketOpts {
+  onControl?: (message: { type: string; message?: string; role?: string; text?: string }) => void;
   onReady: () => void;
   onTranscript: (text: string) => void;
   onAudioStart: (sampleRate: number) => void;
@@ -75,6 +76,7 @@ export function useWebSocket(opts: UseWebSocketOpts) {
         try {
           const msg = JSON.parse(ev.data as string);
           addLog("rx", `Server message: ${typeof msg.type === "string" ? msg.type.replace(/[^a-zA-Z._-]/g, "").slice(0, 40) : "unknown"}`);
+          opts.onControl?.(msg);
           switch (msg.type) {
             case "hello":
             case "ready":

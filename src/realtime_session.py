@@ -1,6 +1,6 @@
 """Per-device realtime session: a Pipecat WebRTC pipeline wired into vauxr.
 
-A `RealtimeSession` owns one device's WebRTC media pipeline (STT -> channel LLM
+A `RealtimeSession` owns one device's WebRTC media pipeline (STT -> agent LLM
 -> TTS) and relays turn control (transcript / audio.start / audio.end{follow_up})
 back over the device's existing WS connection so the firmware's LED state machine
 and follow_up handling work unchanged.
@@ -109,7 +109,7 @@ class _MediaCompletion:
         )
 
     async def output_drained(self) -> None:
-        if self.abort in self.session._channel_media and not self.session._closed:
+        if self.abort in self.session._agent_media and not self.session._closed:
             self.session._drained_media.add(self.abort)
             await self.session._drain_ends()
 
@@ -117,9 +117,10 @@ class _MediaCompletion:
 class RealtimeSession:
     """One device's live WebRTC pipeline + WS control relay."""
 
-    def __init__(self, device_id: str, channel_server: Any) -> None:
+    def __init__(self, device_id: str, agent_server: Any) -> None:
         self.device_id = device_id
-        self._channel_server = channel_server
+        self._agent_server = agent_server
+        self._live_service: Any = None
         self._task: Any = None
         self._runner: Any = None
         self._context: Any = None
@@ -140,12 +141,12 @@ class RealtimeSession:
         # Set once the pipeline is built and the WebRTC client is connected.
         self._pipeline_ready = asyncio.Event()
         # Deferred audio.end queue, in turn order. Each entry is (follow_up,
-        # has_audio, media_abort). Channel turns require their exact downstream
+        # has_audio, media_abort). Agent turns require their exact downstream
         # output acknowledgement, even for empty/error control completions.
-        # Non-channel callbacks retain the legacy bot-idle credit behavior.
+        # Non-agent callbacks retain the legacy bot-idle credit behavior.
         # FIFO prevents a later silent turn from advancing an earlier reply.
         self._pending_ends: deque[tuple[bool, bool, asyncio.Event | None]] = deque()
-        self._channel_media: dict[asyncio.Event, str] = {}
+        self._agent_media: dict[asyncio.Event, str] = {}
         self._drained_media: set[asyncio.Event] = set()
         self._bot_stop_credits = 0
         # Bot-speaking bookkeeping. Wyoming TTS speaks one sentence per run_tts,
@@ -207,6 +208,10 @@ class RealtimeSession:
 
     async def start(self, connection: Any) -> None:
         """Build and run the pipeline around an established WebRTC connection."""
+        if self.device_id in get_manager()._live_devices:
+            from realtime_live import start_live
+            await start_live(self, connection)
+            return
         from pipecat.audio.vad.silero import SileroVADAnalyzer
         from pipecat.audio.vad.vad_analyzer import VADParams
         from pipecat.frames.frames import (
@@ -234,7 +239,7 @@ class RealtimeSession:
         from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
         from device_settings import get_segmentation
-        from realtime_llm import ChannelLLMService, OutputDrainTap
+        from realtime_llm import AgentLLMService, OutputDrainTap
         from realtime_turn import (
             SuppressibleVADUserTurnStartStrategy,
             VADStopUserTurnStopStrategy,
@@ -257,7 +262,7 @@ class RealtimeSession:
         stt = WyomingSTTService(selection=self._require_speech_selection)
         # Per-device segmentation: sentence mode lets pipecat's TTS aggregator cut
         # on sentence boundaries; otherwise TOKEN mode and the upstream
-        # IdleSegmenter (in ChannelLLMService) owns segmentation.
+        # IdleSegmenter (in AgentLLMService) owns segmentation.
         seg = get_segmentation(self.device_id)
         tts = WyomingTTSService(
             selection=self._require_speech_selection,
@@ -265,10 +270,10 @@ class RealtimeSession:
                 TextAggregationMode.SENTENCE if seg.sentence else TextAggregationMode.TOKEN
             )
         )
-        llm = ChannelLLMService(
+        llm = AgentLLMService(
             device_id=self.device_id,
-            channel_server=self._channel_server,
-            turn_complete_factory=self._channel_turn_complete_callback,
+            agent_server=self._agent_server,
+            turn_complete_factory=self._agent_turn_complete_callback,
             on_turn_skipped=self._on_turn_skipped,
         )
 
@@ -749,27 +754,27 @@ class RealtimeSession:
         """Bind completion to the user turn before the LLM yields to barge-in."""
         return partial(self._on_turn_complete, turn_generation=self._turn_generation)
 
-    async def _channel_turn_complete_callback(self) -> Callable[[bool, str], Awaitable[None]] | None:
-        """Retain channel ownership through playback on this exact peer."""
-        active = self._channel_server.get_active_channel()
+    async def _agent_turn_complete_callback(self) -> Callable[[bool, str], Awaitable[None]] | None:
+        """Retain agent ownership through playback on this exact peer."""
+        active = self._agent_server.get_active_agent()
         if self._closed:
             return None
-        if active is None or any(origin != active.id for origin in self._channel_media.values()):
+        if active is None or any(origin != active.id for origin in self._agent_media.values()):
             # Pipecat's output queue is shared by a peer. Retire it before a
-            # different channel can add media that an old-channel revoke could
+            # different agent can add media that an old-agent revoke could
             # otherwise cancel. A replacement peer has its own authority.
             await self.close()
             return None
         abort = asyncio.Event()
-        self._channel_media[abort] = active.id
-        self._channel_server.retain_media_turn(active.id, abort, self.close)
+        self._agent_media[abort] = active.id
+        self._agent_server.retain_media_turn(active.id, abort, self.close)
         return _MediaCompletion(self, abort)
 
-    def _release_channel_media(self, abort: asyncio.Event | None) -> None:
+    def _release_agent_media(self, abort: asyncio.Event | None) -> None:
         if abort is not None:
             self._drained_media.discard(abort)
-            self._channel_media.pop(abort, None)
-            self._channel_server.release_media_turn(abort)
+            self._agent_media.pop(abort, None)
+            self._agent_server.release_media_turn(abort)
 
     async def _on_turn_complete(
         self, follow_up: bool, reply: str, *, turn_generation: int | None = None,
@@ -784,7 +789,7 @@ class RealtimeSession:
             get_manager().record_turn(self.device_id, user_text, reply)
 
         has_audio = bool(reply and reply.strip())
-        # Keep the resolver's follow_up. Channel timeout/error completes with
+        # Keep the resolver's follow_up. Agent timeout/error completes with
         # (False, "") — forcing True here reopened the mic after a hung turn.
         # Barge-in cut-short ends are handled separately in _drain_ends.
         # Turn is resolved — close the PROCESSING window so the user can start a
@@ -879,7 +884,7 @@ class RealtimeSession:
         except asyncio.CancelledError:
             return
         self._drain_timer = None
-        # Silence restores idle VAD; it is not proof of channel output drain.
+        # Silence restores idle VAD; it is not proof of agent output drain.
         # Slow TTS or later segments may still be queued before playback.
         self._apply_vad_profile()
         if self._closed or self._bot_speaking != 0:
@@ -894,7 +899,7 @@ class RealtimeSession:
         while self._pending_ends and not self._ended_notified and not self._closed:
             follow_up, has_audio, media_abort = self._pending_ends[0]
             # Text/error completion and bot-idle credits cannot prove that a
-            # channel response has left TTS and the ordered output queue. Only
+            # agent response has left TTS and the ordered output queue. Only
             # its exact end frame at the output tap (or successful close) can.
             if media_abort is not None:
                 if media_abort not in self._drained_media:
@@ -904,7 +909,7 @@ class RealtimeSession:
                     break
                 self._bot_stop_credits -= 1
             self._pending_ends.popleft()
-            self._release_channel_media(media_abort)
+            self._release_agent_media(media_abort)
             if not self._owns_control():
                 # A may release its own consumed media, but cannot complete B.
                 continue
@@ -1009,13 +1014,18 @@ class RealtimeSession:
             if self._backstop_task is not None:
                 self._backstop_task.cancel()
             self._close_attempts = []
+            if self._live_service is not None:
+                if self._live_service.flush_task is not None:
+                    self._live_service.flush_task.cancel()
+                # Keep transcript failures visible; provider teardown still runs.
+                self._close_attempts.append(auth_connections.Teardown(self._live_service.finish_transcript))
             if self._task is not None:
                 self._close_attempts.append(auth_connections.Teardown(self._task.cancel))
             if self._connection is not None:
                 self._close_attempts.append(auth_connections.Teardown(self._connection.disconnect))
         await auth_connections.run_teardowns(self._close_attempts)
-        for abort in list(self._channel_media):
-            self._release_channel_media(abort)
+        for abort in list(self._agent_media):
+            self._release_agent_media(abort)
         self._pending_ends.clear()
         manager = get_manager()
         if manager._sessions.get(self.device_id) is self:
@@ -1026,7 +1036,8 @@ class RealtimeManager:
     """Tracks per-device pre-roll buffers, conversation log, and live sessions."""
 
     def __init__(self) -> None:
-        self._channel_server: Any = None
+        self._live_devices: set[str] = set()
+        self._agent_server: Any = None
         self._sessions: dict[str, RealtimeSession] = {}
         self._preroll: dict[str, bytearray] = {}
         self._cold_wait: set[str] = set()
@@ -1046,8 +1057,8 @@ class RealtimeManager:
                 drop_ms,
             )
 
-    def configure(self, channel_server: Any) -> None:
-        self._channel_server = channel_server
+    def configure(self, agent_server: Any) -> None:
+        self._agent_server = agent_server
 
     # --- transport-agnostic conversation log ---
 
@@ -1141,7 +1152,7 @@ class RealtimeManager:
         webrtc_connected: bool,
         ws: Any,
         openclaw_client: Any,
-        channel_server: Any,
+        agent_server: Any,
         output_sample_rate: int | None,
     ) -> None:
         """Route the cold-wake utterance: WS pipeline or Pipecat text seed."""
@@ -1191,7 +1202,7 @@ class RealtimeManager:
                 [pcm],
                 ws,
                 openclaw_client,
-                channel_server,
+                agent_server,
                 abort,
                 output_sample_rate,
                 selection=selection,
@@ -1234,6 +1245,7 @@ class RealtimeManager:
         if (self._sessions.get(device_id) not in (None, session)
                 or self._wake_generations.get(device_id) is not wake or _device_ws(device_id) is not ws):
             return
+        self._live_devices.discard(device_id)
         self._preroll.pop(device_id, None)
         self._speech_preroll.pop(device_id, None)
         self._cold_wait.discard(device_id)
@@ -1256,7 +1268,7 @@ class RealtimeManager:
 
     def can_accept_offer(self, device_id: str) -> bool:
         """Whether an /api/offer for this device_id is tied to a real wake."""
-        return device_id in self._preroll or device_id in self._sessions
+        return device_id in self._preroll or device_id in self._sessions or device_id in self._live_devices
 
     def _request_handler(self) -> Any:
         if self._handler is None:
@@ -1293,7 +1305,7 @@ class RealtimeManager:
             if existing is not None:
                 log.info("realtime[%s]: closing previous session before new offer", device_id)
                 await existing.close()
-            session = RealtimeSession(device_id, self._channel_server)
+            session = RealtimeSession(device_id, self._agent_server)
             try:
                 await session.start(connection)
             except Exception:

@@ -18,7 +18,7 @@ from utils import make_binary_frame
 from wyoming_tts import synthesize
 
 if TYPE_CHECKING:
-    from channel_server import ChannelServer
+    from agent_server import AgentServer
     from openclaw_client import OpenClawClient
 
 log = logging.getLogger("vauxr.button")
@@ -30,7 +30,7 @@ async def handle_device_button(
     button: str,
     gesture: str,
     openclaw_client: OpenClawClient | None,
-    channel_server: ChannelServer,
+    agent_server: AgentServer,
 ) -> None:
     if gesture not in VALID_GESTURES:
         log.warning("device.button unknown gesture %r from %s", gesture, device_id)
@@ -61,7 +61,7 @@ async def handle_device_button(
             device_id,
             action.get("text") or "",
             openclaw_client,
-            channel_server,
+            agent_server,
         )
     else:
         log.warning("device.button unhandled kind %r for %s", kind, device_id)
@@ -172,7 +172,7 @@ async def _dispatch_prompt(
     device_id: str,
     text: str,
     openclaw_client: OpenClawClient | None,
-    channel_server: ChannelServer,
+    agent_server: AgentServer,
 ) -> None:
     text = text.strip()
     if not text:
@@ -206,7 +206,7 @@ async def _dispatch_prompt(
             text,
             entry.ws,
             openclaw_client,
-            channel_server,
+            agent_server,
             abort,
             entry.output_sample_rate,
             send_audio_end=send_audio_end,
