@@ -21,6 +21,17 @@ services:
     environment:
       # Bare pass-throughs preserve unset versus explicitly empty host values.
       # Presence of either TLS/proxy setting selects TLS in the owner parser.
+      HTTPS_ENABLED: ${HTTPS_ENABLED:-0}
+      HTTPS_PORT:
+      HTTPS_CERT_FILE:
+      HTTPS_KEY_FILE:
+      ACME_ROUTE53_ENABLED: ${ACME_ROUTE53_ENABLED:-0}
+      ACME_DOMAIN:
+      ACME_EMAIL:
+      ACME_ACCEPT_TOS: ${ACME_ACCEPT_TOS:-0}
+      ACME_STAGING: ${ACME_STAGING:-0}
+      AWS_PROFILE:
+      AWS_SHARED_CREDENTIALS_FILE:
       OWNER_HTTP_ORIGIN:
       OWNER_HTTPS_ORIGIN:
       OWNER_TRUSTED_PROXIES:

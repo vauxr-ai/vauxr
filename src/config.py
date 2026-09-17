@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from native_tls import TLSConfig, load_tls_config
 from speech_catalog import speech_env
 
 
@@ -75,6 +76,7 @@ class Config:
     streaming_tts: StreamingTtsConfig
     realtime: RealtimeConfig
     log_level: str
+    tls: TLSConfig = field(default_factory=TLSConfig)
 
 
 def _required(name: str) -> str:
@@ -121,6 +123,7 @@ def load_config() -> Config:
             offer_path=_optional("REALTIME_OFFER_PATH", "/api/offer"),
         ),
         log_level=_optional("LOG_LEVEL", "info"),
+        tls=load_tls_config(_optional("DATA_DIR", "/data")),
     )
 
 

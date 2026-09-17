@@ -81,14 +81,17 @@ environment after changing the origin. The server never learns a trusted origin
 from a browser request, Host header, or DNS lookup. See
 [owner authentication v1](docs/authz/owner-v1.md) for the exact-origin boundary.
 
-### Optional HTTPS and proxy
+### Optional native HTTPS
 
-LAN HTTP/WS is the simplest supported path. For browser-trusted HTTPS/WSS, set
-`OWNER_HTTPS_ORIGIN` to the exact HTTPS browser origin and, if TLS terminates at
-a reverse proxy, set `OWNER_TRUSTED_PROXIES` to the proxy's exact address or
-network. Establish a browser-trusted certificate first; malformed TLS/proxy
-configuration fails closed and never downgrades to HTTP. See the owner contract
-before enabling this mode.
+[Native HTTPS/WSS](docs/native-https.md) runs in the Vauxr container, using your
+own certificates or explicitly enabled Let's Encrypt Route53 automation. Set
+`HTTPS_ENABLED=1` and an exact `OWNER_HTTPS_ORIGIN`; follow the guide for certificate,
+port and renewal settings. No proxy sidecar is required. Invalid TLS configuration
+fails closed. The existing HTTP and device WS listeners remain separate compatibility
+endpoints, and owner access requires HTTPS in this mode.
+
+Existing deployments that terminate TLS at a proxy can continue using
+`OWNER_HTTPS_ORIGIN` and `OWNER_TRUSTED_PROXIES` with native HTTPS disabled.
 
 Voice devices connect to `ws://localhost:8765` from the Docker host, or to the
 corresponding reachable server authority when they are remote.
@@ -203,6 +206,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design and protocol
 ## Related
 
 - [vauxr-openclaw](https://github.com/vauxr-ai/vauxr-openclaw) — OpenClaw channel plugin: exposes the HTTP API as agent tools so your OpenClaw agent can announce and control devices automatically
+
 
 ## License
 
