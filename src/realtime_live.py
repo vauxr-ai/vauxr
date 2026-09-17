@@ -100,6 +100,15 @@ class LiveService(OpenAILiveLLMService):
             await _send_json(_device_ws(self.session.device_id), {"type": "error",
                 "code": "REALTIME_HISTORY_FAILED", "message": "Some voice history could not be saved to the backend."})
 
+    async def release(self) -> None:
+        """Release the plugin's transient connection scope without touching history."""
+        try:
+            await asyncio.wait_for(self.request("release"), timeout=1.5)
+        except (Exception, asyncio.CancelledError):
+            # The plugin may already be disconnected. Server-side teardown must
+            # still finish; a later bootstrap creates a fresh transient scope.
+            pass
+
     async def flush_transcript(self) -> None:
         async with self.flush_lock:
             while self.fragments:

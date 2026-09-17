@@ -1019,6 +1019,7 @@ class RealtimeSession:
                     self._live_service.flush_task.cancel()
                 # Keep transcript failures visible; provider teardown still runs.
                 self._close_attempts.append(auth_connections.Teardown(self._live_service.finish_transcript))
+                self._close_attempts.append(auth_connections.Teardown(self._live_service.release))
             if self._task is not None:
                 self._close_attempts.append(auth_connections.Teardown(self._task.cancel))
             if self._connection is not None:
