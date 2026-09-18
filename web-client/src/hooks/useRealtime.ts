@@ -74,7 +74,10 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
         function cleanup() { clearTimeout(timeout); pc.removeEventListener("icegatheringstatechange", changed); controller.signal.removeEventListener("abort", abort); }
         pc.addEventListener("icegatheringstatechange", changed); controller.signal.addEventListener("abort", abort);
       });
+      // The offer is authenticated by the scoped device bearer, never the owner
+      // browser session. Omitting cookies keeps the owner CSRF boundary intact.
       const response = await fetch("/api/offer", { method: "POST", signal: controller.signal,
+        credentials: "omit", cache: "no-store", redirect: "error", referrerPolicy: "no-referrer",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ sdp: pc.localDescription?.sdp, type: "offer", device_id: deviceId }) });
       if (!response.ok) throw new Error(`Vauxr realtime offer failed (${response.status}). Check Realtime setup and the selected Agent.`);

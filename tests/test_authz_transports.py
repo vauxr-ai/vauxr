@@ -269,6 +269,45 @@ async def test_realtime_signaling_identity(monkeypatch, token, device_id, extra,
     assert calls == (["speaker"] if status == 200 else [])
 
 
+async def test_realtime_browser_offer_omits_owner_cookie_but_keeps_device_auth(monkeypatch):
+    """A logged-in browser must not turn a device offer into an owner CSRF request."""
+    import realtime_session
+
+    monkeypatch.setenv("REALTIME_ENABLED", "1")
+    monkeypatch.setenv("REALTIME_HOST", "127.0.0.1")
+    config.reset_config()
+
+    class Manager:
+        def configure(self, agent_server):
+            pass
+
+        def can_accept_offer(self, identity):
+            return identity == "speaker"
+
+        async def handle_offer(self, identity, body):
+            return {"type": "answer", "sdp": "test"}
+
+    monkeypatch.setattr(realtime_session, "get_manager", lambda: Manager())
+    app = make_app()
+    async with TestClient(TestServer(app)) as client:
+        owner = owner_headers(client)
+        body = {"type": "offer", "sdp": "test", "device_id": "speaker"}
+        # This is the accidental browser-default request: the real owner middleware
+        # correctly rejects its missing CSRF token before device authentication.
+        with_cookie = await client.post("/api/offer", headers={
+            **{k: v for k, v in owner.items() if k != "X-CSRF-Token"},
+            "Authorization": "Bearer device-secret",
+        }, json=body)
+        assert with_cookie.status == 403
+        # The client request uses credentials: omit: the same scoped bearer reaches
+        # the real handler without owner-cookie/CSRF authority.
+        without_cookie = await client.post("/api/offer", headers={
+            **TRANSPORT_HEADERS, "Authorization": "Bearer device-secret",
+        }, json=body)
+        assert without_cookie.status == 200
+        assert await without_cookie.json() == {"type": "answer", "sdp": "test"}
+
+
 async def test_auth_denials_log_no_client_values(caplog):
     caplog.set_level(logging.INFO)
     async with TestClient(TestServer(make_app())) as client:

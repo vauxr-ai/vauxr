@@ -302,7 +302,7 @@ function OwnerApp() {
           <p>{realtime.state === "listening" ? "Listening — speak naturally, including during playback." : realtime.state}</p>
           {realtime.error && <p role="alert">{realtime.error}</p>}
           {realtime.state === "stopped" ? <button disabled={!isConnected || micUnavailable}
-            onClick={() => void realtime.start(deviceId, credential.current)}>Start Realtime</button>
+            onClick={() => void realtime.start(deviceId, credential.current)}>Start Realtime Voice</button>
             : <button onClick={realtime.stop}>Stop Realtime</button>}
           <p>Stopping voice leaves backend actions running. Check the Agent before retrying an action.</p>
           <p aria-live="polite">{realtime.transcript}</p>
