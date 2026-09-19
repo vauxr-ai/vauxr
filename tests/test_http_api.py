@@ -77,7 +77,7 @@ async def test_devices_lists_registered(client: TestClient) -> None:
             "name": "Kitchen",
             "state": "listening",
             "lastSeen": "2026-05-17T12:00:00Z",
-            "config": {},
+            "config": {"pipeline_mode": "standard"},
         }
     ]
 
@@ -100,3 +100,22 @@ async def test_cors_headers_on_responses(client: TestClient) -> None:
         "/api/devices", headers=owner_headers(client)
     )
     assert "Access-Control-Allow-Origin" not in res.headers
+
+
+@pytest.mark.parametrize("value", [None, True, 1, [], {}, "Realtime", "unknown"])
+async def test_pipeline_mode_strict_validation(client, value):
+    registry.register("mode-test", ws=None)
+    response = await client.patch("/api/devices/mode-test", json={"pipeline_mode": value},
+                                  headers=owner_headers(client))
+    assert response.status == 400
+    assert "pipeline_mode" not in registry.get_config_for("mode-test")
+
+
+async def test_pipeline_mode_patch_persists(client):
+    registry.register("mode-test", ws=None)
+    response = await client.patch("/api/devices/mode-test", json={"pipeline_mode": "realtime"},
+                                  headers=owner_headers(client))
+    assert response.status == 200
+    assert (await response.json())["config"]["pipeline_mode"] == "realtime"
+    registry.load_configs()
+    assert registry.get_config_for("mode-test")["pipeline_mode"] == "realtime"

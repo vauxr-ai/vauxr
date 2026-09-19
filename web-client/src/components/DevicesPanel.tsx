@@ -20,6 +20,7 @@ interface ButtonAction {
 
 interface DeviceConfig {
   name?: string;
+  pipeline_mode?: "standard" | "realtime";
   follow_up_mode?: FollowUpMode;
   output_sample_rate?: number;
   barge_in?: boolean;
@@ -389,6 +390,16 @@ function DeviceCard({
                   onBlur={handleNameBlur}
                   disabled={saving}
                 />
+              </label>
+              <label className={labelClass}>
+                Pipeline
+                <select className={inputClass} value={device.config?.pipeline_mode ?? "standard"}
+                  disabled={saving}
+                  onChange={(e) => onPatch(device.id,
+                    { pipeline_mode: e.target.value as "standard" | "realtime" }, `Pipeline → ${e.target.value}`)}>
+                  <option value="standard">Standard</option>
+                  <option value="realtime">Realtime</option>
+                </select>
               </label>
               <label className={labelClass}>
                 Follow-up

@@ -23,7 +23,7 @@ import webhooks
 from auth import authenticate
 from auth_policy import HTTP_OPERATIONS, UNSHIPPED, Operation, Principal, Role, allowed, audit_denial
 from config import get_config
-from device_config import VALID_FOLLOW_UP_MODES, parse_button_actions
+from device_config import VALID_PIPELINE_MODES, pipeline_mode, VALID_FOLLOW_UP_MODES, parse_button_actions
 from enrollment_http import attach_enrollment
 from integration_http import attach_integration
 from lifecycle_http import attach_lifecycle
@@ -126,8 +126,8 @@ def _device_dict(d) -> dict[str, Any]:
         "name": d.name,
         "state": d.state,
         "lastSeen": d.last_seen.isoformat().replace("+00:00", "Z"),
-        "config": {k: v for k, v in d.config.items()
-                   if k in {"name", "voice", "follow_up_mode", "barge_in", "output_sample_rate"}},
+        "config": {"pipeline_mode": pipeline_mode(d.config), **{k: v for k, v in d.config.items()
+                   if k in {"name", "voice", "follow_up_mode", "barge_in", "output_sample_rate"}}},
     }
     if d.platform:
         out["platform"] = d.platform
@@ -161,6 +161,11 @@ async def update_device(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
 
     patch: dict[str, Any] = {}
+    if "pipeline_mode" in body:
+        mode = body["pipeline_mode"]
+        if not isinstance(mode, str) or mode not in VALID_PIPELINE_MODES:
+            return web.json_response({"error": "pipeline_mode must be standard | realtime"}, status=400)
+        patch["pipeline_mode"] = mode
     if "name" in body:
         if not isinstance(body["name"], str):
             return web.json_response({"error": "name must be a string"}, status=400)

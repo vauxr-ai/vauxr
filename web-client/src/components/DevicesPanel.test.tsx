@@ -560,3 +560,17 @@ describe("DevicesPanel", () => {
     });
   });
 });
+
+it("defaults pipeline to Standard and saves explicit Realtime", async () => {
+  const user = userEvent.setup();
+  renderPanel();
+  await waitForDevices();
+  await user.click(screen.getByRole("button", { name: /Living Room/ }));
+  const select = screen.getByRole("combobox", { name: "Pipeline" });
+  expect(select).toHaveValue("standard");
+  await user.selectOptions(select, "realtime");
+  await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith(
+    expect.stringContaining("/api/devices/d1"),
+    expect.objectContaining({ method: "PATCH", body: JSON.stringify({ pipeline_mode: "realtime" }) }),
+  ));
+});
