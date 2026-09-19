@@ -10,13 +10,16 @@ import pytest
 
 pytest.importorskip("pipecat")
 from websockets.asyncio.server import serve
-from pipecat.frames.frames import InputAudioRawFrame, LLMRunFrame, OutputAudioRawFrame
+from pipecat.frames.frames import InputAudioRawFrame, InterruptionFrame, LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.workers.runner import WorkerRunner
+
+from pipecat.transports.base_transport import TransportParams
+from pipecat.transports.smallwebrtc.transport import RawAudioTrack, SmallWebRTCClient, SmallWebRTCOutputTransport
 
 from realtime_live import LiveService
 
@@ -42,11 +45,43 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
         _send_control=AsyncMock(), _touch_activity=lambda: None, close=AsyncMock())
     llm = LiveService(session, "selected", {"realtime_model": "gpt-live-1", "realtime_voice": "cedar"})
 
-    class AudioSink(FrameProcessor):
+    # Exercise the installed output queue, client writer and track consumer.
+    # Only peer connection setup/RTP are omitted; enqueue is not consumption.
+    track = RawAudioTrack(24000, auto_silence=False)
+    enqueued, consume = asyncio.Event(), asyncio.Event()
+    interruptions = []
+    expected_audio = b"\x11\x11" * 960 + bytes(960 * 2) + b"\x22\x22" * 960
+    correction_audio = bytes(960 * 2) + b"\x33\x33" * 960
+    original_add = track.add_audio_bytes
+
+    def add_audio(data):
+        result = original_add(data)
+        enqueued.set()
+        return result
+
+    track.add_audio_bytes = add_audio
+    client = SimpleNamespace(_audio_output_track=track, _can_send=lambda: True,
+        setup=AsyncMock(), connect=AsyncMock(), disconnect=AsyncMock(), send_message=AsyncMock())
+
+    async def write(frame):
+        return await SmallWebRTCClient.write_audio_frame(client, frame)
+
+    client.write_audio_frame = write
+    output = SmallWebRTCOutputTransport(client, TransportParams(audio_out_enabled=True))
+
+    async def receive():
+        await consume.wait()
+        while True:
+            frame = await track.recv()
+            output_audio.append(frame.to_ndarray().tobytes())
+
+    receiver = asyncio.create_task(receive())
+
+    class InterruptionTap(FrameProcessor):
         async def process_frame(self, frame, direction):
             await super().process_frame(frame, direction)
-            if isinstance(frame, OutputAudioRawFrame):
-                output_audio.append(frame.audio)
+            if isinstance(frame, InterruptionFrame):
+                interruptions.append(frame)
             await self.push_frame(frame, direction)
 
     async def provider(ws):
@@ -64,7 +99,7 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
                         {"type": "session.output_transcript.delta", "delta": "I will"},
                         {"type": "session.output_transcript.delta", "delta": " check"},
                         {"type": "session.output_transcript.delta", "delta": "."},
-                        {"type": "session.output_audio.delta", "delta": base64.b64encode(bytes(960)).decode()},
+                        {"type": "session.output_audio.delta", "delta": base64.b64encode(expected_audio).decode()},
                         {"type": "session.delegation.created", "delegation": {"id": "one", "target": "client"}},
                     ]:
                         await ws.send(json.dumps(event))
@@ -76,6 +111,8 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
                         {"type": "session.output_transcript.delta", "delta": "Working on"},
                         {"type": "session.input_transcript.delta", "delta": "Actually,"},
                         {"type": "session.input_transcript.delta", "delta": " stop."},
+                        {"type": "session.output_audio.delta",
+                         "delta": base64.b64encode(correction_audio).decode()},
                     ]:
                         await ws.send(json.dumps(update))
                     received_mic.set()
@@ -89,7 +126,7 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
         llm.base_url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
         context = LLMContext(messages=[{"role": "system", "content": "Selected backend profile"}])
         user, assistant = LLMContextAggregatorPair(context)
-        worker = PipelineWorker(Pipeline([user, llm, AudioSink(), assistant]), enable_rtvi=False,
+        worker = PipelineWorker(Pipeline([user, llm, InterruptionTap(), output, assistant]), enable_rtvi=False,
             params=PipelineParams(audio_in_sample_rate=24000, audio_out_sample_rate=24000))
         runner = WorkerRunner(handle_sigint=False)
         await runner.add_workers(worker)
@@ -108,9 +145,13 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
 
             # Audio is available before the quiet-gap final; snapshots replace
             # one turn even when deltas split words, spaces or punctuation.
+            await asyncio.wait_for(enqueued.wait(), 5)
+            assert output_audio == [], "transport enqueue must not count as playback consumption"
+            consume.set()
             async with asyncio.timeout(5):
-                while not output_audio:
+                while sum(map(len, output_audio)) < len(expected_audio):
                     await asyncio.sleep(0.01)
+            assert b"".join(output_audio) == expected_audio, [(len(c), c[:4]) for c in output_audio]
             assert not any(t["final"] for t in transcripts())
             assert operations == [], "neither record nor consultation waits may block audio"
             await wait_for_controls(lambda ts: len([t for t in ts if t["final"]]) == 2)
@@ -135,6 +176,11 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
             ]
             assert len({t["turn_id"] for t in finals}) == 4
             assert not spoken.is_set(), "barge-in must not cancel or replay the backend action"
+            assert interruptions == [], "Live's provider-owned barge-in must not clear queued output"
+            async with asyncio.timeout(5):
+                while sum(map(len, output_audio)) < len(expected_audio + correction_audio):
+                    await asyncio.sleep(0.01)
+            assert b"".join(output_audio) == expected_audio + correction_audio
             release.set()
             await asyncio.wait_for(spoken.wait(), 5)
             await wait_for_controls(lambda ts: any(t["text"] == "Done" for t in ts))
@@ -159,6 +205,9 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
             await runner.cancel()
             await asyncio.wait_for(running, 5)
             await asyncio.wait_for(disconnected.wait(), 5)
+            receiver.cancel()
+            await asyncio.gather(receiver, return_exceptions=True)
+            track.stop()
         assert llm._websocket is None
 
 
