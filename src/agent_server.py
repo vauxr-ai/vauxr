@@ -76,9 +76,15 @@ class AgentServer:
         future = asyncio.get_running_loop().create_future()
         self._realtime_requests[request_id] = (conn, device_id, future)
         try:
-            await _send_json(conn.ws, {"type": "agent.realtime.request", "requestId": request_id,
-                                      "deviceId": device_id, "session": session, "operation": operation,
-                                      "payload": payload or {}})
+            frame = {"type": "agent.realtime.request", "requestId": request_id,
+                     "deviceId": device_id, "session": session, "operation": operation,
+                     "payload": payload or {}}
+            # Match Standard: reread committed display metadata on every request,
+            # never derive identity or titles from hello labels or caller payloads.
+            name = load_device_display_name(get_config().data_dir, device_id)
+            if name is not None:
+                frame["deviceDisplayName"] = name
+            await _send_json(conn.ws, frame)
             return await asyncio.wait_for(future, timeout)
         finally:
             # Cancelling the waiting media session never sends backend cancellation.

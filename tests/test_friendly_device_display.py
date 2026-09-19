@@ -296,3 +296,52 @@ async def test_pr38_production_bridge_session_contract(wire: TestClient, tmp_pat
         if process.returncode is None:
             process.kill()
             await process.wait()
+
+
+async def test_realtime_metadata_matches_standard_across_rename_reconnect_and_bad_store(
+    wire: TestClient, tmp_path: Path,
+) -> None:
+    agent = await connect_agent(wire)
+    a, b = await connect_device(wire, A), await connect_device(wire, B)
+    server = wire.app[APP_STATE].agent_server
+
+    async def request(device_id: str, name: str | None, operation: str = "bootstrap") -> None:
+        # This is the production LiveService -> AgentServer boundary. Arbitrary
+        # payload metadata cannot override the server-owned outer frame metadata.
+        pending = asyncio.create_task(server.realtime_request(
+            agents.get_active().id, device_id, "connection-scope", operation,
+            {"deviceDisplayName": "Untrusted payload"},
+        ))
+        frame = await agent.receive_json(timeout=3)
+        assert frame["deviceId"] == device_id
+        assert frame.get("deviceDisplayName") == name
+        assert frame["session"] == "connection-scope"
+        assert "sessionKey" not in frame  # Plugin derives the Standard key from deviceId.
+        # A response for a duplicate name's other identity cannot complete it.
+        await agent.send_json({"type": "agent.realtime.result", "requestId": frame["requestId"],
+                               "deviceId": B if device_id == A else A, "result": {"wrong": True}})
+        await asyncio.sleep(0.02)
+        assert not pending.done()
+        await agent.send_json({"type": "agent.realtime.result", "requestId": frame["requestId"],
+                               "deviceId": device_id, "result": {"ok": True}})
+        assert await asyncio.wait_for(pending, 3) == {"ok": True}
+        assert server.send_transcript(device_id, "hello")
+        assert await agent.receive_json(timeout=3) == expected(device_id, name)
+
+    devices.update_config(A, {"name": " web-client "})
+    await request(A, "web-client")
+    devices.update_config(A, {"name": "Shared"})
+    devices.update_config(B, {"name": "Shared"})
+    await request(A, "Shared", "record")
+    await request(B, "Shared")
+    await a.close()
+    a = await connect_device(wire, A)
+    await request(A, "Shared")
+    for name in (None, 42, {}, "", "Room\nFake", "x" * 129, "😀" * 65):
+        (tmp_path / "devices.json").write_text(json.dumps({A: {"name": name}}))
+        await request(A, None, "consult")
+    await a.send_json({"type": "realtime.start", "device_id": B, "mode": "live"})
+    assert (await a.receive_json(timeout=3))["code"] == "FORBIDDEN"
+    await a.close()
+    await b.close()
+    await agent.close()
