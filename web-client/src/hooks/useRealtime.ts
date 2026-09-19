@@ -95,7 +95,17 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
         }
       };
       const data = pc.createDataChannel("chat");
-      data.onopen = () => { timer.current = setInterval(() => { if (data.readyState === "open") data.send("ping"); }, 5000); };
+      data.onopen = () => {
+        if (attempt !== generation.current) return;
+        // Pipecat 1.9 rejects audio writes once the last ping is 3s old.
+        // Ping on open, then leave scheduling headroom inside that deadline.
+        const ping = () => {
+          if (attempt === generation.current && data.readyState === "open") data.send("ping");
+        };
+        clearInterval(timer.current);
+        ping();
+        timer.current = setInterval(ping, 1000);
+      };
       const wait = new Promise<void>((resolve, reject) => { armed.current = { resolve, reject }; });
       sendRef.current({ type: "realtime.start", mode: "live" });
       await wait;
