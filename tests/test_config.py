@@ -34,7 +34,7 @@ def test_load_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     c = cfg_mod.load_config()
     assert c.openclaw.url == ""
     assert c.openclaw.token == ""
-    assert c.channel.ws_path == "/channel"
+    assert c.agent.ws_path == "/agent"
     assert c.device.token == "test-device-token"
     assert c.data_dir == "/data"
     assert c.stt.host == "whisper"

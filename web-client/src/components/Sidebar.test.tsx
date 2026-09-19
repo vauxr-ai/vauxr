@@ -19,7 +19,7 @@ describe("Sidebar", () => {
   it("renders all four nav items", () => {
     renderSidebar();
     expect(screen.getByRole("button", { name: /connection/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /channels/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /agents/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /devices/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /settings/i })).toBeInTheDocument();
   });
@@ -30,9 +30,9 @@ describe("Sidebar", () => {
   });
 
   it("marks the active item with aria-current=page", () => {
-    renderSidebar({ active: "channels" });
-    const channels = screen.getByRole("button", { name: /channels/i });
-    expect(channels).toHaveAttribute("aria-current", "page");
+    renderSidebar({ active: "agents" });
+    const agents = screen.getByRole("button", { name: /agents/i });
+    expect(agents).toHaveAttribute("aria-current", "page");
 
     const connection = screen.getByRole("button", { name: /connection/i });
     expect(connection).not.toHaveAttribute("aria-current");

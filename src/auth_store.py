@@ -164,7 +164,7 @@ class CredentialStore:
         for row in state.get("requests", {}).values():
             if row["credential_id"]:
                 record = by_id.get(row["credential_id"])
-                if record is None or (record.role, record.subject) != (Role.INTEGRATION, row["channel_id"]):
+                if record is None or (record.role, record.subject) != (Role.INTEGRATION, row["agent_id"]):
                     raise ValueError("Invalid integration credential binding")
 
     def load(self) -> None:
@@ -284,12 +284,12 @@ class CredentialStore:
 
             raise EnrollmentError("capacity")
         # Selection and credential retirement must share the same atomic snapshot.
-        if self.integration.get("active_channel") and not any(
-            row["channel_id"] == self.integration["active_channel"]
-            and self.integration_channel_valid(row, records)
+        if self.integration.get("active_agent") and not any(
+            row["agent_id"] == self.integration["active_agent"]
+            and self.integration_agent_valid(row, records)
             for row in self.integration["requests"].values()
         ):
-            self.integration = {**self.integration, "active_channel": ""}
+            self.integration = {**self.integration, "active_agent": ""}
         payload = {"version": 2, "credentials": [asdict(r) for r in records], "owner": self.owner}
         if self.enrollment:
             payload.update(version=3, enrollment=self.enrollment)
@@ -307,10 +307,10 @@ class CredentialStore:
             raise
         self.records = records
 
-    def integration_channel_valid(self, row: dict, records: tuple[Credential, ...] | None = None) -> bool:
+    def integration_agent_valid(self, row: dict, records: tuple[Credential, ...] | None = None) -> bool:
         """Completed enrollment with current authority, including rotated replacements."""
         return bool(row["credential_id"]) and row["state"] == "completed" and any(
-            record.role == Role.INTEGRATION and record.subject == row["channel_id"] and self.usable(record)
+            record.role == Role.INTEGRATION and record.subject == row["agent_id"] and self.usable(record)
             for record in (self.records if records is None else records)
         )
 

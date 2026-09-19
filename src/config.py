@@ -22,7 +22,7 @@ class OpenClawConfig:
 
 
 @dataclass(frozen=True)
-class ChannelConfig:
+class AgentConfig:
     ws_path: str
 
 
@@ -66,7 +66,7 @@ class RealtimeConfig:
 @dataclass(frozen=True)
 class Config:
     openclaw: OpenClawConfig
-    channel: ChannelConfig
+    agent: AgentConfig
     device: DeviceConfigSection
     data_dir: str
     stt: WyomingEndpoint
@@ -102,7 +102,7 @@ def load_config() -> Config:
             url=_optional("OPENCLAW_URL", ""),
             token=_optional("OPENCLAW_TOKEN", ""),
         ),
-        channel=ChannelConfig(ws_path="/channel"),
+        agent=AgentConfig(ws_path="/agent"),
         device=DeviceConfigSection(token=_optional("DEVICE_TOKEN", "")),
         data_dir=_optional("DATA_DIR", "/data"),
         stt=_parse_wyoming_url(speech_env("STT_URL")),

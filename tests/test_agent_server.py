@@ -1,4 +1,4 @@
-"""Phase 12: channel_server WS handler."""
+"""Phase 12: agent_server WS handler."""
 
 from __future__ import annotations
 
@@ -11,17 +11,17 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
-import channel_registry as cr
+import agent_registry as cr
 import config as cfg_mod
-from channel_server import ChannelServer
+from agent_server import AgentServer
 
 
 async def create_integration(name, type_):
     from tests.auth_helpers import seed
     from auth_policy import Role
-    channel, token = await cr.create(name, type_)
-    seed(token, Role.INTEGRATION, channel.id)
-    return channel, token
+    agent, token = await cr.create(name, type_)
+    seed(token, Role.INTEGRATION, agent.id)
+    return agent, token
 
 
 @pytest.fixture(autouse=True)
@@ -38,8 +38,8 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 
 @pytest.fixture
-async def setup() -> AsyncIterator[tuple[ChannelServer, TestClient]]:
-    cs = ChannelServer()
+async def setup() -> AsyncIterator[tuple[AgentServer, TestClient]]:
+    cs = AgentServer()
     app = web.Application()
 
     async def ws_handler(request: web.Request) -> web.WebSocketResponse:
@@ -48,7 +48,7 @@ async def setup() -> AsyncIterator[tuple[ChannelServer, TestClient]]:
         await cs.handle_connection(ws)
         return ws
 
-    app.router.add_get("/channel", ws_handler)
+    app.router.add_get("/agent", ws_handler)
     server = TestServer(app)
     async with TestClient(server) as c:
         yield cs, c
@@ -67,21 +67,21 @@ async def _recv(ws) -> dict:
 @pytest.mark.asyncio
 async def test_auth_valid_token_sends_ready(setup) -> None:
     cs, client = setup
-    channel, token = await create_integration("Test Channel", "openclaw")
+    agent, token = await create_integration("Test Agent", "openclaw")
 
-    async with client.ws_connect("/channel") as ws:
-        await _send(ws, {"type": "channel.auth", "token": token})
+    async with client.ws_connect("/agent") as ws:
+        await _send(ws, {"type": "agent.auth", "token": token})
         ready = await _recv(ws)
-        assert ready["type"] == "channel.ready"
-        assert ready["channelId"] == channel.id
-        assert ready["name"] == "Test Channel"
+        assert ready["type"] == "agent.ready"
+        assert ready["agentId"] == agent.id
+        assert ready["name"] == "Test Agent"
 
 
 @pytest.mark.asyncio
 async def test_auth_invalid_token_errors_and_closes(setup) -> None:
     _cs, client = setup
-    async with client.ws_connect("/channel") as ws:
-        await _send(ws, {"type": "channel.auth", "token": "bad-token"})
+    async with client.ws_connect("/agent") as ws:
+        await _send(ws, {"type": "agent.auth", "token": "bad-token"})
         err = await _recv(ws)
         assert err == {"type": "error", "code": "UNAUTHORIZED", "message": "Access denied"}
         msg = await ws.receive(timeout=2)
@@ -89,15 +89,15 @@ async def test_auth_invalid_token_errors_and_closes(setup) -> None:
 
 
 @pytest.mark.asyncio
-async def test_auth_non_active_channel_no_transcript(setup) -> None:
+async def test_auth_non_active_agent_no_transcript(setup) -> None:
     cs, client = setup
-    channel, token = await create_integration("Non-Active", "openclaw")
+    agent, token = await create_integration("Non-Active", "openclaw")
     # Don't activate it.
-    async with client.ws_connect("/channel") as ws:
-        await _send(ws, {"type": "channel.auth", "token": token})
+    async with client.ws_connect("/agent") as ws:
+        await _send(ws, {"type": "agent.auth", "token": token})
         await _recv(ws)
 
-        # No active channel — send_transcript should fail.
+        # No active agent — send_transcript should fail.
         assert cs.send_transcript("dev1", "hello") is False
 
 
@@ -108,21 +108,21 @@ async def test_transcript_routes_to_active_only(setup) -> None:
     ch_idle, tok_idle = await create_integration("Idle", "openclaw")
     cr.activate(ch_active.id)
 
-    async with client.ws_connect("/channel") as ws_active, client.ws_connect("/channel") as ws_idle:
-        await _send(ws_active, {"type": "channel.auth", "token": tok_active})
+    async with client.ws_connect("/agent") as ws_active, client.ws_connect("/agent") as ws_idle:
+        await _send(ws_active, {"type": "agent.auth", "token": tok_active})
         await _recv(ws_active)
-        await _send(ws_idle, {"type": "channel.auth", "token": tok_idle})
+        await _send(ws_idle, {"type": "agent.auth", "token": tok_idle})
         await _recv(ws_idle)
 
         assert cs.send_transcript("dev1", "What is the weather?") is True
 
         msg = await _recv(ws_active)
-        assert msg["type"] == "channel.transcript"
+        assert msg["type"] == "agent.transcript"
         assert msg["deviceId"] == "dev1"
         assert msg["sessionKey"] == "vauxr:dev1"
         assert msg["text"] == "What is the weather?"
 
-        # Idle channel must not receive anything within 0.2s.
+        # Idle agent must not receive anything within 0.2s.
         try:
             extra = await asyncio.wait_for(ws_idle.receive(), timeout=0.2)
             assert extra.type != WSMsgType.TEXT, f"unexpected message: {extra.data!r}"
@@ -147,12 +147,12 @@ async def test_response_delta_routed_to_listener(setup) -> None:
         },
     )
 
-    async with client.ws_connect("/channel") as ws:
-        await _send(ws, {"type": "channel.auth", "token": token})
+    async with client.ws_connect("/agent") as ws:
+        await _send(ws, {"type": "agent.auth", "token": token})
         await _recv(ws)
-        await _send(ws, {"type": "channel.response.delta", "deviceId": "dev1", "runId": "r1", "text": "Hi "})
-        await _send(ws, {"type": "channel.response.delta", "deviceId": "dev1", "runId": "r1", "text": "there"})
-        await _send(ws, {"type": "channel.response.end", "deviceId": "dev1", "runId": "r1"})
+        await _send(ws, {"type": "agent.response.delta", "deviceId": "dev1", "runId": "r1", "text": "Hi "})
+        await _send(ws, {"type": "agent.response.delta", "deviceId": "dev1", "runId": "r1", "text": "there"})
+        await _send(ws, {"type": "agent.response.end", "deviceId": "dev1", "runId": "r1"})
         # Give the server a moment to process the messages.
         await asyncio.sleep(0.05)
 
@@ -176,13 +176,13 @@ async def test_response_error_routed(setup) -> None:
         },
     )
 
-    async with client.ws_connect("/channel") as ws:
-        await _send(ws, {"type": "channel.auth", "token": token})
+    async with client.ws_connect("/agent") as ws:
+        await _send(ws, {"type": "agent.auth", "token": token})
         await _recv(ws)
         await _send(
             ws,
             {
-                "type": "channel.response.error",
+                "type": "agent.response.error",
                 "deviceId": "dev1",
                 "runId": "r1",
                 "message": "Agent error",
@@ -199,8 +199,8 @@ async def test_connection_drop_then_send_transcript_returns_false(setup) -> None
     ch, token = await create_integration("Ch", "openclaw")
     cr.activate(ch.id)
 
-    async with client.ws_connect("/channel") as ws:
-        await _send(ws, {"type": "channel.auth", "token": token})
+    async with client.ws_connect("/agent") as ws:
+        await _send(ws, {"type": "agent.auth", "token": token})
         await _recv(ws)
         assert cs.send_transcript("dev1", "hi") is True
 
@@ -212,7 +212,7 @@ async def test_connection_drop_then_send_transcript_returns_false(setup) -> None
 @pytest.mark.asyncio
 async def test_unauth_message_returns_unauthorized(setup) -> None:
     _cs, client = setup
-    async with client.ws_connect("/channel") as ws:
-        await _send(ws, {"type": "channel.transcript", "deviceId": "x", "text": "y"})
+    async with client.ws_connect("/agent") as ws:
+        await _send(ws, {"type": "agent.transcript", "deviceId": "x", "text": "y"})
         err = await _recv(ws)
         assert err["code"] == "UNAUTHORIZED"

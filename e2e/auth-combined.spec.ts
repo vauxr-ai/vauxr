@@ -12,9 +12,9 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
     expect(response.status()).toBe(200);
     return response.json();
   };
-  await page.getByRole("button", { name: "Channels", exact: true }).click();
-  await expect(page.getByRole("button", { name: /Add channel|Create channel|Rotate token/ })).toHaveCount(0);
-  await expect(page.getByLabel(/device token|shared token|channel token/i)).toHaveCount(0);
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Add agent|Create agent|Rotate token/ })).toHaveCount(0);
+  await expect(page.getByLabel(/device token|shared token|agent token/i)).toHaveCount(0);
   const { secret, request } = await requestIntegration(server);
   const enrollment = page.getByRole("region", { name: "Integration enrollment", exact: true });
   await enrollment.getByText("Refresh integration requests").click();
@@ -47,7 +47,7 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
   await enrollment.getByText("Refresh integration requests").click();
   await expect(row).toContainText("State: completed");
   expect((await native(server, "/api/devices", undefined, integration)).status).toBe(200);
-  for (const path of ["/api/channels", "/api/webhooks", "/api/speech", "/api/devices/offline/speech"]) {
+  for (const path of ["/api/agents", "/api/webhooks", "/api/speech", "/api/devices/offline/speech"]) {
     expect((await native(server, path, undefined, integration)).status).toBe(403);
   }
   // Neither owner bearer nor integration credentials can impersonate a device.
@@ -58,7 +58,7 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
   }
   expect((await native(server, "/api/devices", undefined, operator)).status).toBe(401);
   expect((await native(server, "/api/lifecycle/v1/revoke", {
-    operation_id: "1".repeat(32), role: "integration", subject: request.channel_id,
+    operation_id: "1".repeat(32), role: "integration", subject: request.agent_id,
   }, integration)).status).toBe(403);
   expect((await native(server, "/api/enrollment/v1/request", {
     kind: "browser", public_key: "1".repeat(64), display_name: "Spoof browser",
@@ -68,15 +68,15 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
   const device = await pairDevice(server, integration);
   const speaker = await socket(server, "/ws", { type: "hello", device_id: device.device_id, token: device.device_token });
   expect(speaker.messages[0].type).toBe("hello");
-  const channel = await socket(server, "/channel", { type: "channel.auth", token: integration });
-  expect(channel.messages[0].type).toBe("channel.ready");
-  expect(channel.messages[0].channelId).toBe(request.channel_id);
+  const agent = await socket(server, "/agent", { type: "agent.auth", token: integration });
+  expect(agent.messages[0].type).toBe("agent.ready");
+  expect(agent.messages[0].agentId).toBe(request.agent_id);
   try {
-    const deviceChannel = await socket(server, "/channel", { type: "channel.auth", token: device.device_token });
-    expect(deviceChannel.messages[0].type).toBe("error");
-    deviceChannel.ws.close();
+    const deviceAgent = await socket(server, "/agent", { type: "agent.auth", token: device.device_token });
+    expect(deviceAgent.messages[0].type).toBe("error");
+    deviceAgent.ws.close();
     expect((await native(server, "/api/speech", undefined, device.device_token)).status).toBe(403);
-    await page.getByText("Refresh channels", { exact: true }).click();
+    await page.getByText("Refresh agents", { exact: true }).click();
     const route = page.locator("div").filter({ hasText: /^Synthetic OpenClaw — openclaw — Inactive route/ }).last();
     await route.getByRole("button", { name: "Activate", exact: true }).click();
     await expect(page.getByText(/Synthetic OpenClaw — openclaw — Active route/)).toBeVisible();
@@ -92,12 +92,12 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
     // Owner lifecycle is public metadata only; native client alone delivers and saves the replacement.
     await page.getByRole("button", { name: "Connection", exact: true }).click();
     await page.getByText("Refresh pairing and identities").click();
-    const access = page.locator("div").filter({ hasText: `Synthetic OpenClaw — ${request.channel_id}` })
+    const access = page.locator("div").filter({ hasText: `Synthetic OpenClaw — ${request.agent_id}` })
       .filter({ has: page.getByRole("button", { name: "rotate integration", exact: true }) }).last();
     await access.getByText("rotate integration", { exact: true }).click();
     await expect(page.getByText("Queued; may be offline. No replacement saved.")).toBeVisible();
     const retained = await page.evaluate(() => JSON.parse(sessionStorage.getItem("vauxr-operations") || "[]"));
-    const operation = retained.find((r: { subject: string; action: string }) => r.subject === request.channel_id && r.action === "rotate");
+    const operation = retained.find((r: { subject: string; action: string }) => r.subject === request.agent_id && r.action === "rotate");
     expect(operation.state).toBe("queued");
     const lifecycle = async (action: string, token: string, body: object = {}) => {
       const response = await native(server, `/api/lifecycle/v1/${action}`, body, token);
@@ -113,27 +113,27 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
     expect(wrongAck.status).toBe(400);
     expect((await wrongAck.json()).error).toBe("invalid_ack");
     await lifecycle("ack", rotated, { operation_id: operation.operation_id, saved: true });
-    await expect.poll(() => channel.ws.readyState).toBe(WebSocket.CLOSED);
+    await expect.poll(() => agent.ws.readyState).toBe(WebSocket.CLOSED);
     expect((await native(server, "/api/devices", undefined, integration)).status).toBe(401);
-    const replacementChannel = await socket(server, "/channel", { type: "channel.auth", token: rotated });
-    expect(replacementChannel.messages[0].type).toBe("channel.ready");
+    const replacementAgent = await socket(server, "/agent", { type: "agent.auth", token: rotated });
+    expect(replacementAgent.messages[0].type).toBe("agent.ready");
     try {
       await access.getByText("revoke integration", { exact: true }).click();
-      await expect.poll(() => replacementChannel.ws.readyState).toBe(WebSocket.CLOSED);
+      await expect.poll(() => replacementAgent.ws.readyState).toBe(WebSocket.CLOSED);
       expect((await native(server, "/api/devices", undefined, rotated)).status).toBe(401);
       expect(speaker.ws.readyState).toBe(WebSocket.OPEN);
       // Device still authenticates while both integration generations stay retired.
       expect((await native(server, "/api/lifecycle/v1/poll", {}, device.device_token)).status).toBe(200);
-      const routes = await (await context.request.get(server.origin + "/api/channels")).json();
-      expect(routes.some((r: { id: string }) => r.id === request.channel_id)).toBe(false);
+      const routes = await (await context.request.get(server.origin + "/api/agents")).json();
+      expect(routes.some((r: { id: string }) => r.id === request.agent_id)).toBe(false);
       const publicRequests = await owner("/api/integrations/v1/list");
       expect(publicRequests.requests.find((r: { request_id: string }) => r.request_id === request.request_id).state).toBe("revoked");
       const publicText = JSON.stringify(publicRequests) + await page.content();
       expect([operator, integration, rotated, device.device_token, secret.request_secret].some(s => publicText.includes(s))).toBe(false);
       const storage = await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]));
       expect([operator, integration, rotated, device.device_token, secret.request_secret].some(s => storage.includes(s))).toBe(false);
-    } finally { replacementChannel.ws.close(); }
-  } finally { speaker.ws.close(); channel.ws.close(); }
+    } finally { replacementAgent.ws.close(); }
+  } finally { speaker.ws.close(); agent.ws.close(); }
 });
 
 test("matching code errors and denial never deliver credentials; legacy forms stay absent after reload", async ({ page, server }) => {
@@ -141,7 +141,7 @@ test("matching code errors and denial never deliver credentials; legacy forms st
   page.on("dialog", dialog => dialog.accept());
   const first = await requestIntegration(server, "Same display name");
   const second = await requestIntegration(server, "Same display name");
-  await page.getByRole("button", { name: "Channels", exact: true }).click();
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByText("Refresh integration requests").click();
   const row = page.getByRole("region", { name: `Integration request ${first.request.request_id}`, exact: true });
   await row.getByLabel("Integration matching code").fill(second.request.user_code);
@@ -156,18 +156,18 @@ test("matching code errors and denial never deliver credentials; legacy forms st
   expect((await client(server, "status", second.secret)).state).toBe("pending");
   await client(server, "cancel", second.secret);
   await page.reload();
-  await page.getByRole("button", { name: "Channels", exact: true }).click();
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByText("Refresh integration requests").click();
   await expect(row).toContainText("State: denied");
   await expect(page.getByRole("region", { name: `Integration request ${second.request.request_id}`, exact: true })).toContainText("State: cancelled");
-  await expect(page.getByRole("button", { name: /Add channel|Create channel|Rotate token/ })).toHaveCount(0);
-  await expect(page.getByLabel(/shared token|device token|channel token/i)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Add agent|Create agent|Rotate token/ })).toHaveCount(0);
+  await expect(page.getByLabel(/shared token|device token|agent token/i)).toHaveCount(0);
 });
 
 test("server restart preserves owner session, approved integration and speech configuration", async ({ page, context, server }) => {
   await login(page, server);
   const { secret, request } = await requestIntegration(server);
-  await page.getByRole("button", { name: "Channels", exact: true }).click();
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByText("Refresh integration requests").click();
   const row = page.getByRole("region", { name: `Integration request ${request.request_id}`, exact: true });
   await row.getByLabel("Integration matching code").fill(request.user_code);
@@ -194,7 +194,7 @@ test("server restart preserves owner session, approved integration and speech co
   await page.reload();
   await expect(page.getByRole("main")).toBeVisible();
   expect(await (await context.request.get(speechPath)).json()).toEqual(before);
-  const connection = await socket(server, "/channel", { type: "channel.auth", token: credential });
-  expect(connection.messages[0].type).toBe("channel.ready");
+  const connection = await socket(server, "/agent", { type: "agent.auth", token: credential });
+  expect(connection.messages[0].type).toBe("agent.ready");
   connection.ws.close();
 });

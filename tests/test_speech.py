@@ -26,7 +26,7 @@ def store(tmp_path, monkeypatch):
     config.reset_config()
     auth._store = None
     seed("speech-test", Role.DEVICE, "a")
-    seed("integration-test", Role.INTEGRATION, "channel")
+    seed("integration-test", Role.INTEGRATION, "agent")
     backends = (
         Backend("whisper", "stt", "whisper", "small", "127.0.0.1", 10300),
         Backend("parakeet", "stt", "parakeet-v3", "v3", "127.0.0.1", 10301),
@@ -95,11 +95,11 @@ def test_removed_provider_is_explicit_not_fallback(store):
 
 
 async def test_http_management_auth_validation_and_isolation(store, monkeypatch):
-    import channel_registry
+    import agent_registry
     import speech_http
     from http_server import make_http_app
 
-    channel_registry._reset_for_tests()
+    agent_registry._reset_for_tests()
     monkeypatch.setattr(speech_http, "readiness", AsyncMock(return_value="unavailable"))
     async with TestClient(TestServer(make_http_app())) as client:
         for path in ("/api/speech", "/api/devices/a/speech"):
@@ -117,12 +117,11 @@ async def test_http_management_auth_validation_and_isolation(store, monkeypatch)
         assert (await r.json())["effective"]["tts_backend"] == "piper"
         r = await client.patch("/api/speech", headers=headers, json={"url": "tcp://bad:1"})
         assert r.status == 400
-        # Legacy channel tokens cannot manage speech settings.
-        monkeypatch.setattr(channel_registry, "validate_channel_token", AsyncMock(return_value=object()))
-        r = await client.get("/api/speech", headers={"Authorization": "Bearer channel-test"})
+        # Legacy agent tokens cannot manage speech settings.
+        r = await client.get("/api/speech", headers={"Authorization": "Bearer agent-test"})
         assert r.status == 401
         # Only owner sessions manage speech; paired roles and legacy tokens do not.
-        for token, status in (("speech-test", 403), ("integration-test", 403), ("channel-test", 401)):
+        for token, status in (("speech-test", 403), ("integration-test", 403), ("agent-test", 401)):
             for path in ("/api/speech", "/api/devices/a/speech"):
                 for method in ("GET", "PATCH"):
                     r = await client.request(method, path, headers={"Authorization": f"Bearer {token}"},
@@ -157,8 +156,8 @@ async def test_midturn_stt_to_multiple_tts_segments(store, monkeypatch):
     monkeypatch.setattr(pipeline, "synthesize", synthesize)
     monkeypatch.setattr(pipeline, "_route_via_openclaw_direct", route)
     ws = SimpleNamespace(closed=False, send_str=AsyncMock(), send_bytes=AsyncMock())
-    channels = SimpleNamespace(get_active_channel=lambda: SimpleNamespace(type="openclaw-direct"))
-    state = AppState(openclaw_client=object(), channel_server=channels)
+    agents = SimpleNamespace(get_active_agent=lambda: SimpleNamespace(type="openclaw-direct"))
+    state = AppState(openclaw_client=object(), agent_server=agents)
     ctx = ConnectionCtx(device_id="a", principal=auth.authenticate("speech-test"))
     await _voice_start(
         state, ws, ctx, {"device_id": "a", "token": "speech-test", "tts_backend": "kokoro", "voice": "bf"}
@@ -204,7 +203,7 @@ async def test_cold_realtime_fallback_uses_wake_snapshot(store, monkeypatch):
     monkeypatch.setattr(pipeline, "run_voice_turn", run)
     ws = SimpleNamespace(closed=False, send_str=AsyncMock())
     await manager.handle_cold_voice_end(
-        "a", webrtc_connected=False, ws=ws, openclaw_client=None, channel_server=None, output_sample_rate=None
+        "a", webrtc_connected=False, ws=ws, openclaw_client=None, agent_server=None, output_sample_rate=None
     )
     selection = run.call_args.kwargs["selection"]
     assert selection.stt.id == "whisper" and selection.tts.id == "piper"
@@ -431,7 +430,7 @@ async def test_realtime_rejected_turn_cannot_retry_resolution(store, monkeypatch
         raise PipelineCaptured
 
     monkeypatch.setattr(pipeline_module, "Pipeline", capture_pipeline)
-    session = realtime_session.RealtimeSession("a", channel_server=object())
+    session = realtime_session.RealtimeSession("a", agent_server=object())
     connection = SmallWebRTCConnection()
     try:
         with pytest.raises(PipelineCaptured):

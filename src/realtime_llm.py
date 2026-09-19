@@ -1,11 +1,11 @@
-"""Pipecat LLM service that routes through vauxr's channel plugin.
+"""Pipecat LLM service that routes through vauxr's agent plugin.
 
 Instead of calling a cloud LLM, this service hands the user's transcript to the
-active channel (via `ChannelServer.send_transcript`) and streams the channel's
-`channel.response.*` deltas back into the pipeline as `LLMTextFrame`s for TTS.
+active agent (via `AgentServer.send_transcript`) and streams the agent's
+`agent.response.*` deltas back into the pipeline as `LLMTextFrame`s for TTS.
 
 This is what makes the realtime/WebRTC path share the *same* agent, sessions,
-and `follow_up` semantics as the turn-based WS pipeline (`pipeline._route_via_channel`).
+and `follow_up` semantics as the turn-based WS pipeline (`pipeline._route_via_agent`).
 The `[[follow_up]]` tag is stripped from spoken text; the resolved follow_up
 boolean is reported via `on_turn_complete` so the session can decide whether to
 stay in realtime mode or return the device to silent wake-waiting.
@@ -30,7 +30,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.llm_service import LLMService
 from pipecat.services.settings import LLMSettings
 
-from channel_server import ChannelServer
+from agent_server import AgentServer
 from device_settings import get_segmentation
 from idle_segmenter import IdleSegmenter
 from pipeline import (
@@ -39,10 +39,10 @@ from pipeline import (
     strip_follow_up_tag_inline,
 )
 
-# Anti-hang backstop for awaiting the channel reply. This is NOT a latency
+# Anti-hang backstop for awaiting the agent reply. This is NOT a latency
 # budget — a slow local model (tens of seconds, even minutes) is fine and must
 # not be cut off. Matches the device's 5-min response backstop; it only fires if
-# the channel/OpenClaw goes fully silent so the turn can't hang forever.
+# the agent/OpenClaw goes fully silent so the turn can't hang forever.
 _RESPONSE_TIMEOUT_S = 300.0
 
 # Callback: (follow_up, reply_text) -> awaitable | None, fired after each turn.
@@ -106,20 +106,20 @@ class OutputDrainTap(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class ChannelLLMService(LLMService):
-    """Route LLM turns through the active vauxr channel plugin."""
+class AgentLLMService(LLMService):
+    """Route LLM turns through the active vauxr agent plugin."""
 
     def __init__(
         self,
         *,
         device_id: str,
-        channel_server: ChannelServer,
+        agent_server: AgentServer,
         on_turn_complete: TurnCompleteCb | None = None,
         turn_complete_factory: Callable[[], TurnCompleteCb | Awaitable[TurnCompleteCb | None]] | None = None,
         on_turn_skipped: TurnSkippedCb | None = None,
         **kwargs,
     ) -> None:
-        # The channel owns model/prompt/sampling configuration. None means
+        # The agent owns model/prompt/sampling configuration. None means
         # unsupported here; NOT_GIVEN is only valid in sparse settings updates.
         super().__init__(
             settings=LLMSettings(
@@ -138,7 +138,7 @@ class ChannelLLMService(LLMService):
             **kwargs,
         )
         self._device_id = device_id
-        self._channel_server = channel_server
+        self._agent_server = agent_server
         self._on_turn_complete = on_turn_complete
         self._turn_complete_factory = turn_complete_factory
         self._on_turn_skipped = on_turn_skipped
@@ -162,7 +162,7 @@ class ChannelLLMService(LLMService):
             # Empty transcript (VAD blip, dropped STT, noise). Skip the turn but
             # stay in the realtime session — ending here on follow_up=false would
             # kick the user out of multi-turn listening on a spurious trigger.
-            logger.warning("ChannelLLM: empty user text — skipping turn, staying in session")
+            logger.warning("AgentLLM: empty user text — skipping turn, staying in session")
             await self._emit_empty_response()
             return
 
@@ -172,7 +172,7 @@ class ChannelLLMService(LLMService):
             # finalizing the same turn); the context still holds the prior
             # utterance. Skip rather than re-send. A real repeat of the same
             # phrase appends a new user message, so user_count would advance.
-            logger.warning("ChannelLLM: no new user message since last turn — skipping")
+            logger.warning("AgentLLM: no new user message since last turn — skipping")
             await self._emit_empty_response()
             return
         self._last_user_msg_count = user_count
@@ -202,7 +202,7 @@ class ChannelLLMService(LLMService):
                 return  # The owning media session was retired before routing.
 
         listener = {"on_delta": on_delta, "on_end": on_end, "on_error": on_error}
-        self._channel_server.add_response_listener(self._device_id, listener)
+        self._agent_server.add_response_listener(self._device_id, listener)
 
         # Two mutually exclusive segmentation strategies, chosen per device:
         #
@@ -249,15 +249,15 @@ class ChannelLLMService(LLMService):
 
             pump = asyncio.create_task(pump_segments())
 
-        # Realtime routes only through the channel plugin. send_transcript returns
+        # Realtime routes only through the agent plugin. send_transcript returns
         # false for openclaw-direct (operator) mode, which realtime does not yet
         # support — the turn-based WS pipeline handles that case instead.
-        sent = self._channel_server.send_transcript(self._device_id, text)
+        sent = self._agent_server.send_transcript(self._device_id, text)
         accumulated = ""
         error: str | None = None
         try:
             if not sent:
-                error = "Active channel not connected (openclaw-direct is not supported in realtime)"
+                error = "Active agent not connected (openclaw-direct is not supported in realtime)"
             else:
                 while True:
                     try:
@@ -265,7 +265,7 @@ class ChannelLLMService(LLMService):
                             queue.get(), timeout=_RESPONSE_TIMEOUT_S
                         )
                     except asyncio.TimeoutError:
-                        error = f"Channel response timeout after {int(_RESPONSE_TIMEOUT_S)}s"
+                        error = f"Agent response timeout after {int(_RESPONSE_TIMEOUT_S)}s"
                         break
                     if kind == "delta":
                         accumulated += payload
@@ -283,7 +283,7 @@ class ChannelLLMService(LLMService):
                         error = payload
                         break
         finally:
-            self._channel_server.remove_response_listener(self._device_id, listener)
+            self._agent_server.remove_response_listener(self._device_id, listener)
             if segmenter is not None and pump is not None:
                 if error is not None:
                     # Drop buffered (unspoken) text and release the pump — abort()
@@ -299,7 +299,7 @@ class ChannelLLMService(LLMService):
             await self.push_frame(end)
 
         if error:
-            logger.error("ChannelLLM error for {}: {}", self._device_id, error)
+            logger.error("AgentLLM error for {}: {}", self._device_id, error)
             await self.push_error(ErrorFrame(error))
             if on_turn_complete:
                 await self._maybe_await(on_turn_complete(False, ""))
@@ -307,7 +307,7 @@ class ChannelLLMService(LLMService):
 
         result = resolve_follow_up(accumulated, _follow_up_mode_for(self._device_id))
         logger.info(
-            "ChannelLLM reply ({} chars, follow_up={}): {}",
+            "AgentLLM reply ({} chars, follow_up={}): {}",
             len(result.reply_text),
             result.follow_up,
             result.reply_text[:160],

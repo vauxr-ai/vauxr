@@ -3,7 +3,7 @@ import type { ConnectionState } from "../hooks/useWebSocket";
 
 export type SectionId =
   | "connection"
-  | "channels"
+  | "agents"
   | "devices"
   | "settings";
 
@@ -15,7 +15,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: "connection", label: "Connection", icon: "connection" },
-  { id: "channels", label: "Channels", icon: "channels" },
+  { id: "agents", label: "Agents", icon: "agents" },
   { id: "devices", label: "Devices", icon: "devices" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];

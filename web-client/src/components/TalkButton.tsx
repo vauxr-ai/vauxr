@@ -9,6 +9,7 @@ export type TalkButtonMode =
   | "follow-up";
 
 interface Props {
+  toggle?: boolean;
   disabled: boolean;
   active: boolean;
   processing?: boolean;
@@ -19,10 +20,6 @@ interface Props {
 }
 
 const KEYFRAMES = `
-@keyframes vauxr-heartbeat {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.45); }
-  50% { transform: scale(1.04); box-shadow: 0 0 28px 6px rgba(99, 102, 241, 0.35); }
-}
 @keyframes vauxr-ripple {
   0% { transform: scale(0.7); opacity: 0.65; }
   100% { transform: scale(1.9); opacity: 0; }
@@ -60,7 +57,7 @@ const BASE_CLASSES =
 const BUTTON_CLASSES: Record<TalkButtonMode, string> = {
   disabled: "bg-gray-700 text-gray-500 cursor-not-allowed",
   idle: "bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer",
-  listening: "bg-red-500 text-white scale-105 shadow-lg shadow-red-500/40",
+  listening: "bg-red-500 text-white shadow-lg shadow-red-500/40",
   processing: "bg-indigo-600 text-white",
   speaking: "bg-violet-600 text-white",
   "follow-up": "bg-teal-500 text-white",
@@ -157,16 +154,13 @@ export default function TalkButton(props: Props) {
     };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
+    window.addEventListener("blur", end);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", end);
     };
   }, [start, end]);
-
-  const heartbeatStyle =
-    mode === "idle"
-      ? { animation: "vauxr-heartbeat 2.4s ease-in-out infinite" }
-      : undefined;
 
   return (
     <div className="relative">
@@ -178,16 +172,21 @@ export default function TalkButton(props: Props) {
 
       <button
         className={`${BASE_CLASSES} ${BUTTON_CLASSES[mode]}`}
-        style={heartbeatStyle}
         disabled={disabled}
-        onMouseDown={start}
+        aria-pressed={props.toggle ? props.active : undefined}
+        onClick={props.toggle ? onTalkStart : undefined}
+        onKeyDown={e => { if (!props.toggle && (e.key === " " || e.key === "Enter")) { e.preventDefault(); start(); } }}
+        onKeyUp={e => { if (!props.toggle && (e.key === " " || e.key === "Enter")) { e.preventDefault(); end(); } }}
+        onBlur={end}
+        onMouseDown={props.toggle ? undefined : start}
         onMouseUp={end}
         onMouseLeave={end}
-        onTouchStart={start}
+        onTouchStart={props.toggle ? undefined : start}
         onTouchEnd={end}
+        onTouchCancel={end}
       >
         {mode === "processing" && <Spinner />}
-        <span className="relative z-10">{LABELS[mode]}</span>
+        <span className="relative z-10">{props.toggle ? (props.active ? "Stop listening" : "Start listening") : LABELS[mode]}</span>
       </button>
     </div>
   );

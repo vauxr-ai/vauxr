@@ -91,7 +91,7 @@ async def test_transport_paths_resolve_device_selection_once(neutral_store, monk
     resolver = Mock(wraps=neutral_store.resolve)
     monkeypatch.setattr(neutral_store, "resolve", resolver)
     ws = SimpleNamespace(closed=False, send_str=AsyncMock(), send_bytes=AsyncMock())
-    channels = SimpleNamespace(get_active_channel=lambda: SimpleNamespace(type="openclaw-direct"))
+    agents = SimpleNamespace(get_active_agent=lambda: SimpleNamespace(type="openclaw-direct"))
     captured = []
     transcribed = []
     done = asyncio.Event()
@@ -116,7 +116,7 @@ async def test_transport_paths_resolve_device_selection_once(neutral_store, monk
     monkeypatch.setattr(button_dispatch, "synthesize", synthesize)
     monkeypatch.setattr(pipeline, "_route_via_openclaw_direct", route)
     if path == "ws":
-        state = AppState(openclaw_client=object(), channel_server=channels)
+        state = AppState(openclaw_client=object(), agent_server=agents)
         ctx = ConnectionCtx(device_id="device", principal=auth.authenticate("neutral-test"))
         await _voice_start(state, ws, ctx, {"device_id": "device", "token": "neutral-test"})
         await _voice_end(state, ws, ctx)
@@ -127,7 +127,7 @@ async def test_transport_paths_resolve_device_selection_once(neutral_store, monk
         manager.add_preroll("device", b"\0\0")
         await manager.handle_cold_voice_end(
             "device", webrtc_connected=False, ws=ws, openclaw_client=object(),
-            channel_server=channels, output_sample_rate=None,
+            agent_server=agents, output_sample_rate=None,
         )
         await asyncio.wait_for(done.wait(), 1)
     else:
@@ -140,7 +140,7 @@ async def test_transport_paths_resolve_device_selection_once(neutral_store, monk
             }})
             await button_dispatch.handle_device_button(
                 device_id="device", button="action", gesture="double_press",
-                openclaw_client=object(), channel_server=channels,
+                openclaw_client=object(), agent_server=agents,
             )
     if path == "cold-fallback":
         # Sustained WS fallback arms the NEXT turn after completing this one.

@@ -272,7 +272,7 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
   });
   const talk = page.getByRole("button", { name: /hold to talk/i });
   await talk.dispatchEvent("mousedown");
-  await expect(page.getByText(/Microphone capture failed/)).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: /Microphone capture failed/ })).toBeVisible();
   expect(frames.some((f) => JSON.parse(f).type === "voice.start")).toBe(false);
   await page.getByRole("button", { name: "Disconnect", exact: true }).click();
   // Offline rotation UI: retain queued state, then connect to deliver/save/ACK.
@@ -452,7 +452,7 @@ test("non-loopback HTTP administration works while browser microphone remains re
   await globalSpeech.getByLabel("TTS backend").selectOption("kokoro");
   await expect(globalSpeech.getByText("Effective: parakeet / kokoro / af")).toBeVisible();
   await expect(globalSpeech.getByRole("option", { name: "kokoro · kokoro-test · unavailable" })).toBeAttached();
-  await globalSpeech.getByRole("combobox", { name: /^Voice/ }).selectOption("bf");
+  await globalSpeech.getByRole("combobox", { name: "Voice", exact: true }).selectOption("bf");
   await expect(globalSpeech.getByText("Effective: parakeet / kokoro / bf")).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -468,10 +468,10 @@ test("non-loopback HTTP administration works while browser microphone remains re
   const deviceSpeech = page.getByRole("region", { name: "Device speech", exact: true });
   await expect(deviceSpeech.getByText("Effective: parakeet / kokoro / bf")).toBeVisible();
   await expect(deviceSpeech.getByLabel("TTS backend")).toHaveValue("");
-  await deviceSpeech.getByRole("combobox", { name: /^Voice/ }).selectOption("af");
+  await deviceSpeech.getByRole("combobox", { name: "Voice", exact: true }).selectOption("af");
   await expect(deviceSpeech.getByText("Effective: parakeet / kokoro / af")).toBeVisible();
   await deviceSpeech.getByLabel("TTS backend").selectOption("piper");
-  await expect(deviceSpeech.getByRole("combobox", { name: /^Voice/ })).not.toContainText("af");
+  await expect(deviceSpeech.getByRole("combobox", { name: "Voice", exact: true })).not.toContainText("af");
   await expect(deviceSpeech.getByRole("button", { name: "Reset to defaults" })).toBeEnabled();
   await deviceSpeech.getByRole("button", { name: "Reset to defaults" }).click();
   await expect(deviceSpeech.getByText("Effective: parakeet / kokoro / bf")).toBeVisible();
