@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import TypedDict
@@ -21,6 +22,9 @@ class Settings(TypedDict, total=False):
     stt_backend: str
     tts_backend: str
     voices: dict[str, str]
+    mode: str
+    realtime_model: str
+    realtime_voice: str
 
 
 class SpeechStore:
@@ -35,6 +39,9 @@ class SpeechStore:
         if initial["stt"] is None or initial["tts"] is None:
             raise ValueError("Speech registry requires STT and TTS backends")
         self.defaults: Settings = {
+            "mode": "standard",
+            "realtime_model": "gpt-live-1",
+            "realtime_voice": "marin",
             "stt_backend": initial["stt"],
             "tts_backend": initial["tts"],
             "voices": {b.id: b.voices[0] for b in backends if b.kind == "tts"},
@@ -58,8 +65,14 @@ class SpeechStore:
             raise ValueError("Selected voice is no longer configured")
         return Selection(stt, tts, voice)
 
+    def voice_settings(self, device_id: str = "") -> dict[str, str]:
+        override = self.devices.get(device_id, {})
+        return {key: override.get(key, self.defaults.get(key, default)) for key, default in (
+            ("mode", "standard"), ("realtime_model", "gpt-live-1"), ("realtime_voice", "marin"),
+        )}
+
     def update(self, patch: object, device_id: str | None = None) -> None:
-        if not isinstance(patch, dict) or set(patch) - {"stt_backend", "tts_backend", "voices"}:
+        if not isinstance(patch, dict) or set(patch) - {"stt_backend", "tts_backend", "voices", "mode", "realtime_model", "realtime_voice"}:
             raise ValueError("Expected stt_backend, tts_backend and/or voices")
         defaults = json.loads(json.dumps(self.defaults))
         devices = json.loads(json.dumps(self.devices))
@@ -67,6 +80,12 @@ class SpeechStore:
         for key, value in patch.items():
             if value is None and device_id is not None:
                 target.pop(key, None)
+            elif key in {"mode", "realtime_model", "realtime_voice"}:
+                choices = {"mode": ("standard", "realtime"), "realtime_model": ("gpt-live-1",),
+                           "realtime_voice": ("marin", "cedar")}
+                if value not in choices[key]:
+                    raise ValueError("Unsupported voice mode, realtime model or voice")
+                target[key] = value
             elif key == "voices":
                 if not isinstance(value, dict):
                     raise ValueError("voices must map TTS backend IDs to voice IDs")
@@ -104,6 +123,9 @@ class SpeechStore:
         except (KeyError, ValueError):
             effective, error = None, "Selected backend or voice is no longer configured"
         return {
+            "voice": self.voice_settings(device_id or ""),
+            "realtime": {"provider": "OpenAI", "model": "gpt-live-1", "voices": ["marin", "cedar"],
+                         "configured": bool(get_config().realtime.enabled and os.environ.get("OPENAI_API_KEY"))},
             "defaults": self.defaults,
             "overrides": self.devices.get(device_id, {}),
             "effective": effective,

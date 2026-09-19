@@ -3,7 +3,7 @@ import { ownerPost } from "../auth/api";
 
 interface Request {
   request_id: string;
-  channel_id: string;
+  agent_id: string;
   origin: string;
   server_id: string;
   display_name: string;
@@ -51,7 +51,7 @@ export default function IntegrationEnrollment() {
           })} />
       ))}
       <p>Approval lets the client receive its own credential once. Access starts only after
-        its save acknowledgement. Then refresh routing channels and explicitly activate it.
+        its save acknowledgement. Then refresh routing agents and explicitly activate it.
         Rotate or revoke existing access in Pairing and access.</p>
     </section>
   );
@@ -76,7 +76,7 @@ function RequestRow({ request, busy, act }: {
     <section aria-label={`Integration request ${request.request_id}`} className="border-t space-y-2 py-3">
       <p>{request.display_name} — {request.request_id}</p>
       <p>Server: {request.origin} — {request.server_id}</p>
-      <p>Channel: {request.channel_id}</p>
+      <p>Agent: {request.agent_id}</p>
       <p>State: {request.state}. Deadline: {new Date(request.expires_at * 1000).toLocaleString()}</p>
       {request.state === "delivered" && <p>Delivery attempted; durable save has NOT been acknowledged.</p>}
       {request.state === "completed" && <p>Client acknowledged saving; ready for explicit route activation.</p>}
@@ -87,21 +87,21 @@ function RequestRow({ request, busy, act }: {
         </label>
         <section aria-label="Integration permissions" className="space-y-2">
           <p>Approving grants this integration fixed permissions after it acknowledges
-            durable credential save, even while its channel is inactive:</p>
+            durable credential save, even while its agent is inactive:</p>
           <ul className="list-disc pl-5">
             <li>List devices, send device announcements, and issue allowed device controls.</li>
             <li>Initiate firmware updates, including OTA.</li>
             <li>Initiate and approve physical device pairing. Each pairing approval still requires
               a fresh verified physical pairing window and confirmation of the matching code
               spoken by the device.</li>
-            <li>Connect to its own channel and respond to existing voice requests on that
-              channel when active.</li>
+            <li>Connect to its own agent and respond to existing voice requests on that
+              agent when active.</li>
           </ul>
-          <p>Channel activation selects voice routing; it does not grant these permissions
+          <p>Agent activation selects voice routing; it does not grant these permissions
             or gate device access. Device playback is reserved; no playback URL endpoint is available.</p>
           <p>This does not grant owner administration; credential creation, disclosure, rotation
             or revocation; device configuration, button mappings or speech/provider settings;
-            channel listing or configuration; webhook configuration; server management;
+            agent listing or configuration; webhook configuration; server management;
             firmware image reading, upload or publication; or device impersonation.</p>
           <p>It cannot approve browser enrollment or known-device recovery, choose a replacement
             device key, or receive a device credential.</p>

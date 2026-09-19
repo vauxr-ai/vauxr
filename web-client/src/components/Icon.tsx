@@ -2,7 +2,7 @@ import type { SVGProps } from "react";
 
 export type IconName =
   | "connection"
-  | "channels"
+  | "agents"
   | "devices"
   | "api"
   | "settings"
@@ -52,7 +52,7 @@ export default function Icon({ name, size = 18, className, ...rest }: Props) {
           <path d="M2 8.82a15 15 0 0 1 20 0" />
         </svg>
       );
-    case "channels":
+    case "agents":
       return (
         <svg {...common}>
           <rect x="3" y="3" width="7" height="7" rx="1.5" />

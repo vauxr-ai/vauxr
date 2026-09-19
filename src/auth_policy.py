@@ -24,8 +24,8 @@ class Operation(StrEnum):
     FIRMWARE_DELIVERY_MINT = "firmware.delivery_mint"
     FIRMWARE_READ = "firmware.read"
     FIRMWARE_PUBLISH = "firmware.publish"
-    CHANNEL_LIST = "channel.list"
-    CHANNEL_CONFIG = "channel.configure"
+    AGENT_LIST = "agent.list"
+    AGENT_CONFIG = "agent.configure"
     CREDENTIAL_CREATE = "credential.create"
     CREDENTIAL_DISCLOSE = "credential.disclose"
     CREDENTIAL_ROTATE = "credential.rotate"
@@ -40,7 +40,7 @@ class Operation(StrEnum):
     DEVICE_CONTROL = "device.self_control"
     DEVICE_BUTTON = "device.button"
     REALTIME_OFFER = "realtime.offer"
-    CHANNEL_CONNECT = "channel.connect"
+    AGENT_CONNECT = "agent.connect"
     VOICE_RESPONSE = "voice.respond"
 
 
@@ -72,7 +72,7 @@ _INTEGRATION = frozenset(
         Operation.FIRMWARE_INITIATE,
         Operation.PAIR_INITIATE,
         Operation.PAIR_APPROVE,
-        Operation.CHANNEL_CONNECT,
+        Operation.AGENT_CONNECT,
         Operation.VOICE_RESPONSE,
     }
 )
@@ -88,8 +88,8 @@ _OWNER = frozenset(
         Operation.FIRMWARE_READ,
         Operation.FIRMWARE_DELIVERY_MINT,
         Operation.FIRMWARE_PUBLISH,
-        Operation.CHANNEL_LIST,
-        Operation.CHANNEL_CONFIG,
+        Operation.AGENT_LIST,
+        Operation.AGENT_CONFIG,
         Operation.CREDENTIAL_CREATE,
         Operation.CREDENTIAL_DISCLOSE,
         Operation.CREDENTIAL_ROTATE,
@@ -162,10 +162,10 @@ HTTP_OPERATIONS = {
     "update_device": Operation.DEVICE_CONFIG,
     "announce": Operation.ANNOUNCE,
     "device_command": Operation.CONTROL,
-    "list_channels": Operation.CHANNEL_LIST,
-    "create_channel": Operation.CREDENTIAL_CREATE,
-    "delete_channel": Operation.CREDENTIAL_REVOKE,
-    "activate_channel": Operation.CHANNEL_CONFIG,
+    "list_agents": Operation.AGENT_LIST,
+    "create_agent": Operation.CREDENTIAL_CREATE,
+    "delete_agent": Operation.CREDENTIAL_REVOKE,
+    "activate_agent": Operation.AGENT_CONFIG,
     "rotate_token": Operation.CREDENTIAL_ROTATE,
     "list_webhooks": Operation.WEBHOOK_CONFIG,
     "get_webhook_configuration": Operation.WEBHOOK_CONFIG,

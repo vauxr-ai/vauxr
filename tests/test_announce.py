@@ -1,4 +1,4 @@
-"""Phase 13: HTTP announce + device.command + channel CRUD endpoints."""
+"""Phase 13: HTTP announce + device.command + agent CRUD endpoints."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-import channel_registry
+import agent_registry
 import config as cfg_mod
 import device_registry as registry
 import wyoming_tts
@@ -44,8 +44,8 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     seed("tok-X", Role.OWNER, "owner")
     monkeypatch.setenv("OPENCLAW_URL", "")
     registry.reset()
-    channel_registry._reset_for_tests()
-    channel_registry.load()
+    agent_registry._reset_for_tests()
+    agent_registry.load()
 
     # Stub TTS so we don't talk to a real Piper.
     async def fake_synth(text: str, **_k):
@@ -59,7 +59,7 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     yield
     registry.reset()
-    channel_registry._reset_for_tests()
+    agent_registry._reset_for_tests()
     cfg_mod.reset_config()
 
 
@@ -347,27 +347,27 @@ async def test_patch_button_actions_invalid(client: TestClient) -> None:
     assert res.status == 400
 
 
-# --- /api/channels CRUD ---
+# --- /api/agents CRUD ---
 
 
-async def test_list_channels_empty(client: TestClient) -> None:
-    res = await client.get("/api/channels", headers=_auth(client))
+async def test_list_agents_empty(client: TestClient) -> None:
+    res = await client.get("/api/agents", headers=_auth(client))
     assert res.status == 200
     assert await res.json() == []
 
 
 @pytest.mark.parametrize("method,path", [
-    ("POST", "/api/channels"), ("DELETE", "/api/channels/missing"),
-    ("POST", "/api/channels/missing/rotate"),
+    ("POST", "/api/agents"), ("DELETE", "/api/agents/missing"),
+    ("POST", "/api/agents/missing/rotate"),
 ])
-async def test_channel_lifecycle_is_explicitly_unshipped(client, method, path):
+async def test_agent_lifecycle_is_explicitly_unshipped(client, method, path):
     res = await client.request(method, path, headers=_auth(client), json={"name": "X"})
     assert res.status == 501
     assert await res.json() == {"error": "operation not implemented"}
-    assert channel_registry.get_all() == []
+    assert agent_registry.get_all() == []
 
 
-async def test_activate_channel(client):
-    created, _ = await channel_registry.create("X")
-    res = await client.post(f"/api/channels/{created.id}/activate", headers=_auth(client))
+async def test_activate_agent(client):
+    created, _ = await agent_registry.create("X")
+    res = await client.post(f"/api/agents/{created.id}/activate", headers=_auth(client))
     assert res.status == 200

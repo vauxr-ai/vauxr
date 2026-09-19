@@ -1,4 +1,4 @@
-"""Entry point — device WS + channel WS + HTTP API in one aiohttp app.
+"""Entry point — device WS + agent WS + HTTP API in one aiohttp app.
 
 Port of `src/server.ts`. The single-process design matches the Node
 version: one event loop, one process, one aiohttp Application.
@@ -17,11 +17,11 @@ from typing import Any
 from aiohttp import WSMsgType, web
 
 import auth_connections
-import channel_registry
+import agent_registry
 import device_registry as registry
 from auth import authenticate, current, get_store
 from auth_policy import WS_OPERATIONS, Operation, Principal, allowed, audit_denial
-from channel_server import ChannelServer
+from agent_server import AgentServer
 from config import get_config
 from device_settings import realtime_policy_extras
 from http_server import (
@@ -65,7 +65,7 @@ class ConnectionCtx:
 @dataclass
 class AppState:
     openclaw_client: OpenClawClient | None = None
-    channel_server: ChannelServer = field(default_factory=ChannelServer)
+    agent_server: AgentServer = field(default_factory=AgentServer)
 
 
 APP_STATE: web.AppKey[AppState] = web.AppKey("state", AppState)
@@ -98,7 +98,7 @@ async def handle_text(
         await _hello(ws, ctx, msg)
     elif msg_type == "voice.start":
         # Turn-based capture doesn't apply mid-realtime: running it on the same WS
-        # would clobber the channel response listener and force registry state to
+        # would clobber the agent response listener and force registry state to
         # idle while WebRTC is still up. (A device using realtime won't send this;
         # this is a guard against a stale/confused client.)
         if ctx.realtime:
@@ -256,7 +256,7 @@ async def _device_button(state: AppState, ctx: ConnectionCtx, msg: dict[str, Any
             button=button,
             gesture=gesture,
             openclaw_client=state.openclaw_client,
-            channel_server=state.channel_server,
+            agent_server=state.agent_server,
         )
     )
 
@@ -278,7 +278,7 @@ async def _voice_start(
         ctx.state = ConnectionState.IDLE
         return
     ctx.state = ConnectionState.LISTENING
-    registry.register(device_id, ws=ws, name=msg.get("name") or device_id)
+    registry.register(device_id, ws=ws, name=msg.get("name"))
     rate = registry.apply_output_sample_rate(device_id, msg)
     if rate is not None:
         ctx.output_sample_rate = rate
@@ -322,9 +322,36 @@ async def _realtime_or_voice_end(
         webrtc_connected=webrtc_connected,
         ws=ws,
         openclaw_client=state.openclaw_client,
-        channel_server=state.channel_server,
+        agent_server=state.agent_server,
         output_sample_rate=ctx.output_sample_rate,
     )
+
+
+@dataclass
+class _VoiceTurnOutput:
+    """Fence delayed pipeline output at the socket boundary after cancellation.
+
+    Provider callbacks can finish after abort, including scheduled audio.start
+    and error sends. They must never address the replacement turn's browser.
+    """
+
+    ws: web.WebSocketResponse
+    abort: asyncio.Event
+    device_id: str
+
+    @property
+    def closed(self) -> bool:
+        entry = registry.get(self.device_id)
+        return (self.abort.is_set() or self.ws.closed or entry is None
+                or entry.ws is not self.ws or entry.abort_event is not self.abort)
+
+    async def send_str(self, data: str) -> None:
+        if not self.closed:
+            await self.ws.send_str(data)
+
+    async def send_bytes(self, data: bytes) -> None:
+        if not self.closed:
+            await self.ws.send_bytes(data)
 
 
 async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx) -> None:
@@ -354,23 +381,26 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
             await run_voice_turn(
                 device_id,
                 chunks,
-                ws,
+                _VoiceTurnOutput(ws, abort, device_id),
                 state.openclaw_client,
-                state.channel_server,
+                state.agent_server,
                 abort,
                 ctx.output_sample_rate,
                 selection=selection,
             )
         except Exception:  # noqa: BLE001
             log.error("Pipeline error")
-            await send_json(
-                ws, {"type": "error", "code": "PIPELINE_ERROR", "message": "Pipeline error"}
-            )
+            if not abort.is_set():
+                await send_json(
+                    ws, {"type": "error", "code": "PIPELINE_ERROR", "message": "Pipeline error"}
+                )
         finally:
-            ctx.state = ConnectionState.IDLE
-            registry.set_state(device_id, "idle")
+            # Only the turn that still owns this connection may clear it.
+            # An aborted turn can finish after a replacement has started.
             e = registry.get(device_id)
-            if e is not None:
+            if e is entry and e is not None and e.abort_event is abort:
+                ctx.state = ConnectionState.IDLE
+                registry.set_state(device_id, "idle")
                 e.abort_event = None
 
     asyncio.create_task(_run())
@@ -415,7 +445,7 @@ async def _realtime_start(
     ctx.device_id = device_id
     ctx.realtime = True
     ctx.realtime_media = False
-    registry.register(device_id, ws=ws, name=msg.get("name") or device_id)
+    registry.register(device_id, ws=ws, name=msg.get("name"))
     rate = registry.apply_output_sample_rate(device_id, msg)
     if rate is not None:
         ctx.output_sample_rate = rate
@@ -429,6 +459,23 @@ async def _realtime_start(
         registry.set_state(device_id, "listening")
         await send_json(ws, {"type": "ready"})
         log.info("realtime.start from %s — warm re-wake on live session", device_id)
+        return
+
+    if msg.get("mode") == "live":
+        import os
+        from speech import get_store as speech_store
+        if speech_store().voice_settings(device_id)["mode"] != "realtime" or not os.environ.get("OPENAI_API_KEY"):
+            ctx.realtime = False
+            await send_json(ws, {"type": "error", "code": "REALTIME_UNAVAILABLE",
+                                "message": "Select Realtime in speech settings and configure the server OpenAI key"})
+            return
+        await manager.stop(device_id)
+        if not current(ctx.principal):
+            await ws.close()
+            return
+        manager._live_devices.add(device_id)
+        registry.set_state(device_id, "listening")
+        await send_json(ws, {"type": "realtime.armed"})
         return
 
     # Cold wake: arm WS pre-roll and wait for the device-VAD voice.end marker.
@@ -549,7 +596,7 @@ async def device_ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 
 @transport_boundary
-async def channel_ws_handler(request: web.Request) -> web.WebSocketResponse:
+async def agent_ws_handler(request: web.Request) -> web.WebSocketResponse:
     from owner_http import ORIGIN, secure_request
 
     origin = request.app[ORIGIN]
@@ -560,7 +607,7 @@ async def channel_ws_handler(request: web.Request) -> web.WebSocketResponse:
     state: AppState = request.app[APP_STATE]
     ws = web.WebSocketResponse()
     await ws.prepare(request)
-    await state.channel_server.handle_connection(ws)
+    await state.agent_server.handle_connection(ws)
     return ws
 
 
@@ -568,18 +615,18 @@ def make_app() -> web.Application:
     app = web.Application(middlewares=[owner_middleware, cors_middleware, policy_middleware])
     app[APP_STATE] = AppState()
     cfg = get_config()
-    app.router.add_get(cfg.channel.ws_path, channel_ws_handler)
+    app.router.add_get(cfg.agent.ws_path, agent_ws_handler)
     app.router.add_get("/ws", device_ws_handler)
     attach_http_routes(app)
     if cfg.realtime.enabled:
-        # Realtime WebRTC (Pipecat) runs in-process so it can reuse channel
+        # Realtime WebRTC (Pipecat) runs in-process so it can reuse agent
         # routing, the device registry, and the WS control channel. Imported
         # lazily so the pipecat/aiortc dependency is only required when enabled.
         from realtime_app import attach_realtime_routes
 
-        attach_realtime_routes(app, app[APP_STATE].channel_server)
+        attach_realtime_routes(app, app[APP_STATE].agent_server)
     # Catch-all static fallback (serves the web-client at /). Must be last so
-    # /ws, channel WS, and /api/* are matched first.
+    # /ws, agent WS, and /api/* are matched first.
     app.router.add_get("/{tail:.*}", serve_static)
     return app
 
@@ -589,27 +636,27 @@ async def _startup(app: web.Application) -> None:
     cfg = get_config()
     get_store().load()
     get_speech_store()  # Validate the speech registry before accepting turns.
-    # Load channel registry.
-    channel_registry.load()
-    log.info("channel registry loaded")
+    # Load agent registry.
+    agent_registry.load()
+    log.info("agent registry loaded")
     import webhooks
 
     webhooks.load()
     log.info("webhooks loaded")
 
-    active = channel_registry.get_active()
+    active = agent_registry.get_active()
     if cfg.openclaw.url and active is not None and active.type == "openclaw-direct":
         client = OpenClawClient()
         try:
             await client.connect()
             state.openclaw_client = client
-            log.info("OpenClaw connected (openclaw-direct active channel)")
+            log.info("OpenClaw connected (openclaw-direct active agent)")
         except Exception as e:  # noqa: BLE001
             log.error("Failed to connect to OpenClaw: %s", e)
             log.error("Server will start but openclaw-direct will fail until OpenClaw reconnects")
             state.openclaw_client = client
     elif not cfg.openclaw.url:
-        log.info("OPENCLAW_URL not set — openclaw-direct channel unavailable")
+        log.info("OPENCLAW_URL not set — openclaw-direct agent unavailable")
 
 
 async def _cleanup(app: web.Application) -> None:

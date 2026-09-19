@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 
-const [plugin, root, url, channelId, ...ids] = process.argv.slice(2);
+const [plugin, root, url, agentId, ...ids] = process.argv.slice(2);
 const require = createRequire(resolve(plugin, 'package.json'));
 assert.equal(JSON.parse(await readFile(resolve(plugin, 'node_modules/openclaw/package.json'), 'utf8')).version,
   '2026.9.3');
@@ -67,7 +67,7 @@ const api = {
       } },
   } },
 };
-const auth = { async bearer() { return 'integration-secret'; }, subject() { return channelId; },
+const auth = { async bearer() { return 'integration-secret'; }, subject() { return agentId; },
   connected() { output({ event: 'ready' }); }, disconnected() {}, status() { return { state: 'connected' }; } };
 let bridge;
 function start() { bridge = new VauxrBridge(api, { url }, auth); bridge.start(); }

@@ -10,13 +10,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import channel_registry
+import agent_registry
 import config as cfg_mod
 import device_registry as dev_reg
 import pipeline
 import wyoming_stt
 import wyoming_tts
-from channel_server import ChannelServer
+from agent_server import AgentServer
 from pipeline import resolve_follow_up, run_text_turn, run_voice_turn
 
 
@@ -42,7 +42,7 @@ class FakeWs:
 
 
 @dataclass
-class FakeChannel:
+class FakeAgent:
     id: str
     name: str
     type: str
@@ -76,31 +76,31 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setenv("DEVICE_TOKEN", "tok")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("STREAMING_TTS_IDLE_PAUSE_MS", "20")
-    # openclaw-direct requires OPENCLAW_URL to materialize as an active channel.
+    # openclaw-direct requires OPENCLAW_URL to materialize as an active agent.
     monkeypatch.setenv("OPENCLAW_URL", "wss://test.invalid/")
     dev_reg.reset()
-    channel_registry._reset_for_tests()
+    agent_registry._reset_for_tests()
     yield
-    channel_registry._reset_for_tests()
+    agent_registry._reset_for_tests()
     dev_reg.reset()
     cfg_mod.reset_config()
 
 
 def _set_direct_active():
     # Reach into the registry to flip openclaw-direct on without disk I/O.
-    channel_registry._openclaw_direct_active = True  # type: ignore[attr-defined]
+    agent_registry._openclaw_direct_active = True  # type: ignore[attr-defined]
 
 
-def _set_channel_active():
-    ch = channel_registry.Channel(
+def _set_agent_active():
+    ch = agent_registry.Agent(
         id="ch-1",
-        name="My Channel",
+        name="My Agent",
         type="openclaw",
         tokenHash="hash",
         active=True,
         createdAt="2026-05-17T00:00:00Z",
     )
-    channel_registry._set_active_for_tests(ch)
+    agent_registry._set_active_for_tests(ch)
 
 
 async def _fake_synth_yielding(text: str, **_k):
@@ -143,7 +143,7 @@ async def test_runs_full_voice_turn_direct_mode(monkeypatch: pytest.MonkeyPatch)
     # register device so next_seq works
     dev_reg.register("dev1", ws=ws)
 
-    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, ChannelServer(), abort)
+    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, AgentServer(), abort)
 
     msgs = ws.json_messages()
     assert any(m.get("type") == "transcript" and m.get("text") == "what is the weather" for m in msgs)
@@ -164,7 +164,7 @@ async def test_empty_transcript_sends_audio_end_only(monkeypatch: pytest.MonkeyP
     oc = FakeOpenClawClient([])
     abort = asyncio.Event()
 
-    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, ChannelServer(), abort)
+    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, AgentServer(), abort)
 
     msgs = ws.json_messages()
     assert any(m.get("type") == "audio.end" for m in msgs)
@@ -180,7 +180,7 @@ async def test_stt_error_emits_stt_error(monkeypatch: pytest.MonkeyPatch) -> Non
     oc = FakeOpenClawClient([])
     abort = asyncio.Event()
 
-    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, ChannelServer(), abort)
+    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, AgentServer(), abort)
 
     msgs = ws.json_messages()
     err = next(m for m in msgs if m.get("type") == "error")
@@ -202,21 +202,21 @@ async def test_direct_mode_uses_last_delta_as_full_reply(monkeypatch: pytest.Mon
 
     ws = FakeWs()
     dev_reg.register("dev1", ws=ws)
-    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, ChannelServer(), asyncio.Event())
+    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, AgentServer(), asyncio.Event())
 
     assert tts_calls == ["Once upon a time there was a cat. The cat sat on a warm cozy mat."]
 
 
 @pytest.mark.asyncio
-async def test_no_active_channel_emits_no_channel(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_no_active_agent_emits_no_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_stt(monkeypatch, "nobody is listening")
     _patch_tts(monkeypatch)
 
     ws = FakeWs()
-    await run_voice_turn("dev1", [b"\x00" * 100], ws, None, ChannelServer(), asyncio.Event())
+    await run_voice_turn("dev1", [b"\x00" * 100], ws, None, AgentServer(), asyncio.Event())
 
     msgs = ws.json_messages()
-    assert any(m.get("type") == "error" and m.get("code") == "NO_CHANNEL" for m in msgs)
+    assert any(m.get("type") == "error" and m.get("code") == "NO_AGENT" for m in msgs)
     assert any(m.get("type") == "audio.end" for m in msgs)
 
 
@@ -234,16 +234,16 @@ async def test_abort_stops_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     oc = FakeOpenClawClient([]).on_chat_start(chat_then_abort)
 
     ws = FakeWs()
-    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, ChannelServer(), abort)
+    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, AgentServer(), abort)
 
     msgs = ws.json_messages()
     assert not any(m.get("type") == "audio.end" for m in msgs)
 
 
 @pytest.mark.asyncio
-async def test_channel_mode_streaming_with_idle_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_agent_mode_streaming_with_idle_gap(monkeypatch: pytest.MonkeyPatch) -> None:
     """When deltas come with a gap > idle_pause, segment-flush triggers >1 TTS call."""
-    _set_channel_active()
+    _set_agent_active()
     _patch_stt(monkeypatch, "hello there")
 
     tts_calls: list[str] = []
@@ -252,7 +252,7 @@ async def test_channel_mode_streaming_with_idle_gap(monkeypatch: pytest.MonkeyPa
     ws = FakeWs()
     dev_reg.register("dev1", ws=ws)
 
-    cs = ChannelServer()
+    cs = AgentServer()
 
     # Intercept send_transcript: arrange to feed deltas asynchronously.
     async def feed_deltas() -> None:
@@ -345,7 +345,7 @@ async def _run_with_mode(monkeypatch, mode, reply_text, transcript="hello"):
     dev_reg.register("dev1", ws=object())
     ws = FakeWs()
     oc = FakeOpenClawClient([reply_text])
-    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, ChannelServer(), asyncio.Event())
+    await run_voice_turn("dev1", [b"\x00" * 100], ws, oc, AgentServer(), asyncio.Event())
     return next(m for m in ws.json_messages() if m.get("type") == "audio.end")
 
 
@@ -367,16 +367,16 @@ async def test_audio_end_empty_transcript_path(monkeypatch: pytest.MonkeyPatch) 
     _patch_stt(monkeypatch, "")
     _patch_tts(monkeypatch)
     ws = FakeWs()
-    await run_voice_turn("dev1", [b"\x00" * 100], ws, FakeOpenClawClient([]), ChannelServer(), asyncio.Event())
+    await run_voice_turn("dev1", [b"\x00" * 100], ws, FakeOpenClawClient([]), AgentServer(), asyncio.Event())
     end = next(m for m in ws.json_messages() if m.get("type") == "audio.end")
     assert end.get("follow_up") is False
 
 
 @pytest.mark.asyncio
-async def test_audio_end_no_active_channel(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_audio_end_no_active_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_stt(monkeypatch, "hello")
     ws = FakeWs()
-    await run_voice_turn("dev1", [b"\x00" * 100], ws, None, ChannelServer(), asyncio.Event())
+    await run_voice_turn("dev1", [b"\x00" * 100], ws, None, AgentServer(), asyncio.Event())
     end = next(m for m in ws.json_messages() if m.get("type") == "audio.end")
     assert end.get("follow_up") is False
 
@@ -388,7 +388,7 @@ async def test_run_text_turn_skips_stt(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWs()
     oc = FakeOpenClawClient(["Done."])
     dev_reg.register("dev1", ws=ws)
-    await run_text_turn("dev1", "turn off the lights", ws, oc, ChannelServer(), asyncio.Event())
+    await run_text_turn("dev1", "turn off the lights", ws, oc, AgentServer(), asyncio.Event())
     msgs = ws.json_messages()
     assert any(m.get("type") == "transcript" and m.get("text") == "turn off the lights" for m in msgs)
     assert any(m.get("type") == "audio.end" for m in msgs)

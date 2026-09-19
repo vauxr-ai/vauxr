@@ -1,4 +1,4 @@
-"""Phase 12: channel_registry — bcrypt-backed channels + virtual openclaw-direct."""
+"""Phase 12: agent_registry — bcrypt-backed agents + virtual openclaw-direct."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-import channel_registry as cr
+import agent_registry as cr
 import config as cfg_mod
 
 
@@ -27,16 +27,16 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_create_returns_token_and_stores_hash() -> None:
-    channel, token = await cr.create("Test Channel", "openclaw")
-    assert channel.name == "Test Channel"
-    assert channel.type == "openclaw"
-    assert channel.active is False
-    assert channel.id
-    assert channel.createdAt
-    # Public channel doesn't expose tokenHash.
-    assert not hasattr(channel, "tokenHash")
-    # Stored channel has it.
-    full = cr.get_by_id(channel.id)
+    agent, token = await cr.create("Test Agent", "openclaw")
+    assert agent.name == "Test Agent"
+    assert agent.type == "openclaw"
+    assert agent.active is False
+    assert agent.id
+    assert agent.createdAt
+    # Public agent doesn't expose tokenHash.
+    assert not hasattr(agent, "tokenHash")
+    # Stored agent has it.
+    full = cr.get_by_id(agent.id)
     assert full is not None
     assert full.tokenHash and full.tokenHash != token
 
@@ -44,15 +44,15 @@ async def test_create_returns_token_and_stores_hash() -> None:
 @pytest.mark.asyncio
 async def test_token_format() -> None:
     _, token = await cr.create("Test", "openclaw")
-    assert re.match(r"^vx_ch_[0-9a-f]{64}$", token)
+    assert re.match(r"^vx_ag_[0-9a-f]{64}$", token)
 
 
 @pytest.mark.asyncio
 async def test_list_omits_token_hash() -> None:
-    await cr.create("Channel A", "openclaw")
+    await cr.create("Agent A", "openclaw")
     listed = cr.get_all()
     assert len(listed) == 1
-    assert listed[0].name == "Channel A"
+    assert listed[0].name == "Agent A"
     assert not hasattr(listed[0], "tokenHash")
 
 
@@ -87,7 +87,7 @@ async def test_activate_deactivates_previous() -> None:
     assert cr.get_by_id(b.id).active is True  # type: ignore[union-attr]
 
 
-def test_activate_openclaw_direct_without_channels(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_activate_openclaw_direct_without_agents(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENCLAW_URL", "wss://test:18789")
     cfg_mod.reset_config()
     cr._reset_for_tests()
@@ -99,7 +99,7 @@ def test_activate_openclaw_direct_without_channels(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
-async def test_activating_channel_deactivates_openclaw_direct(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_activating_agent_deactivates_openclaw_direct(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENCLAW_URL", "wss://test:18789")
     cfg_mod.reset_config()
     cr._reset_for_tests()
@@ -107,7 +107,7 @@ async def test_activating_channel_deactivates_openclaw_direct(monkeypatch: pytes
     cr.activate("openclaw-direct")
     assert cr.get_active().id == "openclaw-direct"  # type: ignore[union-attr]
 
-    ch, _ = await cr.create("My Channel", "openclaw")
+    ch, _ = await cr.create("My Agent", "openclaw")
     cr.activate(ch.id)
     assert cr.get_active().id == ch.id  # type: ignore[union-attr]
     direct = cr.get_by_id("openclaw-direct")
@@ -138,14 +138,14 @@ def test_delete_builtin_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_rotate_token() -> None:
     ch, old = await cr.create("Rotate", "openclaw")
-    assert (await cr.validate_channel_token(old)) is not None
+    assert (await cr.validate_agent_token(old)) is not None
 
     new = await cr.rotate_token(ch.id)
-    assert new is not None and re.match(r"^vx_ch_[0-9a-f]{64}$", new)
+    assert new is not None and re.match(r"^vx_ag_[0-9a-f]{64}$", new)
     assert new != old
 
-    assert (await cr.validate_channel_token(new)) is not None
-    assert (await cr.validate_channel_token(old)) is None
+    assert (await cr.validate_agent_token(new)) is not None
+    assert (await cr.validate_agent_token(old)) is None
 
 
 @pytest.mark.asyncio
@@ -169,5 +169,5 @@ async def test_load_save_roundtrip() -> None:
     assert listed[0].name == "Persistent"
     assert listed[0].active is True
 
-    valid = await cr.validate_channel_token(token)
+    valid = await cr.validate_agent_token(token)
     assert valid is not None and valid.id == ch.id

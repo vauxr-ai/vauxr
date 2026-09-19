@@ -1,8 +1,8 @@
-"""Voice-turn pipeline — STT → LLM (direct or channel) → TTS → device audio.
+"""Voice-turn pipeline — STT → LLM (direct or agent) → TTS → device audio.
 
 Port of `src/pipeline.ts`. The two routing modes (openclaw-direct vs.
-channel plugin) keep the Node port's exact behavior: direct mode uses the
-final cumulative delta as the full reply; channel mode accumulates
+agent plugin) keep the Node port's exact behavior: direct mode uses the
+final cumulative delta as the full reply; agent mode accumulates
 incremental deltas through the idle segmenter and TTS queue.
 """
 
@@ -28,18 +28,18 @@ from wyoming_tts import synthesize
 
 if TYPE_CHECKING:
 
-    from channel_server import ChannelServer
+    from agent_server import AgentServer
     from openclaw_client import OpenClawClient
 
 log = logging.getLogger("vauxr.pipeline")
 
 _FOLLOW_UP_TAG = "[[follow_up]]"
 _FOLLOW_UP_RE = re.compile(r"\s*\[\[follow_up\]\]\s*")
-# Anti-hang backstop for awaiting the channel reply (WS turn-based path). NOT a
+# Anti-hang backstop for awaiting the agent reply (WS turn-based path). NOT a
 # latency budget — a slow local model (tens of seconds, even minutes) is fine
 # and must not be cut off. Matches the device's 5-min response backstop and the
-# realtime path; only fires if the channel/OpenClaw goes fully silent.
-_CHANNEL_RESPONSE_TIMEOUT_S = 300.0
+# realtime path; only fires if the agent/OpenClaw goes fully silent.
+_AGENT_RESPONSE_TIMEOUT_S = 300.0
 _ERROR_FALLBACK_TEXT = "Sorry, I couldn't reach the backend. Please try again later."
 
 
@@ -217,11 +217,11 @@ async def _route_via_openclaw_direct(
         await send_audio_end(result.follow_up)
 
 
-async def _route_via_channel(
+async def _route_via_agent(
     device_id: str,
     transcript_text: str,
     ws: Any,
-    channel_server: ChannelServer,
+    agent_server: AgentServer,
     abort: asyncio.Event,
     target_rate: int | None,
     *,
@@ -233,16 +233,16 @@ async def _route_via_channel(
         async def send_audio_end(follow_up: bool) -> None:
             await _send_audio_end(ws, follow_up)
 
-    sent = channel_server.send_transcript(device_id, transcript_text)
+    sent = agent_server.send_transcript(device_id, transcript_text)
     if not sent:
         await _send_json(
-            ws, {"type": "error", "code": "NO_CHANNEL", "message": "Active channel not connected"}
+            ws, {"type": "error", "code": "NO_AGENT", "message": "Active agent not connected"}
         )
         if not abort.is_set():
             await send_audio_end(False)
         return
 
-    log.info("Awaiting channel response for %s", device_id)
+    log.info("Awaiting agent response for %s", device_id)
     idle_pause_ms = get_config().streaming_tts.idle_pause_ms
     start_state = {"sent_start": False}
 
@@ -289,7 +289,7 @@ async def _route_via_channel(
         idle_pause_ms=idle_pause_ms, on_segment=on_segment_flush, on_end=on_segment_end
     )
 
-    # Channel listener — these are called from the channel server's reader.
+    # Agent listener — these are called from the agent server's reader.
     def on_delta(_run_id: str, text: str) -> None:
         nonlocal accumulated
         if response_done.done():
@@ -311,7 +311,7 @@ async def _route_via_channel(
         response_done.set_exception(RuntimeError(message))
 
     listener = {"on_delta": on_delta, "on_end": on_end, "on_error": on_error}
-    channel_server.add_response_listener(device_id, listener)
+    agent_server.add_response_listener(device_id, listener)
 
     # If abort fires, finish.
     abort_waiter = asyncio.create_task(abort.wait())
@@ -326,13 +326,13 @@ async def _route_via_channel(
 
     try:
         try:
-            full_reply = await asyncio.wait_for(response_done, timeout=_CHANNEL_RESPONSE_TIMEOUT_S)
+            full_reply = await asyncio.wait_for(response_done, timeout=_AGENT_RESPONSE_TIMEOUT_S)
         except TimeoutError:
             segmenter.abort()
             queue.close()
             await queue.done()
             abort_waiter.cancel()
-            channel_server.remove_response_listener(device_id, listener)
+            agent_server.remove_response_listener(device_id, listener)
             if abort.is_set():
                 return
             await _send_json(
@@ -340,7 +340,7 @@ async def _route_via_channel(
                 {
                     "type": "error",
                     "code": "BACKEND_ERROR",
-                    "message": f"Channel response timeout after {int(_CHANNEL_RESPONSE_TIMEOUT_S)}s",
+                    "message": f"Agent response timeout after {int(_AGENT_RESPONSE_TIMEOUT_S)}s",
                 },
             )
             await _synthesize_error_message(ws, device_id, abort, target_rate, selection)
@@ -350,7 +350,7 @@ async def _route_via_channel(
         except RuntimeError as err:
             await queue.done()
             abort_waiter.cancel()
-            channel_server.remove_response_listener(device_id, listener)
+            agent_server.remove_response_listener(device_id, listener)
             if abort.is_set():
                 return
             await _send_json(
@@ -362,7 +362,7 @@ async def _route_via_channel(
             return
 
         abort_waiter.cancel()
-        channel_server.remove_response_listener(device_id, listener)
+        agent_server.remove_response_listener(device_id, listener)
         await queue.done()
 
         if abort.is_set():
@@ -370,7 +370,7 @@ async def _route_via_channel(
 
         result = resolve_follow_up(full_reply, _follow_up_mode_for(device_id))
         log.info(
-            "Channel reply (%d chars, follow_up=%s): %s",
+            "Agent reply (%d chars, follow_up=%s): %s",
             len(result.reply_text),
             result.follow_up,
             result.reply_text[:200],
@@ -379,7 +379,7 @@ async def _route_via_channel(
         await send_audio_end(result.follow_up)
     finally:
         abort_waiter.cancel()
-        channel_server.remove_response_listener(device_id, listener)
+        agent_server.remove_response_listener(device_id, listener)
         segmenter.abort()
         queue.close()
         await queue.done()
@@ -390,13 +390,13 @@ async def run_voice_turn(
     audio_chunks: list[bytes],
     ws: Any,
     openclaw_client: OpenClawClient | None,
-    channel_server: ChannelServer,
+    agent_server: AgentServer,
     abort: asyncio.Event,
     target_rate: int | None = None,
     *,
     selection: Selection | None = None,
 ) -> None:
-    """Drive a full voice turn: STT, route to active channel, TTS, audio.end."""
+    """Drive a full voice turn: STT, route to active agent, TTS, audio.end."""
 
     if abort.is_set():
         return
@@ -418,7 +418,7 @@ async def run_voice_turn(
         return
 
     await run_text_turn(
-        device_id, transcript_text, ws, openclaw_client, channel_server, abort, target_rate,
+        device_id, transcript_text, ws, openclaw_client, agent_server, abort, target_rate,
         selection=selection,
     )
 
@@ -428,7 +428,7 @@ async def run_text_turn(
     transcript_text: str,
     ws: Any,
     openclaw_client: OpenClawClient | None,
-    channel_server: ChannelServer,
+    agent_server: AgentServer,
     abort: asyncio.Event,
     target_rate: int | None = None,
     *,
@@ -457,7 +457,7 @@ async def run_text_turn(
     if abort.is_set():
         return
 
-    active = channel_server.get_active_channel()
+    active = agent_server.get_active_agent()
     if active is not None and getattr(active, "type", None) == "openclaw-direct" and openclaw_client is not None:
         log.info("Routing via openclaw-direct for %s", device_id)
         await _route_via_openclaw_direct(
@@ -465,18 +465,18 @@ async def run_text_turn(
             selection=selection, send_audio_end=send_audio_end,
         )
     elif active is not None and getattr(active, "type", None) != "openclaw-direct":
-        log.info("Routing via channel %r for %s", getattr(active, "name", "?"), device_id)
-        channel_server.retain_media_turn(active.id, abort)
+        log.info("Routing via agent %r for %s", getattr(active, "name", "?"), device_id)
+        agent_server.retain_media_turn(active.id, abort)
         try:
-            await _route_via_channel(
-                device_id, transcript_text, ws, channel_server, abort, target_rate,
+            await _route_via_agent(
+                device_id, transcript_text, ws, agent_server, abort, target_rate,
                 selection=selection, send_audio_end=send_audio_end,
             )
         finally:
-            channel_server.release_media_turn(abort)
+            agent_server.release_media_turn(abort)
     else:
-        log.warning("No active channel or backend available — dropping turn")
+        log.warning("No active agent or backend available — dropping turn")
         await _send_json(
-            ws, {"type": "error", "code": "NO_CHANNEL", "message": "No active channel configured"}
+            ws, {"type": "error", "code": "NO_AGENT", "message": "No active agent configured"}
         )
         await send_audio_end(False)

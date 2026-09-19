@@ -21,14 +21,14 @@ from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import RawAudioTrack
 
 import auth_connections
-import channel_registry
+import agent_registry
 import device_registry
 import realtime_llm
 import realtime_session
 import realtime_wyoming
-from channel_server import ChannelServer, _Connection
+from agent_server import AgentServer, _Connection
 from lifecycle import Lifecycle
-from realtime_llm import ChannelLLMService, OutputDrainTap
+from realtime_llm import AgentLLMService, OutputDrainTap
 from realtime_transport import AudioConsumption
 from tests.test_integration import ORIGIN, ack_body, deliver, env, setup
 
@@ -55,7 +55,7 @@ async def test_raw_audio_future_requires_last_recv():
 @pytest.mark.parametrize("finish", ["revoke", "drain", "retry"])
 async def test_disconnected_media_authority(env, monkeypatch, response, finish):
     service, owner = env
-    server = ChannelServer()
+    server = AgentServer()
     manager = realtime_session.RealtimeManager()
     monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
     monkeypatch.setattr(realtime_session, "_BOT_IDLE_DEBOUNCE_S", 0)
@@ -76,19 +76,19 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
 
         async def __aiter__(self):
             yield SimpleNamespace(type=WSMsgType.TEXT, data=json.dumps({
-                "type": "channel.auth", "token": issued["credential"]}))
+                "type": "agent.auth", "token": issued["credential"]}))
             await disconnected.wait()
 
     socket = Socket()
     socket_task = asyncio.create_task(server.handle_connection(socket))
     await asyncio.wait_for(authenticated.wait(), 2)
-    a = server._connections[issued["channel_id"]]
+    a = server._connections[issued["agent_id"]]
     b_body, _, b_issued = deliver(env, 2)
     service.execute("ack", ack_body(b_body, b_issued))
     b = _Connection(SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock()))
     await server._handle_auth(b, b_issued["credential"])
-    channel_registry._set_active_for_tests(b.channel)  # fallback after A revoke
-    assert channel_registry.activate(a.channel.id)
+    agent_registry._set_active_for_tests(b.agent)  # fallback after A revoke
+    assert agent_registry.activate(a.agent.id)
     old = realtime_session.RealtimeSession("speaker", server)
     replacement = realtime_session.RealtimeSession("speaker", server)
     manager._sessions["speaker"] = old
@@ -128,8 +128,8 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
             old._on_bot_stopped_speaking()
             return result
 
-    llm = ChannelLLMService(device_id="speaker", channel_server=server,
-                            turn_complete_factory=old._channel_turn_complete_callback)
+    llm = AgentLLMService(device_id="speaker", agent_server=server,
+                            turn_complete_factory=old._agent_turn_complete_callback)
     original_push = llm.push_frame
 
     async def push(frame, *args):
@@ -166,12 +166,12 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
     try:
         await task.queue_frame(LLMContextFrame(LLMContext([{"role": "user", "content": "hello"}])))
         await asyncio.wait_for(ready.wait(), 2)
-        abort, = old._channel_media
+        abort, = old._agent_media
         authority = server._media_authorities[abort]
 
         async def dispatch(kind, **payload):
             await server._handle_authenticated_message(a, {
-                "type": "channel.response." + kind, "deviceId": "speaker", "runId": "a", **payload})
+                "type": "agent.response." + kind, "deviceId": "speaker", "runId": "a", **payload})
 
         if response != "empty":
             await dispatch("delta", text="Partial A speech. ")
@@ -181,7 +181,7 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
             await asyncio.wait_for(playing.wait(), 2)
         await dispatch("error" if "error" in response else "end", message="backend failed")
         await asyncio.wait_for(completed.wait(), 2)
-        # Real channel handler finally releases socket authority, never media.
+        # Real agent handler finally releases socket authority, never media.
         await socket.close()
         await asyncio.wait_for(socket_task, 2)
         assert a.authority not in auth_connections._connections
@@ -191,7 +191,7 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
             old._schedule_drain_timer()
             await old._drain_timer
             assert authority in auth_connections._connections
-            assert abort in old._channel_media
+            assert abort in old._agent_media
             assert not abort.is_set()
             assert len(old._pending_ends) == 1
             ws.send_str.assert_not_awaited()
@@ -200,7 +200,7 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
                 assert isinstance(future, asyncio.Future)
                 assert not future.done()
                 assert abort not in old._drained_media
-        assert channel_registry.activate(b.channel.id)
+        assert agent_registry.activate(b.agent.id)
         manager._sessions["speaker"] = replacement
         device_registry.set_state("speaker", "listening")
         states = []
@@ -212,8 +212,8 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
 
         monkeypatch.setattr(device_registry, "set_state", set_state)
         ws.send_str.reset_mock()
-        await replacement._channel_turn_complete_callback()
-        b_abort, = replacement._channel_media
+        await replacement._agent_turn_complete_callback()
+        b_abort, = replacement._agent_media
         b_listener = {"on_delta": lambda *args: None, "on_end": lambda *args: None,
                       "on_error": lambda *args: pytest.fail("B notified by A teardown")}
         server.add_response_listener("speaker", b_listener)
@@ -221,7 +221,7 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
             release_tts.set()
             release_output.set()
             async with asyncio.timeout(3):
-                while abort in old._channel_media:
+                while abort in old._agent_media:
                     await asyncio.sleep(0)
             assert not old._pending_ends
             ws.send_str.assert_not_awaited()
@@ -231,14 +231,14 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
             old._connection.disconnect.assert_not_awaited()
         else:
             Lifecycle(service.store, ORIGIN).execute("revoke", {
-                "operation_id": "d" * 32, "role": "integration", "subject": a.channel.id}, owner)
-            assert channel_registry.get_active().id == b.channel.id
+                "operation_id": "d" * 32, "role": "integration", "subject": a.agent.id}, owner)
+            assert agent_registry.get_active().id == b.agent.id
             if finish == "retry":
                 old._connection.disconnect.side_effect = [RuntimeError("teardown failed"), None]
                 with pytest.raises(RuntimeError, match="transport_teardown_unavailable"):
                     await auth_connections.disconnect_stale(service.store)
                 assert authority in auth_connections._connections
-                assert server._media_turns[abort] == a.channel.id
+                assert server._media_turns[abort] == a.agent.id
                 assert abort.is_set()
                 assert not b_abort.is_set()
                 assert not replacement.is_closed
@@ -253,7 +253,7 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
         await output_completions[0]()
         await old._send_audio_end(False)
         await old._notify_ended()
-        assert not old._channel_media
+        assert not old._agent_media
         assert not old._drained_media
         assert abort not in server._media_turns
         assert authority not in auth_connections._connections
@@ -261,7 +261,7 @@ async def test_disconnected_media_authority(env, monkeypatch, response, finish):
         assert device_registry.get("speaker").state == "listening"
         assert states == []
         assert not b_abort.is_set()
-        assert server._media_turns[b_abort] == b.channel.id
+        assert server._media_turns[b_abort] == b.agent.id
         assert server.get_response_listener("speaker") is b_listener
         assert manager._sessions["speaker"] is replacement
         assert not replacement.is_closed

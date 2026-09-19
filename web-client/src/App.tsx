@@ -1,3 +1,7 @@
+import { ABORT_MESSAGE } from "./hooks/voiceProtocol";
+import { ownerFetch } from "./auth/api";
+import { SpeechSegmenter } from "./hooks/speechSegmenter";
+import { useRealtime } from "./hooks/useRealtime";
 import OwnerGate from "./auth/OwnerGate";
 import AccessPanel from "./components/AccessPanel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,7 +12,7 @@ import ResizableSplit from "./components/ResizableSplit";
 import StatusBar from "./components/StatusBar";
 import EventLog from "./components/EventLog";
 import ConfigPanel from "./components/ConfigPanel";
-import ChannelsPanel from "./components/ChannelsPanel";
+import AgentsPanel from "./components/AgentsPanel";
 import DevicesPanel from "./components/DevicesPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -30,6 +34,16 @@ export default function App() {
 }
 
 function OwnerApp() {
+  const [connectionEpoch, setConnectionEpoch] = useState(0);
+  const [modeLoaded, setModeLoaded] = useState(false);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [modeError, setModeError] = useState("");
+  const modeRequest = useRef(0);
+  const segmenter = useRef(new SpeechSegmenter());
+  const acceptPlayback = useRef(false);
+  const awaitingReady = useRef(false);
+  const responseExpected = useRef(false);
+  const credential = useRef("");
   const [transcript, setTranscript] = useState("");
   const [talking, setTalking] = useState(false);
   const [followUpListening, setFollowUpListening] = useState(false);
@@ -42,6 +56,8 @@ function OwnerApp() {
 
   const [activeSection, setActiveSection] = useState<SectionId>("connection");
   const [talkMode, setTalkMode] = useState<TalkMode>("hold");
+  const talkModeRef = useRef(talkMode);
+  talkModeRef.current = talkMode;
   const [inputLevel, setInputLevel] = useState(0);
   const [outputVolume, setOutputVolumeState] = useState(0.85);
   const [outputMuted, setOutputMutedState] = useState(false);
@@ -78,12 +94,30 @@ function OwnerApp() {
   );
 
   const ws = useWebSocket(wsOpts);
+  const realtime = useRealtime(ws.sendJson);
+  Object.assign(wsOpts, { onControl: realtime.control });
   const audio = useAudio({
     onPcmChunk: useCallback(
       (pcm: Int16Array) => {
-        if (talkingRef.current) ws.sendAudioFrame(pcm);
+        if (!talkingRef.current || !captureReadyRef.current) return;
+        if (talkMode === "toggle") {
+          segmenter.current.push(pcm, () => {
+            acceptPlayback.current = false;
+            audio.stopPlayback();
+            ws.sendJson(ABORT_MESSAGE);
+            awaitingReady.current = true;
+            responseExpected.current = false;
+            ws.sendVoiceStart();
+            ws.setState("listening");
+          }, ws.sendAudioFrame, () => {
+            responseExpected.current = true;
+            ws.sendJson({ type: "voice.end" });
+            ws.setState("processing");
+            pendingLatencyStart.current = performance.now();
+          });
+        } else ws.sendAudioFrame(pcm);
       },
-      [ws],
+      [ws, talkMode],
     ),
     onInputLevel: useCallback((level: number) => {
       setInputLevel(level);
@@ -92,12 +126,16 @@ function OwnerApp() {
 
   useEffect(() => {
     const stop = () => {
+      responseExpected.current = false;
+      segmenter.current.reset();
+      acceptPlayback.current = false;
       captureGeneration.current++;
       captureReadyRef.current = false;
       talkingRef.current = false;
       setTalking(false);
       audio.stopCapture();
       audio.stopPlayback();
+      realtime.stop();
       ws.disconnect();
     };
     window.addEventListener("voice-stop", stop);
@@ -108,6 +146,10 @@ function OwnerApp() {
   }, []);
   useEffect(() => {
     if (ws.state === "disconnected") {
+      realtime.stop();
+      responseExpected.current = false;
+      segmenter.current.reset();
+      acceptPlayback.current = false;
       captureGeneration.current++;
       captureReadyRef.current = false;
       talkingRef.current = false;
@@ -118,7 +160,26 @@ function OwnerApp() {
   }, [ws.state]);
 
   // Patch the memoized opts to use live refs
+  wsOpts.onReady = () => {
+    awaitingReady.current = false;
+    if (captureReadyRef.current && talkingRef.current) ws.setState("listening");
+  };
+  wsOpts.onError = (_code: string, message: string) => {
+    // Failed Standard turns cannot retain capture or accept a late response.
+    // Realtime owns its own error teardown through onControl.
+    if (talkMode !== "realtime") stopVoice();
+    setModeError(message);
+  };
+  wsOpts.onAudioStart = (rate: number) => {
+    if (!responseExpected.current || awaitingReady.current) return;
+    // A response can only begin after our utterance has ended. Ignore late
+    // response frames while recording the replacement utterance.
+    if (captureReadyRef.current && (talkMode === "hold" || segmenter.current.active)) return;
+    acceptPlayback.current = true;
+    audio.setPlaybackRate(rate);
+  };
   wsOpts.onAudioFrame = (pcm: ArrayBuffer) => {
+    if (!acceptPlayback.current) return;
     if (pendingLatencyStart.current != null) {
       setLatencyMs(Math.round(performance.now() - pendingLatencyStart.current));
       pendingLatencyStart.current = null;
@@ -127,12 +188,18 @@ function OwnerApp() {
     audio.queuePlayback(pcm);
   };
   wsOpts.onAudioEnd = (followUp: boolean) => {
+    if (!acceptPlayback.current) return;
+    responseExpected.current = false;
+    acceptPlayback.current = false;
     audio.resetPlayback();
     setFollowUpListening(followUp);
   };
 
   const handleConnect = useCallback(
     (url: string, dev: string, token: string) => {
+      credential.current = token;
+      setModeLoaded(false);
+      setConnectionEpoch(epoch => epoch + 1);
       setWsUrl(url);
 
       setDeviceId(dev);
@@ -141,6 +208,79 @@ function OwnerApp() {
     [ws],
   );
 
+  const stopVoice = useCallback(() => {
+    captureGeneration.current++;
+    captureReadyRef.current = false;
+    talkingRef.current = false;
+    segmenter.current.reset();
+    acceptPlayback.current = false;
+    responseExpected.current = false;
+    setTalking(false);
+    setInputLevel(0);
+    pendingLatencyStart.current = null;
+    setFollowUpListening(false);
+    audio.stopCapture(); audio.stopPlayback(); realtime.stop();
+    ws.sendJson(ABORT_MESSAGE);
+    if (ws.state !== "disconnected") ws.setState("connected");
+  }, [audio, realtime, ws]);
+
+  const stopVoiceRef = useRef(stopVoice);
+  stopVoiceRef.current = stopVoice;
+
+  useEffect(() => {
+    if (!deviceId) return;
+    const controller = new AbortController();
+    const refresh = async (event?: Event) => {
+      const detail = (event as CustomEvent | undefined)?.detail;
+      if (event && (detail?.source === "talk" ||
+          (detail?.scope !== "global" && detail?.deviceId !== deviceId))) return;
+      const attempt = ++modeRequest.current;
+      if (!event) setModeBusy(true);
+      try {
+        const response = await ownerFetch(`/api/devices/${encodeURIComponent(deviceId)}/speech`, { signal: controller.signal });
+        if (!response.ok) throw new Error("Unable to load device voice mode");
+        const data = await response.json();
+        if (attempt !== modeRequest.current || controller.signal.aborted) return;
+        const current = talkModeRef.current;
+        const standard = event && current !== "realtime" ? current
+          : localStorage.getItem(`vauxr-talk-${deviceId}`) === "toggle" ? "toggle" : "hold";
+        const next = data.voice?.mode === "realtime" ? "realtime" : standard;
+        if (next !== current) {
+          stopVoiceRef.current();
+          setTalkMode(next);
+        }
+        setModeLoaded(true);
+        setModeError("");
+      } catch (error) {
+        if (!controller.signal.aborted) setModeError(String(error));
+      } finally { if (attempt === modeRequest.current && !controller.signal.aborted) setModeBusy(false); }
+    };
+    void refresh();
+    window.addEventListener("speech-settings-changed", refresh);
+    return () => { controller.abort(); modeRequest.current++; window.removeEventListener("speech-settings-changed", refresh); };
+  }, [deviceId, connectionEpoch]);
+
+  const changeMode = async (next: TalkMode) => {
+    if (modeBusy || next === talkMode) return;
+    stopVoice();
+    setModeBusy(true); setModeError("");
+    const attempt = ++modeRequest.current;
+    try {
+      const response = await ownerFetch(`/api/devices/${encodeURIComponent(deviceId)}/speech`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: next === "realtime" ? "realtime" : "standard" }),
+      });
+      if (!response.ok) throw new Error("Unable to save voice mode");
+      if (attempt !== modeRequest.current) return;
+      setTalkMode(next);
+      setModeLoaded(true);
+      if (next !== "realtime") localStorage.setItem(`vauxr-talk-${deviceId}`, next);
+      window.dispatchEvent(new CustomEvent("speech-settings-changed", { detail: { source: "talk", deviceId } }));
+    } catch (error) { if (attempt === modeRequest.current) setModeError(String(error)); }
+    finally { if (attempt === modeRequest.current) setModeBusy(false); }
+  };
+  useEffect(() => realtime.volume(outputVolume, outputMuted), [outputVolume, outputMuted, realtime.state]);
+
   const startActualTalking = useCallback(async () => {
     if (talkingRef.current) return;
     const attempt = ++captureGeneration.current;
@@ -148,6 +288,7 @@ function OwnerApp() {
     captureReadyRef.current = false;
     setTalking(true);
     setFollowUpListening(false);
+    setModeError("");
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error(
@@ -157,20 +298,30 @@ function OwnerApp() {
       await audio.startCapture();
       if (attempt !== captureGeneration.current) return;
       captureReadyRef.current = true;
-      ws.sendVoiceStart();
+      if (talkMode === "hold") {
+        acceptPlayback.current = false;
+        audio.stopPlayback();
+        awaitingReady.current = true;
+        responseExpected.current = false;
+        ws.sendVoiceStart();
+      }
       ws.setState("listening");
     } catch (err) {
       if (attempt !== captureGeneration.current) return;
       const msg = err instanceof Error ? err.message : String(err);
+      setModeError(`Microphone capture failed: ${msg}`);
       ws.addLog("sys", `Microphone capture failed: ${msg}`);
       audio.stopCapture();
+      responseExpected.current = false;
+      segmenter.current.reset();
+      acceptPlayback.current = false;
       captureGeneration.current++;
       captureReadyRef.current = false;
       talkingRef.current = false;
       setTalking(false);
       ws.setState("connected");
     }
-  }, [ws, audio]);
+  }, [ws, audio, talkMode]);
 
   const stopActualTalking = useCallback(() => {
     if (!talkingRef.current) return;
@@ -180,27 +331,36 @@ function OwnerApp() {
     audio.stopCapture();
     if (!captureReadyRef.current) return;
     captureReadyRef.current = false;
+    responseExpected.current = true;
     ws.sendJson({ type: "voice.end" });
     ws.setState("processing");
     pendingLatencyStart.current = performance.now();
   }, [ws, audio]);
 
   const handleTalkStart = useCallback(async () => {
+    if (talkMode === "realtime") {
+      if (realtime.state === "stopped") await realtime.start(deviceId, credential.current);
+      else realtime.stop();
+      return;
+    }
     if (talkMode === "toggle") {
-      if (talkingRef.current) stopActualTalking();
+      if (talkingRef.current) stopVoice();
       else await startActualTalking();
       return;
     }
     await startActualTalking();
-  }, [talkMode, startActualTalking, stopActualTalking]);
+  }, [talkMode, startActualTalking, stopVoice, realtime, deviceId]);
 
   const handleTalkEnd = useCallback(() => {
-    if (talkMode === "toggle") return;
+    if (talkMode !== "hold") return;
     stopActualTalking();
   }, [talkMode, stopActualTalking]);
 
   const handleInterrupt = useCallback(() => {
+    responseExpected.current = false;
+    acceptPlayback.current = false;
     audio.stopPlayback();
+    ws.sendJson(ABORT_MESSAGE);
     ws.setState("connected");
     ws.addLog("sys", "Playback interrupted");
   }, [audio, ws]);
@@ -280,12 +440,16 @@ function OwnerApp() {
           }
         />
       }
-      talk={
+      talk={<div className="h-full">
+        {(modeError || realtime.error) && <p role="alert">{modeError || realtime.error}</p>}
         <TalkPanel
+          modeBusy={modeBusy || (!!deviceId && !modeLoaded)}
+          transcript={talkMode === "realtime" ? realtime.transcript : transcript}
+          status={talkMode === "realtime" ? realtime.state === "listening" ? "Listening — speak naturally to interrupt." : realtime.state : undefined}
           connectionState={ws.state}
           isConnected={isConnected}
           micUnavailable={micUnavailable}
-          talking={talking}
+          talking={talkMode === "realtime" ? realtime.state !== "stopped" : talking}
           followUpListening={followUpListening}
           inputLevel={inputLevel}
           outputVolume={outputVolume}
@@ -296,10 +460,10 @@ function OwnerApp() {
           onTalkEnd={handleTalkEnd}
           onSetVolume={handleSetVolume}
           onToggleMute={handleToggleMute}
-          onSetTalkMode={setTalkMode}
+          onSetTalkMode={changeMode}
           onInterrupt={handleInterrupt}
         />
-      }
+      </div>}
     />
   );
 }
@@ -324,8 +488,8 @@ function renderSection(id: SectionId, props: SectionProps) {
           onDisconnect={props.onDisconnect}
         />
       );
-    case "channels":
-      return <ChannelsPanel />;
+    case "agents":
+      return <AgentsPanel />;
     case "devices":
       return (
         <DevicesPanel

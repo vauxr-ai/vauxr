@@ -14,7 +14,7 @@ from typing import Any
 from aiohttp import web
 
 import auth_connections
-import channel_registry
+import agent_registry
 from auth import authenticate, current, get_store
 from auth_policy import Operation, Principal, Role, allowed, audit_denial
 from config import get_config
@@ -100,7 +100,7 @@ async def _offer_handler(request: web.Request) -> web.Response:
         log.warning("realtime offer for %s rejected — no active realtime.start", device_id)
         return web.json_response({"error": "No active realtime session"}, status=403)
 
-    active = channel_registry.get_active()
+    active = agent_registry.get_active()
     dependencies = []
     if active is not None and active.type == "openclaw":
         dependencies = [Principal(r.role, r.subject, r.id, r.generation) for r in get_store().records
@@ -150,12 +150,12 @@ async def _offer_handler(request: web.Request) -> web.Response:
     return web.json_response(answer)
 
 
-def attach_realtime_routes(app: web.Application, channel_server: Any) -> None:
+def attach_realtime_routes(app: web.Application, agent_server: Any) -> None:
     """Apply the cipher patch, configure the manager, and add the offer route."""
     broaden_aiortc_dtls_ciphers()
     from realtime_session import get_manager
 
-    get_manager().configure(channel_server)
+    get_manager().configure(agent_server)
     cfg = get_config().realtime
     app.router.add_post(cfg.offer_path, _offer_handler)
     log.info(
