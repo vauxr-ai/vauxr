@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type Control = { type: string; code?: string; message?: string; role?: string; text?: string };
+type Control = { type: string; code?: string; message?: string; role?: string; text?: string; turn_id?: string; final?: boolean };
+type TranscriptTurn = { id: string; role: string; text: string; final: boolean };
 export function useRealtime(send: (message: Record<string, unknown>) => void) {
   const [state, setState] = useState<"stopped" | "connecting" | "listening">("stopped");
   const [error, setError] = useState("");
   const [transcript, setTranscript] = useState("");
+  const turns = useRef<TranscriptTurn[]>([]);
   const peer = useRef<RTCPeerConnection>();
   const mic = useRef<MediaStream>();
   const output = useRef<HTMLAudioElement>();
@@ -33,15 +35,34 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
     if (message.type === "realtime.ready" && peer.current) {
       clearTimeout(readyTimer.current); setState("listening");
     }
-    if (message.type === "realtime.transcript") {
-      setTranscript(old => (old + (message.role === "user" ? " You: " : " Agent: ") + message.text).slice(-6000));
+    if (message.type === "realtime.transcript" && peer.current &&
+        typeof message.text === "string" && typeof message.turn_id === "string" &&
+        (message.role === "user" || message.role === "assistant")) {
+      const existing = turns.current.find(turn => turn.id === message.turn_id);
+      if (existing?.final) return;
+      if (existing) {
+        existing.text = message.text.slice(-6000);
+        existing.final = message.final === true;
+      } else {
+        turns.current.push({ id: message.turn_id, role: message.role,
+          text: message.text.slice(-6000), final: message.final === true });
+      }
+      // Bound retained display history as well as the rendered string.
+      let length = 0;
+      turns.current = turns.current.reverse().filter(turn => {
+        const keep = length < 6000;
+        length += turn.text.length + 8;
+        return keep;
+      }).reverse();
+      setTranscript(turns.current.map(turn =>
+        (turn.role === "user" ? " You: " : " Agent: ") + turn.text).join("").slice(-6000));
     }
     if (message.type === "error" && peer.current) {
       setError(message.message || "Realtime connection failed"); stop();
     }
   }, [stop]);
   const start = useCallback(async (deviceId: string, token: string) => {
-    stop(); setError(""); setTranscript(""); setState("connecting");
+    stop(); turns.current = []; setError(""); setTranscript(""); setState("connecting");
     const attempt = generation.current;
     const pc = new RTCPeerConnection(); peer.current = pc;
     const audio = new Audio(); audio.autoplay = true; output.current = audio;

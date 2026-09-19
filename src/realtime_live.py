@@ -59,6 +59,8 @@ class LiveService(OpenAILiveLLMService):
         self.session_id = secrets.token_hex(16)
         self.fragments: list[dict[str, object]] = []
         self.sequence = 0
+        self.turn_sequence = 0
+        self.transcript_turns: dict[str, str] = {}
         self.flush_lock = asyncio.Lock()
         self.flush_task: asyncio.Task | None = None
         super().__init__(api_key=os.environ["OPENAI_API_KEY"],
@@ -76,10 +78,36 @@ class LiveService(OpenAILiveLLMService):
             self.fragments.append({"id": str(self.sequence), "role": evt.role, "text": evt.delta,
                                    "delivered": False})
             self.session._touch_activity()
-            await self.session._send_control({"type": "realtime.transcript", "role": evt.role, "text": evt.delta})
             if self.flush_task is None or self.flush_task.done():
                 self.flush_task = asyncio.create_task(self._flush_later())
         await super()._handle_evt_transcript_delta(evt)
+
+    async def _open_turn(self, role: str) -> None:
+        self.turn_sequence += 1
+        self.transcript_turns[role] = f"{self.session_id}-{self.turn_sequence}"
+        await super()._open_turn(role)
+
+    async def _append_turn(self, role: str, delta: str, accumulated: str, evt: Any) -> None:
+        # Keep Pipecat's audio/context frames streaming. Browser text is a
+        # replaceable snapshot, never another persistent history fragment.
+        await super()._append_turn(role, delta, accumulated, evt)
+        await self._send_transcript_turn(role, accumulated, final=False)
+
+    async def _end_turn(self, role: str) -> None:
+        # Pipecat 1.9.0 Live has timed deltas, not transcript completed events.
+        # Reuse its per-speaker quiet-gap boundary under the existing turn lock.
+        turn = self._user_turn if role == "user" else self._assistant_turn
+        text = turn.text if turn.open else ""
+        await super()._end_turn(role)
+        if text:
+            await self._send_transcript_turn(role, text, final=True)
+        self.transcript_turns.pop(role, None)
+
+    async def _send_transcript_turn(self, role: str, text: str, *, final: bool) -> None:
+        await self.session._send_control({
+            "type": "realtime.transcript", "role": role, "text": text,
+            "turn_id": self.transcript_turns[role], "final": final,
+        })
 
     async def _flush_later(self) -> None:
         await asyncio.sleep(0.5)

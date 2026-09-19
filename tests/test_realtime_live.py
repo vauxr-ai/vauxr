@@ -56,16 +56,27 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
                     assert event["session"]["delegation"]["type"] == "client"
                     await ws.send(json.dumps({"type": "session.started", "session": {"id": "local"}}))
                     for event in [
-                        {"type": "session.input_transcript.delta", "delta": "Turn on the lamp"},
-                        {"type": "session.output_transcript.delta", "delta": "I will check."},
+                        {"type": "session.input_transcript.delta", "delta": "Turn on"},
+                        {"type": "session.input_transcript.delta", "delta": " the lamp"},
+                        {"type": "session.output_transcript.delta", "delta": "I will"},
+                        {"type": "session.output_transcript.delta", "delta": " check."},
                         {"type": "session.output_audio.delta", "delta": base64.b64encode(bytes(960)).decode()},
                         {"type": "session.delegation.created", "delegation": {"id": "one", "target": "client"}},
                     ]:
                         await ws.send(json.dumps(event))
                     started.set()
                 elif event["type"] == "session.input_audio.append":
+                    # Live handles barge-in itself: overlapping speaker deltas,
+                    # no synthetic interruption that would cancel backend work.
+                    for update in [
+                        {"type": "session.output_transcript.delta", "delta": "Working on"},
+                        {"type": "session.input_transcript.delta", "delta": "Actually,"},
+                        {"type": "session.input_transcript.delta", "delta": " stop."},
+                    ]:
+                        await ws.send(json.dumps(update))
                     received_mic.set()
                 elif event["type"] == "session.commentary.append":
+                    await ws.send(json.dumps({"type": "session.output_transcript.delta", "delta": "Done"}))
                     spoken.set()
         finally:
             disconnected.set()
@@ -83,6 +94,25 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
             await worker.queue_frame(LLMRunFrame())
             await asyncio.wait_for(started.wait(), 5)
             await asyncio.wait_for(delegated.wait(), 5)
+            def transcripts():
+                return [call.args[0] for call in session._send_control.call_args_list
+                        if call.args[0]["type"] == "realtime.transcript"]
+
+            async def wait_for_controls(predicate):
+                async with asyncio.timeout(5):
+                    while not predicate(transcripts()):
+                        await asyncio.sleep(0.01)
+
+            # Audio is available before the quiet-gap final; snapshots replace
+            # one turn even when deltas split words, spaces or punctuation.
+            assert output_audio
+            assert not any(t["final"] for t in transcripts())
+            await wait_for_controls(lambda ts: len([t for t in ts if t["final"]]) == 2)
+            initial = transcripts()
+            assert [t["text"] for t in initial if t["final"]] == ["Turn on the lamp", "I will check."]
+            for role in ("user", "assistant"):
+                assert len({t["turn_id"] for t in initial if t["role"] == role}) == 1
+            assert len({t["turn_id"] for t in initial}) == 2
             # Input still flows while provider output and backend work overlap.
             await worker.queue_frame(InputAudioRawFrame(bytes(960), 24000, 1))
             await asyncio.wait_for(received_mic.wait(), 5)
@@ -90,8 +120,25 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
             assert operations[0][0] == "record"
             assert "Turn on the lamp" not in operations[1][1]["request"], "do not replay transcript as new prompt"
             assert not spoken.is_set()
+            await wait_for_controls(lambda ts: len([t for t in ts if t["final"]]) == 4)
+            finals = [t for t in transcripts() if t["final"]]
+            assert [t["text"] for t in finals] == [
+                "Turn on the lamp", "I will check.", "Working on", "Actually, stop.",
+            ]
+            assert len({t["turn_id"] for t in finals}) == 4
+            assert not spoken.is_set(), "barge-in must not cancel or replay the backend action"
             release.set()
             await asyncio.wait_for(spoken.wait(), 5)
+            await wait_for_controls(lambda ts: any(t["text"] == "Done" for t in ts))
+            # Stop mid-turn: record the last fragment once without waiting for a
+            # fabricated provider final or recording cumulative UI snapshots.
+            await llm.finish_transcript()
+            recorded = [f for op, payload in operations if op == "record" for f in payload["fragments"]]
+            assert [f["text"] for f in recorded] == [
+                "Turn on", " the lamp", "I will", " check.", "Working on", "Actually,", " stop.", "Done",
+            ]
+            assert len({f["id"] for f in recorded}) == len(recorded)
+            assert not any(t["final"] and t["text"] == "Done" for t in transcripts())
             assert len([op for op, _ in operations if op == "consult"]) == 1
             assert any(not f["delivered"] for op, payload in operations if op == "record" for f in payload["fragments"] if f["role"] == "assistant")
         finally:
