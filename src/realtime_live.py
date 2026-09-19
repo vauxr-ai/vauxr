@@ -4,15 +4,18 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
+import time
 from typing import Any
 
 from pipecat.bus import BusJobRequestMessage
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, LLMRunFrame, SpeechOutputAudioRawFrame
 from pipecat.pipeline.job_decorator import job
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.frame_processor import FrameDirection
+from pipecat.services.openai.live import events as live_events
 from pipecat.services.openai.live.llm import ClientDelegation, OpenAILiveLLMService
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -20,8 +23,9 @@ from pipecat.workers.base_worker import BaseWorker
 from pipecat.workers.runner import WorkerRunner
 
 import agent_registry
-from speech import get_store
+from realtime_audio_diagnostics import LiveAudioDiagnostics
 from realtime_transcript import TranscriptRelay
+from speech import get_store
 
 LIVE_INSTRUCTIONS = (
     "Handle casual voice conversation naturally. Consult the backend for personal memory, "
@@ -67,9 +71,45 @@ class LiveService(OpenAILiveLLMService):
         self.flush_lock = asyncio.Lock()
         self.flush_task: asyncio.Task | None = None
         self.transcript_relay = TranscriptRelay(lambda message: session._send_control(message), self._transcript_failed)
+        self.audio_diagnostics = (LiveAudioDiagnostics(self.transcript_relay)
+                                  if os.environ.get("REALTIME_AUDIO_DIAGNOSTICS") == "1" else None)
         super().__init__(api_key=os.environ["OPENAI_API_KEY"],
                          settings=self.Settings(model=settings["realtime_model"], voice=settings["realtime_voice"]),
                          delegation=ClientDelegation(backend=BackendWorker(self), timeout_secs=300))
+
+    async def _handle_server_event(self, evt: live_events.ServerEvent) -> None:
+        diagnostic = self.audio_diagnostics
+        if diagnostic is None or not diagnostic.active:
+            await super()._handle_server_event(evt)
+            return
+        diagnostic.event(evt.type)
+        if isinstance(evt, live_events.ResponseEventEnvelope):
+            diagnostic.event(evt.inner_type, nested=True)
+        diagnostic.handler_started = time.monotonic()
+        try:
+            await super()._handle_server_event(evt)
+        except Exception:
+            diagnostic.count("provider_handler_error")
+            raise
+        finally:
+            diagnostic.handler_max_ms = max(diagnostic.handler_max_ms,
+                (time.monotonic() - diagnostic.handler_started) * 1000)
+            diagnostic.handler_started = None
+
+    async def send_client_event(self, event: live_events.ClientEvent) -> None:
+        if self.audio_diagnostics:
+            self.audio_diagnostics.event(event.type, outgoing=True)
+        await super().send_client_event(event)
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        if self.audio_diagnostics and isinstance(frame, InputAudioRawFrame):
+            self.audio_diagnostics.pcm("mic", frame.audio, frame.sample_rate)
+        await super().process_frame(frame, direction)
+
+    async def push_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+        if self.audio_diagnostics and isinstance(frame, SpeechOutputAudioRawFrame):
+            self.audio_diagnostics.pcm("provider", frame.audio, frame.sample_rate)
+        await super().push_frame(frame, direction)
 
     async def request(self, operation: str, payload: dict | None = None, *, timeout: float = 30) -> dict:
         return await self.session._agent_server.realtime_request(
@@ -123,6 +163,8 @@ class LiveService(OpenAILiveLLMService):
 
     async def cleanup(self) -> None:
         await self.transcript_relay.close()
+        if self.audio_diagnostics:
+            await self.audio_diagnostics.close()
         await super().cleanup()
 
     async def _flush_later(self) -> None:
@@ -152,6 +194,9 @@ class LiveService(OpenAILiveLLMService):
                 "code": "REALTIME_HISTORY_FAILED", "message": "Some voice history could not be saved to the backend."})
         finally:
             await self.transcript_relay.close(drain=True)
+            if self.audio_diagnostics:
+                self.audio_diagnostics.count("application_finish")
+                await self.audio_diagnostics.close()
 
     async def release(self) -> None:
         """Release the plugin's transient connection scope without touching history."""
@@ -194,6 +239,8 @@ async def start_live(session: Any, connection: Any) -> None:
     user, assistant = LLMContextAggregatorPair(context)
     transport = SmallWebRTCTransport(webrtc_connection=connection,
         params=TransportParams(audio_in_enabled=True, audio_out_enabled=True))
+    if llm.audio_diagnostics:
+        llm.audio_diagnostics.bind_output(transport.output())
     session._context = context
     session._task = PipelineWorker(Pipeline([transport.input(), user, llm, transport.output(), assistant]),
         params=PipelineParams(audio_in_sample_rate=24000, audio_out_sample_rate=24000))
@@ -201,6 +248,8 @@ async def start_live(session: Any, connection: Any) -> None:
 
     @transport.event_handler("on_client_connected")
     async def connected(_transport: Any, _connection: Any) -> None:
+        if llm.audio_diagnostics:
+            llm.audio_diagnostics.bind_track(transport.output()._client._audio_output_track)
         session._pipeline_ready.set()
         await session._task.queue_frame(LLMRunFrame())
 
@@ -229,3 +278,5 @@ async def start_live(session: Any, connection: Any) -> None:
 
     session._runner_task = asyncio.create_task(run())
     session._backstop_task = asyncio.create_task(session._safety_backstop())
+    if llm.audio_diagnostics:
+        llm.audio_diagnostics.start()

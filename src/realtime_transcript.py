@@ -26,6 +26,8 @@ class TranscriptRelay:
         self.coalesced = 0
         self.failures = 0
         self.max_send_ms = 0.0
+        self.last_send_ms = 0.0
+        self._window_max_send_ms = 0.0
 
     def enqueue(self, role: str, text: str, turn_id: str, final: bool) -> None:
         if self._closed:
@@ -66,16 +68,22 @@ class TranscriptRelay:
                     self._failed()
                     return
                 self.sent += 1
-            except Exception:
+            except Exception:  # noqa: BLE001 - Fail closed without logging transport payloads.
                 self._failed()
                 return
             finally:
-                self.max_send_ms = max(self.max_send_ms, (time.monotonic() - self.started_at) * 1000)
+                self.last_send_ms = (time.monotonic() - self.started_at) * 1000
+                self.max_send_ms = max(self.max_send_ms, self.last_send_ms)
+                self._window_max_send_ms = max(self._window_max_send_ms, self.last_send_ms)
                 self.started_at = None
 
-    def metrics(self) -> dict[str, int | float]:
+    def metrics(self, *, reset_window: bool = False) -> dict[str, int | float]:
+        window_max = self._window_max_send_ms
+        if reset_window:
+            self._window_max_send_ms = 0.0
         return {"pending": len(self._pending), "sent": self.sent, "coalesced": self.coalesced,
                 "failures": self.failures, "max_send_ms": round(self.max_send_ms, 3),
+                "last_send_ms": round(self.last_send_ms, 3), "window_max_send_ms": round(window_max, 3),
                 "inflight_ms": round((time.monotonic() - self.started_at) * 1000, 3)
                 if self.started_at is not None else 0}
 

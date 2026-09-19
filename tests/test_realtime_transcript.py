@@ -34,6 +34,9 @@ async def test_slow_send_preserves_order_and_only_coalesces_adjacent_snapshots()
                     ("u1", "user final", True), ("a1", "assistant final", True)]
     failed.assert_not_called()
     assert relay._task.done()
+    assert relay.metrics(reset_window=True)["window_max_send_ms"] > 0
+    assert relay.metrics()["window_max_send_ms"] == 0
+    assert relay.metrics()["max_send_ms"] > 0
 
 
 async def test_queue_and_text_are_bounded_and_overflow_fails_once() -> None:
