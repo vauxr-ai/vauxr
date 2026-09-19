@@ -38,7 +38,7 @@ class BackendWorker(BaseWorker):
 
     @job(name="run", sequential=True)
     async def consult(self, message: BusJobRequestMessage) -> None:
-        await self.live.flush_transcript()
+        await self.live.flush_transcript(wait_for_user=True)
         request = "Consult the latest outstanding request in this realtime conversation."
         result = await self.live.request("consult", {"request": request}, timeout=300)
         text = str(result.get("text", ""))
@@ -58,9 +58,11 @@ class LiveService(OpenAILiveLLMService):
         self.agent_id = agent_id
         self.session_id = secrets.token_hex(16)
         self.fragments: list[dict[str, object]] = []
-        self.sequence = 0
         self.turn_sequence = 0
         self.transcript_turns: dict[str, str] = {}
+        self.user_turn_done = asyncio.Event()
+        self.user_turn_done.set()
+        self.finishing = False
         self.flush_lock = asyncio.Lock()
         self.flush_task: asyncio.Task | None = None
         super().__init__(api_key=os.environ["OPENAI_API_KEY"],
@@ -73,16 +75,15 @@ class LiveService(OpenAILiveLLMService):
         )
 
     async def _handle_evt_transcript_delta(self, evt: Any) -> None:
+        if self.finishing:
+            return
         if evt.delta:
-            self.sequence += 1
-            self.fragments.append({"id": str(self.sequence), "role": evt.role, "text": evt.delta,
-                                   "delivered": False})
             self.session._touch_activity()
-            if self.flush_task is None or self.flush_task.done():
-                self.flush_task = asyncio.create_task(self._flush_later())
         await super()._handle_evt_transcript_delta(evt)
 
     async def _open_turn(self, role: str) -> None:
+        if role == "user":
+            self.user_turn_done.clear()
         self.turn_sequence += 1
         self.transcript_turns[role] = f"{self.session_id}-{self.turn_sequence}"
         await super()._open_turn(role)
@@ -100,8 +101,16 @@ class LiveService(OpenAILiveLLMService):
         text = turn.text if turn.open else ""
         await super()._end_turn(role)
         if text:
+            # The SDK transcript writer appends immutable, idempotent messages.
+            # Only a closed turn is a record; UI snapshots/deltas are not records.
+            self.fragments.append({"id": self.transcript_turns[role], "role": role,
+                                   "text": text, "delivered": False})
+            if not self.finishing and (self.flush_task is None or self.flush_task.done()):
+                self.flush_task = asyncio.create_task(self._flush_later())
             await self._send_transcript_turn(role, text, final=True)
         self.transcript_turns.pop(role, None)
+        if role == "user":
+            self.user_turn_done.set()
 
     async def _send_transcript_turn(self, role: str, text: str, *, final: bool) -> None:
         await self.session._send_control({
@@ -119,8 +128,15 @@ class LiveService(OpenAILiveLLMService):
             asyncio.create_task(self.session.close())
 
     async def finish_transcript(self) -> None:
+        self.finishing = True
+
+        async def finish() -> None:
+            # Seal partial output once, before the provider/pipeline is cancelled.
+            await self._close_open_turns()
+            await self.flush_transcript()
+
         try:
-            await asyncio.wait_for(self.flush_transcript(), timeout=1.5)
+            await asyncio.wait_for(finish(), timeout=1.5)
         except (Exception, asyncio.CancelledError):
             # A revoked/offline backend cannot acknowledge history. This must
             # not hold revoked media authority alive or prevent provider close.
@@ -137,7 +153,12 @@ class LiveService(OpenAILiveLLMService):
             # still finish; a later bootstrap creates a fresh transient scope.
             pass
 
-    async def flush_transcript(self) -> None:
+    async def flush_transcript(self, *, wait_for_user: bool = False) -> None:
+        if wait_for_user:
+            # Delegation may precede Pipecat's quiet-gap final. Do not dispatch
+            # without the request in history, or manufacture a mid-sentence turn.
+            # This worker wait does not block provider audio or transcript frames.
+            await self.user_turn_done.wait()
         async with self.flush_lock:
             while self.fragments:
                 batch = self.fragments[:64]

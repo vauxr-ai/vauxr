@@ -31,6 +31,8 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
         assert (agent, device) == ("selected", "browser")
         operations.append((operation, payload))
         if operation == "consult":
+            records = [f for op, p in operations if op == "record" for f in p["fragments"]]
+            assert records[0]["text"] == "Turn on the lamp"
             delegated.set()
             await release.wait()
             return {"text": "The backend action completed once."}
@@ -56,10 +58,12 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
                     assert event["session"]["delegation"]["type"] == "client"
                     await ws.send(json.dumps({"type": "session.started", "session": {"id": "local"}}))
                     for event in [
-                        {"type": "session.input_transcript.delta", "delta": "Turn on"},
+                        {"type": "session.input_transcript.delta", "delta": "Tu"},
+                        {"type": "session.input_transcript.delta", "delta": "rn on"},
                         {"type": "session.input_transcript.delta", "delta": " the lamp"},
                         {"type": "session.output_transcript.delta", "delta": "I will"},
-                        {"type": "session.output_transcript.delta", "delta": " check."},
+                        {"type": "session.output_transcript.delta", "delta": " check"},
+                        {"type": "session.output_transcript.delta", "delta": "."},
                         {"type": "session.output_audio.delta", "delta": base64.b64encode(bytes(960)).decode()},
                         {"type": "session.delegation.created", "delegation": {"id": "one", "target": "client"}},
                     ]:
@@ -93,7 +97,6 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
         try:
             await worker.queue_frame(LLMRunFrame())
             await asyncio.wait_for(started.wait(), 5)
-            await asyncio.wait_for(delegated.wait(), 5)
             def transcripts():
                 return [call.args[0] for call in session._send_control.call_args_list
                         if call.args[0]["type"] == "realtime.transcript"]
@@ -105,9 +108,13 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
 
             # Audio is available before the quiet-gap final; snapshots replace
             # one turn even when deltas split words, spaces or punctuation.
-            assert output_audio
+            async with asyncio.timeout(5):
+                while not output_audio:
+                    await asyncio.sleep(0.01)
             assert not any(t["final"] for t in transcripts())
+            assert operations == [], "neither record nor consultation waits may block audio"
             await wait_for_controls(lambda ts: len([t for t in ts if t["final"]]) == 2)
+            await asyncio.wait_for(delegated.wait(), 5)
             initial = transcripts()
             assert [t["text"] for t in initial if t["final"]] == ["Turn on the lamp", "I will check."]
             for role in ("user", "assistant"):
@@ -118,7 +125,8 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
             await asyncio.wait_for(received_mic.wait(), 5)
             assert output_audio
             assert operations[0][0] == "record"
-            assert "Turn on the lamp" not in operations[1][1]["request"], "do not replay transcript as new prompt"
+            consultation = next(payload for op, payload in operations if op == "consult")
+            assert "Turn on the lamp" not in consultation["request"], "do not replay transcript as new prompt"
             assert not spoken.is_set()
             await wait_for_controls(lambda ts: len([t for t in ts if t["final"]]) == 4)
             finals = [t for t in transcripts() if t["final"]]
@@ -130,15 +138,18 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
             release.set()
             await asyncio.wait_for(spoken.wait(), 5)
             await wait_for_controls(lambda ts: any(t["text"] == "Done" for t in ts))
-            # Stop mid-turn: record the last fragment once without waiting for a
-            # fabricated provider final or recording cumulative UI snapshots.
+            # Stop mid-turn: seal the partial speaker turn once without waiting
+            # for a provider final or recording cumulative UI snapshots.
             await llm.finish_transcript()
             recorded = [f for op, payload in operations if op == "record" for f in payload["fragments"]]
             assert [f["text"] for f in recorded] == [
-                "Turn on", " the lamp", "I will", " check.", "Working on", "Actually,", " stop.", "Done",
+                "Turn on the lamp", "I will check.", "Working on", "Actually, stop.", "Done",
             ]
             assert len({f["id"] for f in recorded}) == len(recorded)
-            assert not any(t["final"] and t["text"] == "Done" for t in transcripts())
+            assert [f["id"] for f in recorded] == [t["turn_id"] for t in transcripts() if t["final"]]
+            assert sum(t["final"] and t["text"] == "Done" for t in transcripts()) == 1
+            await llm.finish_transcript()
+            assert len([f for op, p in operations if op == "record" for f in p["fragments"]]) == 5
             assert len([op for op, _ in operations if op == "consult"]) == 1
             assert any(not f["delivered"] for op, payload in operations if op == "record" for f in payload["fragments"] if f["role"] == "assistant")
         finally:
@@ -149,3 +160,39 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
             await asyncio.wait_for(running, 5)
             await asyncio.wait_for(disconnected.wait(), 5)
         assert llm._websocket is None
+
+
+async def test_record_retry_preserves_turn_ids_and_serializes_flushes(monkeypatch):
+    assert version("pipecat-ai") == "1.9.0"
+    monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
+    written, calls = {}, []
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def request(agent, device, session, operation, payload, timeout):
+        assert operation == "record"
+        calls.append(payload["fragments"])
+        for turn in payload["fragments"]:
+            written.setdefault(turn["id"], turn["text"])
+        if len(calls) == 1:
+            raise ConnectionError("record committed but acknowledgement lost")
+        entered.set()
+        await release.wait()
+        return {"recorded": len(payload["fragments"])}
+
+    session = SimpleNamespace(_agent_server=SimpleNamespace(realtime_request=request), device_id="browser")
+    llm = LiveService(session, "selected", {"realtime_model": "gpt-live-1", "realtime_voice": "cedar"})
+    first = {"id": "user-turn", "role": "user", "text": "Turn on the lamp", "delivered": False}
+    llm.fragments.append(first)
+    with pytest.raises(ConnectionError):
+        await llm.flush_transcript()
+    assert llm.fragments == [first]
+    retry = asyncio.create_task(llm.flush_transcript())
+    await asyncio.wait_for(entered.wait(), 1)
+    llm.fragments.append({"id": "partial-turn", "role": "assistant", "text": "Working on", "delivered": False})
+    concurrent = asyncio.create_task(llm.flush_transcript())
+    release.set()
+    await asyncio.gather(retry, concurrent)
+    assert calls[0] == calls[1] == [first]
+    assert len(calls) == 3
+    assert written == {"user-turn": "Turn on the lamp", "partial-turn": "Working on"}
+    assert llm.fragments == []
