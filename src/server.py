@@ -278,7 +278,7 @@ async def _voice_start(
         ctx.state = ConnectionState.IDLE
         return
     ctx.state = ConnectionState.LISTENING
-    registry.register(device_id, ws=ws, name=msg.get("name") or device_id)
+    registry.register(device_id, ws=ws, name=msg.get("name"))
     rate = registry.apply_output_sample_rate(device_id, msg)
     if rate is not None:
         ctx.output_sample_rate = rate
@@ -363,14 +363,17 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
             )
         except Exception:  # noqa: BLE001
             log.error("Pipeline error")
-            await send_json(
-                ws, {"type": "error", "code": "PIPELINE_ERROR", "message": "Pipeline error"}
-            )
+            if not abort.is_set():
+                await send_json(
+                    ws, {"type": "error", "code": "PIPELINE_ERROR", "message": "Pipeline error"}
+                )
         finally:
-            ctx.state = ConnectionState.IDLE
-            registry.set_state(device_id, "idle")
+            # Only the turn that still owns this connection may clear it.
+            # An aborted turn can finish after a replacement has started.
             e = registry.get(device_id)
-            if e is not None:
+            if e is entry and e is not None and e.abort_event is abort:
+                ctx.state = ConnectionState.IDLE
+                registry.set_state(device_id, "idle")
                 e.abort_event = None
 
     asyncio.create_task(_run())
@@ -415,7 +418,7 @@ async def _realtime_start(
     ctx.device_id = device_id
     ctx.realtime = True
     ctx.realtime_media = False
-    registry.register(device_id, ws=ws, name=msg.get("name") or device_id)
+    registry.register(device_id, ws=ws, name=msg.get("name"))
     rate = registry.apply_output_sample_rate(device_id, msg)
     if rate is not None:
         ctx.output_sample_rate = rate

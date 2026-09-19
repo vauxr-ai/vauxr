@@ -197,3 +197,71 @@ async def test_device_button_ignores_spoofed_device_id(
         err = await _recv_json(ws)
         assert err["code"] in {"UNAUTHORIZED", "FORBIDDEN"}
     assert called == []
+
+
+@pytest.mark.parametrize("replacement_ended", [False, True])
+@pytest.mark.parametrize("old_fails", [False, True])
+async def test_aborted_turn_finally_cannot_clear_replacement(
+    monkeypatch: pytest.MonkeyPatch, replacement_ended: bool, old_fails: bool,
+) -> None:
+    import asyncio
+    from unittest.mock import AsyncMock
+    import server
+    import device_registry as registry
+
+    release = asyncio.Event()
+    started = asyncio.Event()
+    finished = asyncio.Event()
+    calls = 0
+
+    async def run(*args: object, **kwargs: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            await release.wait()
+            finished.set()
+            if old_fails:
+                raise RuntimeError("Late failure from aborted pipeline")
+        else:
+            await asyncio.Event().wait()
+
+    tasks: list[asyncio.Task[None]] = []
+    create_task = asyncio.create_task
+    monkeypatch.setattr(
+        server.asyncio, "create_task", lambda coro: tasks.append(create_task(coro)) or tasks[-1],
+    )
+    monkeypatch.setattr(server, "run_voice_turn", run)
+    monkeypatch.setattr(server, "resolve", lambda device_id: None)
+    ws = AsyncMock()
+    ws.closed = False
+    ctx = server.ConnectionCtx(device_id="dev1")
+    state = server.AppState()
+    registry.register("dev1", ws, name="Stored browser name")
+    try:
+        await server._voice_start(state, ws, ctx, {})
+        await server._voice_end(state, ws, ctx)
+        await started.wait()
+        await server._voice_start(state, ws, ctx, {})
+        assert registry.get("dev1").name == "Stored browser name"
+        if replacement_ended:
+            await server._voice_end(state, ws, ctx)
+        replacement = registry.get("dev1").abort_event
+        release.set()
+        await finished.wait()
+        await tasks[0]
+        expected = server.ConnectionState.PROCESSING if replacement_ended else server.ConnectionState.LISTENING
+        assert ctx.state == expected
+        assert registry.get("dev1").state == ("processing" if replacement_ended else "listening")
+        assert registry.get("dev1").abort_event is replacement
+        messages = [json.loads(call.args[0]) for call in ws.send_str.call_args_list]
+        assert messages == [{"type": "ready"}, {"type": "ready"}]
+        if replacement_ended:
+            assert replacement is not None and not replacement.is_set()
+            server._voice_abort(ctx)
+            assert replacement.is_set()
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        registry.unregister("dev1")
