@@ -2,8 +2,7 @@
 // Local WS response stub avoids any speech inference or paid provider.
 import { test, expect, login } from "./auth-fixture";
 
-test("Talk segments real worklet PCM, barges in, persists modes and keeps button geometry", async ({ page, server }) => {
-  test.setTimeout(60000);
+test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     const state = { gain: null as GainNode | null, tracks: [] as MediaStreamTrack[], contexts: [] as AudioContext[], all: [] as AudioContext[] };
     const Original = window.AudioContext;
@@ -22,6 +21,10 @@ test("Talk segments real worklet PCM, barges in, persists modes and keeps button
       return destination.stream;
     };
   });
+});
+
+test("Talk segments real worklet PCM, barges in, persists modes and keeps button geometry", async ({ page, server }) => {
+  test.setTimeout(60000);
   const messages: string[] = [];
   let frames = 0;
   let nonzeroPcm = false;
@@ -66,7 +69,7 @@ test("Talk segments real worklet PCM, barges in, persists modes and keeps button
   const playbackIndex = await page.evaluate(() => (window as any).voiceTest.all.length - 1);
   await tone(0.2);
   await expect.poll(() => messages.filter(x => x === "voice.start").length).toBe(2);
-  expect(messages.slice(-2)).toEqual(["voice.abort", "voice.start"]);
+  expect(messages.slice(-2)).toEqual(["abort", "voice.start"]);
   await expect.poll(() => page.evaluate(i => (window as any).voiceTest.all[i].state, playbackIndex)).toBe("closed");
   expect(await page.evaluate(() => (window as any).voiceTest.tracks[0].readyState)).toBe("live");
   await tone(0);
@@ -121,4 +124,52 @@ test("Talk segments real worklet PCM, barges in, persists modes and keeps button
   await page.getByRole("button", { name: "Connection", exact: true }).click();
   await page.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).voiceTest.tracks[0].readyState)).toBe("ended");
+});
+
+
+test("Standard failures release real capture and stale response messages cannot restart playback", async ({ page, server }) => {
+  let socket: any;
+  const messages: string[] = [];
+  await page.routeWebSocket(/\/ws$/, ws => {
+    socket = ws;
+    ws.onMessage(message => {
+      if (typeof message !== "string") return;
+      const msg = JSON.parse(message); messages.push(msg.type);
+      if (msg.type === "hello") ws.send(JSON.stringify({ type: "hello" }));
+      if (msg.type === "voice.start") ws.send(JSON.stringify({ type: "ready" }));
+    });
+  });
+  await login(page, server);
+  await page.getByRole("button", { name: "Connect browser voice", exact: true }).click();
+  const talk = page.getByRole("complementary", { name: "Talk panel" });
+  await expect(talk.getByRole("radio", { name: "Standard hands-free" })).toBeEnabled();
+  await talk.getByRole("radio", { name: "Standard hands-free" }).click();
+  const start = talk.getByRole("button", { name: "Start listening", exact: true });
+  const tone = (value: number) => page.evaluate(v => { (window as any).voiceTest.gain.gain.value = v; }, value);
+  const response = () => {
+    socket.send(JSON.stringify({ type: "audio.start", sample_rate: 16000 }));
+    const pcm = Buffer.alloc(32003); pcm[0] = 2; socket.send(pcm);
+    socket.send(JSON.stringify({ type: "audio.end", follow_up: true }));
+  };
+  for (const [index, code] of ["SPEECH_UNAVAILABLE", "PIPELINE_ERROR"].entries()) {
+    await start.click();
+    await expect.poll(() => page.evaluate(() => (window as any).voiceTest.tracks.length)).toBe(index + 1);
+    await tone(0.2);
+    await expect.poll(() => messages.filter(m => m === "voice.start").length).toBe(index + 1);
+    if (code === "PIPELINE_ERROR") {
+      await tone(0);
+      await expect.poll(() => messages.includes("voice.end")).toBe(true);
+    }
+    socket.send(JSON.stringify({ type: "error", code, message: "Synthetic speech boundary failure" }));
+    await expect(start).toBeEnabled();
+    await expect.poll(() => page.evaluate(i => (window as any).voiceTest.tracks[i].readyState, index)).toBe("ended");
+    await expect.poll(() => messages.at(-1)).toBe("abort");
+    const contexts = await page.evaluate(() => (window as any).voiceTest.all.length);
+    response();
+    // A subsequent error is an ordered marker that the stale messages were handled.
+    socket.send(JSON.stringify({ type: "error", code, message: "After stale response" }));
+    await expect(page.getByRole("alert")).toHaveText("After stale response");
+    expect(await page.evaluate(() => (window as any).voiceTest.all.length)).toBe(contexts);
+    await expect(start).toBeEnabled();
+  }
 });

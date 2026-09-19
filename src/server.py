@@ -327,6 +327,33 @@ async def _realtime_or_voice_end(
     )
 
 
+@dataclass
+class _VoiceTurnOutput:
+    """Fence delayed pipeline output at the socket boundary after cancellation.
+
+    Provider callbacks can finish after abort, including scheduled audio.start
+    and error sends. They must never address the replacement turn's browser.
+    """
+
+    ws: web.WebSocketResponse
+    abort: asyncio.Event
+    device_id: str
+
+    @property
+    def closed(self) -> bool:
+        entry = registry.get(self.device_id)
+        return (self.abort.is_set() or self.ws.closed or entry is None
+                or entry.ws is not self.ws or entry.abort_event is not self.abort)
+
+    async def send_str(self, data: str) -> None:
+        if not self.closed:
+            await self.ws.send_str(data)
+
+    async def send_bytes(self, data: bytes) -> None:
+        if not self.closed:
+            await self.ws.send_bytes(data)
+
+
 async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx) -> None:
     if ctx.state != ConnectionState.LISTENING or ctx.device_id is None:
         await send_json(
@@ -354,7 +381,7 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
             await run_voice_turn(
                 device_id,
                 chunks,
-                ws,
+                _VoiceTurnOutput(ws, abort, device_id),
                 state.openclaw_client,
                 state.agent_server,
                 abort,

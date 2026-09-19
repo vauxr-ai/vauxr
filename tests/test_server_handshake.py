@@ -265,3 +265,116 @@ async def test_aborted_turn_finally_cannot_clear_replacement(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         registry.unregister("dev1")
+
+
+def _browser_abort_message() -> dict[str, str]:
+    """Couple the real WS test to the message used by every browser stop path."""
+    import re
+    from pathlib import Path
+    from auth_policy import WS_OPERATIONS
+
+    source = (Path(__file__).parents[1] / "web-client/src/hooks/voiceProtocol.ts").read_text()
+    match = re.search(r'export const ABORT_MESSAGE = \{ type: "([^"]+)" \}', source)
+    assert match is not None
+    message = {"type": match.group(1)}
+    assert message["type"] == "abort"
+    assert message["type"] in WS_OPERATIONS
+    return message
+
+
+@pytest.mark.parametrize("replacement", ["none", "listening", "processing"])
+async def test_browser_abort_through_authenticated_ws_dispatch(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, replacement: str,
+) -> None:
+    """Real auth + WS routing + PCM; deterministic speech boundary, no provider."""
+    import asyncio
+    import server
+    import device_registry as registry
+
+    abort_message = _browser_abort_message()
+    old_aborted = asyncio.Event()
+    release_old = asyncio.Event()
+    second_started = asyncio.Event()
+    second_aborted = asyncio.Event()
+    turns: list[list[bytes]] = []
+    tasks: list[asyncio.Task[None]] = []
+
+    async def run(
+        device_id: str, chunks: list[bytes], ws: server._VoiceTurnOutput, _openclaw: object, _agent: object,
+        abort: asyncio.Event, _rate: int | None, **kwargs: object,
+    ) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        tasks.append(task)
+        turns.append(chunks)
+        if len(turns) == 1:
+            # An active response is already on the production socket when Stop arrives.
+            await server.send_json(ws, {"type": "audio.start", "sample_rate": 16000})
+            await ws.send_bytes(b"\x02\x00\x01\x00\x00")
+            await abort.wait()
+            old_aborted.set()
+            await release_old.wait()
+            # Simulate a provider callback ignoring cancellation, after the
+            # replacement's ready. The production turn-output fence must drop it.
+            for kind in ("audio.start", "audio.end", "error"):
+                await ws.send_str(json.dumps({"type": kind, "code": "STT_ERROR"}))
+            await ws.send_bytes(b"\x02\x00\x02stale-pcm")
+        else:
+            second_started.set()
+            await abort.wait()
+            second_aborted.set()
+
+    monkeypatch.setattr(server, "run_voice_turn", run)
+    async with client.ws_connect("/ws") as ws:
+        try:
+            await ws.send_json({"type": "hello", "device_id": "dev1", "token": "ws-test-token"})
+            assert (await _recv_json(ws))["type"] == "hello"
+            await ws.send_json({"type": "voice.start"})
+            assert await _recv_json(ws) == {"type": "ready"}
+            await ws.send_bytes(b"\x01\x00\x00old-pcm")
+            await ws.send_json({"type": "voice.end"})
+            assert (await _recv_json(ws))["type"] == "audio.start"
+            assert (await ws.receive(timeout=2)).type == WSMsgType.BINARY
+            await ws.send_json(abort_message)
+            await asyncio.wait_for(old_aborted.wait(), 2)
+            assert registry.get("dev1").state == "idle"
+            assert registry.get("dev1").abort_event is None
+
+            if replacement != "none":
+                await ws.send_json({"type": "voice.start"})
+                assert await _recv_json(ws) == {"type": "ready"}
+                await ws.send_bytes(b"\x01\x00\x00new-pcm")
+                if replacement == "processing":
+                    await ws.send_json({"type": "voice.end"})
+                    await asyncio.wait_for(second_started.wait(), 2)
+            entry = registry.get("dev1")
+            replacement_abort = entry.abort_event
+            release_old.set()
+            await asyncio.wait_for(tasks[0], 2)  # includes production _voice_end finally
+            # Ordered response marker: any leaked old output would arrive first.
+            await ws.send_str("{")
+            assert (await _recv_json(ws))["code"] == "INVALID_MESSAGE"
+            assert registry.get("dev1") is entry
+            assert entry.state == ("idle" if replacement == "none" else replacement)
+            assert entry.abort_event is replacement_abort
+            if replacement != "none":
+                if replacement == "listening":
+                    await ws.send_json({"type": "voice.end"})
+                    await asyncio.wait_for(second_started.wait(), 2)
+                assert turns == [[b"old-pcm"], [b"new-pcm"]]
+                assert not registry.get("dev1").abort_event.is_set()
+                await ws.send_json(abort_message)
+                await asyncio.wait_for(second_aborted.wait(), 2)
+        finally:
+            release_old.set()
+            await ws.close()
+            await asyncio.wait_for(asyncio.gather(*tasks), 2)
+
+
+async def test_unknown_abort_event_is_rejected_on_authenticated_socket(client: TestClient) -> None:
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json({"type": "hello", "device_id": "dev1", "token": "ws-test-token"})
+        assert (await _recv_json(ws))["type"] == "hello"
+        await ws.send_json({"type": "voice.abort"})
+        assert (await _recv_json(ws))["code"] == "FORBIDDEN"
+        assert (await ws.receive(timeout=2)).type in (WSMsgType.CLOSE, WSMsgType.CLOSED)

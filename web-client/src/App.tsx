@@ -1,3 +1,4 @@
+import { ABORT_MESSAGE } from "./hooks/voiceProtocol";
 import { ownerFetch } from "./auth/api";
 import { SpeechSegmenter } from "./hooks/speechSegmenter";
 import { useRealtime } from "./hooks/useRealtime";
@@ -55,6 +56,8 @@ function OwnerApp() {
 
   const [activeSection, setActiveSection] = useState<SectionId>("connection");
   const [talkMode, setTalkMode] = useState<TalkMode>("hold");
+  const talkModeRef = useRef(talkMode);
+  talkModeRef.current = talkMode;
   const [inputLevel, setInputLevel] = useState(0);
   const [outputVolume, setOutputVolumeState] = useState(0.85);
   const [outputMuted, setOutputMutedState] = useState(false);
@@ -101,7 +104,7 @@ function OwnerApp() {
           segmenter.current.push(pcm, () => {
             acceptPlayback.current = false;
             audio.stopPlayback();
-            ws.sendJson({ type: "voice.abort" });
+            ws.sendJson(ABORT_MESSAGE);
             awaitingReady.current = true;
             responseExpected.current = false;
             ws.sendVoiceStart();
@@ -162,6 +165,9 @@ function OwnerApp() {
     if (captureReadyRef.current && talkingRef.current) ws.setState("listening");
   };
   wsOpts.onError = (_code: string, message: string) => {
+    // Failed Standard turns cannot retain capture or accept a late response.
+    // Realtime owns its own error teardown through onControl.
+    if (talkMode !== "realtime") stopVoice();
     setModeError(message);
   };
   wsOpts.onAudioStart = (rate: number) => {
@@ -184,6 +190,7 @@ function OwnerApp() {
   wsOpts.onAudioEnd = (followUp: boolean) => {
     if (!acceptPlayback.current) return;
     responseExpected.current = false;
+    acceptPlayback.current = false;
     audio.resetPlayback();
     setFollowUpListening(followUp);
   };
@@ -213,26 +220,35 @@ function OwnerApp() {
     pendingLatencyStart.current = null;
     setFollowUpListening(false);
     audio.stopCapture(); audio.stopPlayback(); realtime.stop();
-    ws.sendJson({ type: "voice.abort" });
+    ws.sendJson(ABORT_MESSAGE);
     if (ws.state !== "disconnected") ws.setState("connected");
   }, [audio, realtime, ws]);
+
+  const stopVoiceRef = useRef(stopVoice);
+  stopVoiceRef.current = stopVoice;
 
   useEffect(() => {
     if (!deviceId) return;
     const controller = new AbortController();
     const refresh = async (event?: Event) => {
-      if ((event as CustomEvent | undefined)?.detail?.source === "talk") return;
+      const detail = (event as CustomEvent | undefined)?.detail;
+      if (event && (detail?.source === "talk" ||
+          (detail?.scope !== "global" && detail?.deviceId !== deviceId))) return;
       const attempt = ++modeRequest.current;
-      setModeBusy(true);
+      if (!event) setModeBusy(true);
       try {
         const response = await ownerFetch(`/api/devices/${encodeURIComponent(deviceId)}/speech`, { signal: controller.signal });
         if (!response.ok) throw new Error("Unable to load device voice mode");
         const data = await response.json();
         if (attempt !== modeRequest.current || controller.signal.aborted) return;
-        const standard = localStorage.getItem(`vauxr-talk-${deviceId}`) === "toggle" ? "toggle" : "hold";
+        const current = talkModeRef.current;
+        const standard = event && current !== "realtime" ? current
+          : localStorage.getItem(`vauxr-talk-${deviceId}`) === "toggle" ? "toggle" : "hold";
         const next = data.voice?.mode === "realtime" ? "realtime" : standard;
-        stopVoice();
-        setTalkMode(next);
+        if (next !== current) {
+          stopVoiceRef.current();
+          setTalkMode(next);
+        }
         setModeLoaded(true);
         setModeError("");
       } catch (error) {
@@ -344,7 +360,7 @@ function OwnerApp() {
     responseExpected.current = false;
     acceptPlayback.current = false;
     audio.stopPlayback();
-    ws.sendJson({ type: "voice.abort" });
+    ws.sendJson(ABORT_MESSAGE);
     ws.setState("connected");
     ws.addLog("sys", "Playback interrupted");
   }, [audio, ws]);

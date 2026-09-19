@@ -49,7 +49,12 @@ export default function SpeechSettings({ deviceId, onModeChange }: {
   async function update(patch?: object) {
     setBusy(true);
     setError("");
-    try { setData(await request(patch)); if (patch) window.dispatchEvent(new Event("speech-settings-changed")); }
+    try {
+      setData(await request(patch));
+      window.dispatchEvent(new CustomEvent("speech-settings-changed", {
+        detail: { source: "settings", scope: deviceId ? "device" : "global", deviceId },
+      }));
+    }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(false); }
   }

@@ -66,3 +66,22 @@ it("handles an incompatible server response without crashing the panel", async (
   render(<SpeechSettings />);
   expect((await screen.findByRole("alert")).textContent).toBe("Invalid speech settings response");
 });
+
+it.each([undefined, "device-a"])("publishes scoped settings changes and refreshes for %s", async deviceId => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => view }));
+  const changed = vi.fn();
+  window.addEventListener("speech-settings-changed", changed);
+  try {
+    render(<SpeechSettings deviceId={deviceId} />);
+    await screen.findByText("Effective: whisper / piper / amy");
+    fireEvent.change(screen.getByLabelText("Voice"), { target: { value: "sam" } });
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+    expect(changed.mock.calls[0][0].detail).toEqual({
+      source: "settings", scope: deviceId ? "device" : "global", deviceId,
+    });
+    await waitFor(() => expect(screen.getByText("Refresh speech")).toBeEnabled());
+    fireEvent.click(screen.getByText("Refresh speech"));
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
+    expect(changed.mock.calls[1][0].detail).toEqual(changed.mock.calls[0][0].detail);
+  } finally { window.removeEventListener("speech-settings-changed", changed); }
+});
