@@ -470,6 +470,9 @@ async def _realtime_start(
                                 "message": "Select Realtime in speech settings and configure the server OpenAI key"})
             return
         await manager.stop(device_id)
+        if not current(ctx.principal):
+            await ws.close()
+            return
         manager._live_devices.add(device_id)
         registry.set_state(device_id, "listening")
         await send_json(ws, {"type": "realtime.armed"})

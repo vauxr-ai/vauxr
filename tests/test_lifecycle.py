@@ -911,3 +911,64 @@ async def test_rotation_teardown_cannot_untrack_replacement_realtime_offer(env, 
         # Do not mask a regression assertion with the injected first-close failure.
         retry_disconnect = False
         await manager.stop_all()
+
+
+@pytest.mark.parametrize("revoke_during_stop", [False, True])
+async def test_live_start_rechecks_authority_after_teardown(env, monkeypatch, tmp_path, revoke_during_stop):
+    import asyncio
+
+    import device_registry
+    import realtime_session
+    import server
+    import speech
+
+    service, _, owner = env
+    monkeypatch.setenv("REALTIME_ENABLED", "1")
+    monkeypatch.setenv("REALTIME_HOST", "127.0.0.1")
+    monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    config.reset_config()
+    speech.get_store().update({"mode": "realtime"})
+    manager = realtime_session.RealtimeManager()
+    monkeypatch.setattr(realtime_session, "_manager", manager)
+    entered, finish = asyncio.Event(), asyncio.Event()
+    session = realtime_session.RealtimeSession("speaker", None)
+
+    async def disconnect():
+        entered.set()
+        await finish.wait()
+
+    from types import SimpleNamespace
+    session._connection = SimpleNamespace(disconnect=disconnect)
+    manager._sessions["speaker"] = session
+    ws = AsyncMock(closed=False)
+    principal = service.store.authenticate("synthetic-device")
+    assert auth.current(principal)
+    ctx = server.ConnectionCtx(device_id="speaker", principal=principal)
+    pending = asyncio.create_task(server._realtime_start(server.AppState(), ws, ctx, {"mode": "live"}))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        if revoke_during_stop:
+            assert control(service, owner, action="revoke")["state"] == "revoked"
+            assert not auth.current(principal)
+        finish.set()
+        await asyncio.wait_for(pending, 2)
+        assert session.is_closed
+        assert "speaker" not in manager._sessions
+        if revoke_during_stop:
+            ws.close.assert_awaited_once()
+            ws.send_str.assert_not_awaited()
+            assert "speaker" not in manager._live_devices
+            assert not manager.can_accept_offer("speaker")
+            assert device_registry.get("speaker").state != "listening"
+        else:
+            ws.close.assert_not_awaited()
+            assert json.loads(ws.send_str.call_args.args[0]) == {"type": "realtime.armed"}
+            assert manager.can_accept_offer("speaker")
+            assert device_registry.get("speaker").state == "listening"
+    finally:
+        finish.set()
+        await asyncio.gather(pending, return_exceptions=True)
+        await manager.stop("speaker")
+        device_registry.reset()
+        config.reset_config()

@@ -172,6 +172,9 @@ async def start_live(session: Any, connection: Any) -> None:
         raise ValueError("Realtime requires a selected OpenClaw integration Agent")
     session._connection = connection
     llm = LiveService(session, active.id, get_store().voice_settings(session.device_id))
+    # Bootstrap may create remote scope even when its reply fails or is invalid.
+    # Give session teardown ownership before the first remote request.
+    session._live_service = llm
     bootstrap = await llm.request("bootstrap")
     instructions = bootstrap.get("instructions", "")
     messages = bootstrap.get("messages", [])
@@ -182,7 +185,6 @@ async def start_live(session: Any, connection: Any) -> None:
     user, assistant = LLMContextAggregatorPair(context)
     transport = SmallWebRTCTransport(webrtc_connection=connection,
         params=TransportParams(audio_in_enabled=True, audio_out_enabled=True))
-    session._live_service = llm
     session._context = context
     session._task = PipelineWorker(Pipeline([transport.input(), user, llm, transport.output(), assistant]),
         params=PipelineParams(audio_in_sample_rate=24000, audio_out_sample_rate=24000))

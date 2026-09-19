@@ -245,3 +245,57 @@ async def test_record_retry_preserves_turn_ids_and_serializes_flushes(monkeypatc
     assert len(calls) == 3
     assert written == {"user-turn": "Turn on the lamp", "partial-turn": "Working on"}
     assert llm.fragments == []
+
+
+@pytest.mark.parametrize("failure", ["lost_ack", "invalid_context"])
+async def test_failed_bootstrap_releases_scope_through_real_offer_cleanup(monkeypatch, failure):
+    from aiortc import AudioStreamTrack, RTCConfiguration, RTCPeerConnection
+
+    import agent_registry
+    import realtime_session
+    from realtime_session import RealtimeManager
+
+    assert version("pipecat-ai") == "1.9.0"
+    monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
+    monkeypatch.setattr(agent_registry, "get_active", lambda: SimpleNamespace(id="selected", type="openclaw"))
+    manager = RealtimeManager()
+    monkeypatch.setattr(realtime_session, "_manager", manager)
+    scopes, operations = set(), []
+
+    async def request(agent, device, scope, operation, payload, timeout):
+        # Only the remote plugin boundary is replaced. Keep real LiveService,
+        # session startup, offer error handling and teardown (including release).
+        assert (agent, device) == ("selected", "browser")
+        operations.append((operation, scope))
+        if operation == "bootstrap":
+            scopes.add(scope)
+            if failure == "lost_ack":
+                raise ConnectionError("scope created but bootstrap acknowledgement lost")
+            return {"instructions": 42, "messages": []}
+        assert operation == "release"
+        scopes.remove(scope)
+        return {}
+
+    manager.configure(SimpleNamespace(realtime_request=request))
+    manager._live_devices.add("browser")
+    handler = manager._request_handler()
+    handler.update_ice_servers([])
+    remote = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+    remote.addTrack(AudioStreamTrack())
+    try:
+        await remote.setLocalDescription(await remote.createOffer())
+        # Pipecat logs callback failures rather than propagating them.
+        await asyncio.wait_for(manager.handle_offer("browser", {
+            "sdp": remote.localDescription.sdp, "type": "offer",
+        }), 3)
+        assert [op for op, _ in operations] == ["bootstrap", "release"]
+        assert operations[0][1] == operations[1][1]
+        assert not scopes
+        assert not manager._sessions
+        await manager.stop("browser")
+        await handler.close()
+        assert len(operations) == 2
+        assert not manager.can_accept_offer("browser")
+    finally:
+        await asyncio.wait_for(handler.close(), 2)
+        await asyncio.wait_for(remote.close(), 2)
