@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import TalkPanel from "./TalkPanel";
 
@@ -88,4 +88,24 @@ describe("TalkPanel", () => {
     await user.click(screen.getByRole("button", { name: /mute output/i }));
     expect(handlers.onToggleMute).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it.each(["toggle", "realtime"] as const)("%s starts once on click and supports a focused Space press", async mode => {
+  const handlers = renderPanel({ talkMode: mode });
+  const button = screen.getByRole("button", { name: "Start listening" });
+  await userEvent.click(button);
+  expect(handlers.onTalkStart).toHaveBeenCalledTimes(1);
+  await userEvent.keyboard(" ");
+  expect(handlers.onTalkStart).toHaveBeenCalledTimes(2);
+});
+
+it("push-to-talk releases on blur and can interrupt processing", () => {
+  const handlers = renderPanel({ connectionState: "processing" });
+  const button = screen.getByRole("button", { name: "Thinking..." });
+  expect(button).toBeEnabled();
+  fireEvent.mouseDown(button);
+  expect(handlers.onTalkStart).toHaveBeenCalledTimes(1);
+  fireEvent.blur(button);
+  expect(handlers.onTalkEnd).toHaveBeenCalledTimes(1);
 });

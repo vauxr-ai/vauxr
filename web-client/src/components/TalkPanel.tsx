@@ -4,9 +4,12 @@ import VolumeSlider from "./VolumeSlider";
 import Icon from "./Icon";
 import type { ConnectionState } from "../hooks/useWebSocket";
 
-export type TalkMode = "hold" | "toggle";
+export type TalkMode = "hold" | "toggle" | "realtime";
 
 interface Props {
+  transcript?: string;
+  status?: string;
+  modeBusy?: boolean;
   connectionState: ConnectionState;
   isConnected: boolean;
   micUnavailable: boolean;
@@ -55,22 +58,23 @@ export default function TalkPanel(props: Props) {
 
   const buttonDisabled =
     !isConnected ||
-    micUnavailable ||
-    connectionState === "speaking" ||
-    connectionState === "processing";
+    micUnavailable || props.modeBusy === true;
 
   const helper = !isConnected
     ? STATE_HELPER.disconnected
-    : STATE_HELPER[connectionState];
+    : props.status || (talkMode !== "hold"
+      ? talking ? "Listening continuously — speak to interrupt." : "Click to start listening."
+      : STATE_HELPER[connectionState]);
 
   return (
     <aside
       aria-label="Talk panel"
-      className="flex h-full flex-col border-l border-white/5 bg-zinc-950/40 backdrop-blur-sm"
+      className="flex h-full flex-col overflow-y-auto border-l border-white/5 bg-zinc-950/40 backdrop-blur-sm"
     >
       <div className="flex flex-1 flex-col items-center justify-center gap-8 px-5 py-6">
         <div className="flex flex-col items-center gap-5">
           <TalkButton
+            toggle={talkMode !== "hold"}
             disabled={buttonDisabled}
             active={talking}
             processing={connectionState === "processing"}
@@ -92,6 +96,7 @@ export default function TalkPanel(props: Props) {
           </p>
         </div>
 
+        <p aria-live="polite" className="max-h-40 w-full overflow-y-auto break-words text-sm text-zinc-300">{props.transcript}</p>
         {connectionState === "speaking" && (
           <button
             type="button"
@@ -112,12 +117,13 @@ export default function TalkPanel(props: Props) {
           <div
             role="radiogroup"
             aria-label="Talk mode"
-            className="flex rounded-lg bg-zinc-900/80 p-1 text-xs shadow-inner-border"
+            className="flex flex-col rounded-lg bg-zinc-900/80 p-1 text-xs shadow-inner-border"
           >
-            {(["hold", "toggle"] as const).map((m) => (
+            {(["hold", "toggle", "realtime"] as const).map((m) => (
               <button
                 key={m}
                 role="radio"
+                disabled={props.modeBusy || !isConnected}
                 aria-checked={talkMode === m}
                 onClick={() => onSetTalkMode(m)}
                 className={`focus-ring flex-1 rounded-md px-2 py-1.5 font-medium capitalize transition-colors ${
@@ -126,7 +132,7 @@ export default function TalkPanel(props: Props) {
                     : "text-zinc-400 hover:text-zinc-200"
                 }`}
               >
-                {m === "hold" ? "Hold to talk" : "Toggle"}
+                {m === "hold" ? "Standard push-to-talk" : m === "toggle" ? "Standard hands-free" : "Realtime"}
               </button>
             ))}
           </div>

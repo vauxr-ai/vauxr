@@ -35,12 +35,21 @@ export default function SpeechSettings({ deviceId, onModeChange }: {
     request(undefined, controller.signal).then(setData).catch((err: Error) => {
       if (!controller.signal.aborted) setError(err.message);
     });
-    return () => controller.abort();
-  }, [request]);
+    const changed = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.source === "talk" && detail.deviceId === deviceId) {
+        request(undefined, controller.signal).then(setData).catch((err: Error) => {
+          if (!controller.signal.aborted) setError(err.message);
+        });
+      }
+    };
+    window.addEventListener("speech-settings-changed", changed);
+    return () => { controller.abort(); window.removeEventListener("speech-settings-changed", changed); };
+  }, [request, deviceId]);
   async function update(patch?: object) {
     setBusy(true);
     setError("");
-    try { setData(await request(patch)); }
+    try { setData(await request(patch)); if (patch) window.dispatchEvent(new Event("speech-settings-changed")); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(false); }
   }
