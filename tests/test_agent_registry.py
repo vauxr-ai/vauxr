@@ -136,30 +136,9 @@ def test_delete_builtin_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rotate_token() -> None:
-    ch, old = await cr.create("Rotate", "openclaw")
-    assert (await cr.validate_agent_token(old)) is not None
-
-    new = await cr.rotate_token(ch.id)
-    assert new is not None and re.match(r"^vx_ag_[0-9a-f]{64}$", new)
-    assert new != old
-
-    assert (await cr.validate_agent_token(new)) is not None
-    assert (await cr.validate_agent_token(old)) is None
-
-
-@pytest.mark.asyncio
-async def test_rotate_builtin_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENCLAW_URL", "wss://test:18789")
-    cfg_mod.reset_config()
-    cr._reset_for_tests()
-    cr.load()
-    assert (await cr.rotate_token("openclaw-direct")) is None
-
-
-@pytest.mark.asyncio
 async def test_load_save_roundtrip() -> None:
-    ch, token = await cr.create("Persistent", "openclaw")
+    ch, _ = await cr.create("Persistent", "openclaw")
+    stored_hash = cr.get_by_id(ch.id).tokenHash
     cr.activate(ch.id)
 
     cr._reset_for_tests()
@@ -169,5 +148,5 @@ async def test_load_save_roundtrip() -> None:
     assert listed[0].name == "Persistent"
     assert listed[0].active is True
 
-    valid = await cr.validate_agent_token(token)
-    assert valid is not None and valid.id == ch.id
+    restored = cr.get_by_id(ch.id)
+    assert restored is not None and restored.tokenHash == stored_hash

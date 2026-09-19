@@ -87,15 +87,7 @@ async def test_oversize_bearer_token_returns_401_not_500(client: TestClient) -> 
 async def test_oversize_bearer_token_on_rotate_returns_401_not_500(
     client: TestClient, tmp_path: Path
 ) -> None:
-    """Same crash, surfaced through `POST /api/agents/{id}/rotate`.
-
-    This is the literal "rotate returns 500" reproducer: a request with a
-    >72-byte Bearer token hits the auth gate before reaching the rotate
-    handler, and `validate_agent_token` raises -> aiohttp returns 500.
-    """
-    # Seed a agent so the rotate endpoint *could* succeed if the auth
-    # gate accepted the call — that way we know the 500 is the auth bug
-    # and not a routing/handler issue.
+    """Oversized legacy agent tokens are rejected before the retired rotate handler."""
     agent, _ = await agent_registry.create("victim", "openclaw")
 
     oversize = "vx_ag_" + ("a" * 80)  # 86 bytes
@@ -110,8 +102,7 @@ async def test_malformed_stored_hash_does_not_500_other_requests(
 ) -> None:
     """If agents.json is hand-edited (or corrupted) so one entry has an
     invalid tokenHash, that must not poison every other bearer request."""
-    # Manually inject a broken agent directly into the registry, then a
-    # valid one. Iteration order means the broken hash is hit first.
+    # Neither malformed nor valid persisted hashes supply bearer authority.
     broken = agent_registry.Agent(
         id="broken",
         name="Broken",

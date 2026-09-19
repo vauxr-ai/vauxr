@@ -138,7 +138,7 @@ def rehearse() -> None:
             cookie, _ = owner.login(generated)
             check(owner.session(cookie) is not None, "generated session")
             owner = start(data)
-            check(owner.session(cookie) is None, "restart session invalidation")
+            check(owner.session(cookie) is not None, "restart session persistence")
             owner.login(generated)
             override = generate_token()
             owner = start(data, override)
@@ -147,7 +147,7 @@ def rehearse() -> None:
             generation = owner.store.owner["generation"]
             owner = start(data, override)
             check(owner.store.owner["generation"] == generation, "unchanged override generation")
-            check(owner.session(cookie) is None, "unchanged override restart session")
+            check(owner.session(cookie) is not None, "unchanged override restart session")
             replacement = generate_token()
             owner = start(data, replacement)
             check(owner.store.owner["generation"] != generation, "changed override generation")
@@ -188,7 +188,7 @@ def rehearse() -> None:
             pre_revoke = case / "pre-revoke"
             backup(data, pre_revoke)
             Lifecycle(owner.store, origin).execute("revoke", {
-                "operation_id": secrets.token_hex(16), "role": "integration", "subject": row["channel_id"],
+                "operation_id": secrets.token_hex(16), "role": "integration", "subject": row["agent_id"],
             }, resolve)
             check(owner.store.authenticate(saved["credential"]) is None, "revoked integration denied")
             after_revoke = case / "after-revoke"

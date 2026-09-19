@@ -118,7 +118,6 @@ async def test_http_management_auth_validation_and_isolation(store, monkeypatch)
         r = await client.patch("/api/speech", headers=headers, json={"url": "tcp://bad:1"})
         assert r.status == 400
         # Legacy agent tokens cannot manage speech settings.
-        monkeypatch.setattr(agent_registry, "validate_agent_token", AsyncMock(return_value=object()))
         r = await client.get("/api/speech", headers={"Authorization": "Bearer agent-test"})
         assert r.status == 401
         # Only owner sessions manage speech; paired roles and legacy tokens do not.

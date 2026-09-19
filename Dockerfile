@@ -16,9 +16,8 @@ FROM python:3.12-slim
 WORKDIR /app
 # Pin numeric uid/gid to match the Alpine `vauxr` user from the previous
 # Node image. Without this, an existing /data volume (owned by uid 100)
-# becomes unwritable after the rewrite — every channel create/rotate hits
-# PermissionError → 500, and channel-token bearer auth then 401s because
-# no channels can be persisted.
+# becomes unwritable after the rewrite, preventing persisted routing and
+# enrollment/lifecycle updates.
 RUN groupadd --system --gid 101 vauxr && useradd --system --uid 100 --gid vauxr vauxr
 # Pipecat's smallwebrtc path imports opencv (cv2) unconditionally, even for
 # audio-only pipelines; cv2 needs these X/GL system libs or its import fails
