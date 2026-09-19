@@ -70,6 +70,7 @@ _INTEGRATION = frozenset(
         Operation.CONTROL,
         Operation.PLAYBACK,
         Operation.FIRMWARE_INITIATE,
+        Operation.FIRMWARE_DELIVERY_MINT,
         Operation.PAIR_INITIATE,
         Operation.PAIR_APPROVE,
         Operation.AGENT_CONNECT,

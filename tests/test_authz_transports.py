@@ -66,7 +66,7 @@ ROUTES = [
     ("DELETE", "/api/webhooks/missing", "o", 404),
     ("POST", "/api/webhooks/missing/duplicate", "o", 404),
     ("GET", "/firmware/missing.bin", "od", 404),
-    ("POST", "/api/firmware-delivery/missing.bin", "o", 404),
+    ("POST", "/api/firmware-delivery/missing.bin", "oi", 404),
 ]
 
 

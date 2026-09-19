@@ -104,8 +104,8 @@ async def test_concurrent_redemption_has_one_winner(client):
         await response.read()
 
 
-@pytest.mark.parametrize("role,status", [(None, 401), ("device", 403), ("integration", 403), ("owner", 401)])
-async def test_only_owner_session_can_mint(client, role, status):
+@pytest.mark.parametrize("role,status", [(None, 401), ("device", 403), ("owner", 401)])
+async def test_only_owner_session_or_integration_can_mint(client, role, status):
     headers = {**TRANSPORT_HEADERS}
     if role:
         headers["Authorization"] = f"Bearer {role}-secret"
@@ -113,6 +113,22 @@ async def test_only_owner_session_can_mint(client, role, status):
         response = await client.post("/api/firmware-delivery/" + name, headers=headers)
         assert response.status == status
     assert not client.app[delivery.DELIVERIES]
+
+
+async def test_authenticated_integration_mints_single_use_delivery_through_http_boundary(client):
+    response = await client.post(
+        "/api/firmware-delivery/voice.bin",
+        headers={**TRANSPORT_HEADERS, "Authorization": "Bearer integration-secret"},
+    )
+    assert response.status == 201
+    assert response.headers["Cache-Control"] == "no-store"
+    body = await response.json()
+    assert body["expires_in"] == 120
+    path = urlsplit(body["url"]).path
+    first = await client.get(path)
+    assert first.status == 200
+    assert await first.read() == b"ESPFW" * 30000
+    await missing(await client.get(path))
 
 
 async def test_mint_requires_csrf_and_origin(client):
