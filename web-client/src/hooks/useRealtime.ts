@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { observePlayback } from "./realtimeDiagnostics";
+
 type Control = { type: string; code?: string; message?: string; role?: string; text?: string; turn_id?: string; final?: boolean };
 type TranscriptTurn = { id: string; role: string; text: string; final: boolean };
 export function useRealtime(send: (message: Record<string, unknown>) => void) {
@@ -10,6 +12,7 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
   const peer = useRef<RTCPeerConnection>();
   const mic = useRef<MediaStream>();
   const output = useRef<HTMLAudioElement>();
+  const diagnostics = useRef<ReturnType<typeof observePlayback>>();
   const generation = useRef(0);
   const timer = useRef<ReturnType<typeof setInterval>>();
   const readyTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -22,6 +25,7 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
     armed.current?.reject(new Error("Realtime stopped")); armed.current = undefined;
     clearInterval(timer.current); clearTimeout(readyTimer.current);
     request.current?.abort();
+    diagnostics.current?.stop(); diagnostics.current = undefined;
     peer.current?.close(); peer.current = undefined;
     mic.current?.getTracks().forEach(t => t.stop()); mic.current = undefined;
     if (output.current) { output.current.pause(); output.current.srcObject = null; }
@@ -66,6 +70,7 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
     const attempt = generation.current;
     const pc = new RTCPeerConnection(); peer.current = pc;
     const audio = new Audio(); audio.autoplay = true; output.current = audio;
+    const observation = observePlayback(pc, audio); diagnostics.current = observation;
     const controller = new AbortController(); request.current = controller;
     readyTimer.current = setTimeout(() => { setError("Realtime did not become ready. Check Vauxr's provider and Agent connection."); stop(); }, 45000);
     try {
@@ -74,8 +79,15 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
       mic.current = stream;
       stream.getTracks().forEach(t => pc.addTrack(t, stream));
       pc.ontrack = event => {
+        if (attempt !== generation.current) return;
+        observation.track(event.track);
         audio.srcObject = new MediaStream([event.track]);
-        void audio.play().catch(() => { setError("Audio playback was blocked. Stop and start Realtime again."); stop(); });
+        observation.record("play.request");
+        void audio.play().then(() => observation.record("play.resolved")).catch(() => {
+          if (attempt !== generation.current) return;
+          observation.record("play.rejected");
+          setError("Audio playback was blocked. Stop and start Realtime again."); stop();
+        });
       };
       pc.onconnectionstatechange = () => {
         if (["failed", "disconnected"].includes(pc.connectionState) && attempt === generation.current) {

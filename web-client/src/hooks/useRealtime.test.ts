@@ -2,10 +2,10 @@ import { act, renderHook } from "@testing-library/react";
 import { useRealtime } from "./useRealtime";
 
 beforeEach(() => {
-  vi.stubGlobal("RTCPeerConnection", class {
+  vi.stubGlobal("RTCPeerConnection", class extends EventTarget {
     close = vi.fn();
   });
-  vi.stubGlobal("Audio", class {
+  vi.stubGlobal("Audio", class extends EventTarget {
     pause = vi.fn();
   });
   vi.stubGlobal("navigator", { mediaDevices: {
@@ -65,4 +65,30 @@ it("bounds display history and leaves standard transcript messages alone", () =>
   transcript("u1", "user", "Latest", true);
   expect(result.current.transcript.length).toBeLessThanOrEqual(6000);
   expect(result.current.transcript.endsWith(" You: Latest")).toBe(true);
+});
+
+it("ignores a rejected play and late track from a stopped session after restart", async () => {
+  const peers: (EventTarget & { ontrack?: (e: { track: MediaStreamTrack }) => void })[] = [];
+  let rejectPlay!: (error: Error) => void;
+  const play = vi.fn(() => new Promise<void>((_, reject) => { rejectPlay = reject; }));
+  vi.stubGlobal("RTCPeerConnection", class extends EventTarget {
+    constructor() { super(); peers.push(this); }
+    close = vi.fn(); addTrack = vi.fn(); createDataChannel = () => ({});
+  });
+  vi.stubGlobal("Audio", class extends EventTarget { pause = vi.fn(); play = play; });
+  vi.stubGlobal("MediaStream", class {});
+  vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) } });
+  const { result, send } = setup();
+  await act(async () => {});
+  const track = Object.assign(new EventTarget(), { kind: "audio", muted: false, readyState: "live" }) as MediaStreamTrack;
+  act(() => peers[0].ontrack?.({ track }));
+  expect(play).toHaveBeenCalledTimes(1);
+  await act(async () => { void result.current.start("browser", "token"); });
+  send.mockClear();
+  await act(async () => { rejectPlay(new Error("old playback aborted")); });
+  act(() => peers[0].ontrack?.({ track }));
+  expect(play).toHaveBeenCalledTimes(1);
+  expect(result.current.state).toBe("connecting");
+  expect(result.current.error).toBe("");
+  expect(send).not.toHaveBeenCalledWith({ type: "realtime.stop" });
 });
