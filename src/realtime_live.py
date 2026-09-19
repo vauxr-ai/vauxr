@@ -102,6 +102,8 @@ class LiveService(OpenAILiveLLMService):
         await super().send_client_event(event)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        if isinstance(frame, InputAudioRawFrame) and getattr(self.session, "_handoff_pending", False):
+            return
         if self.audio_diagnostics and isinstance(frame, InputAudioRawFrame):
             self.audio_diagnostics.pcm("mic", frame.audio, frame.sample_rate)
         await super().process_frame(frame, direction)
@@ -225,6 +227,11 @@ async def start_live(session: Any, connection: Any) -> None:
     if active is None or active.type != "openclaw":
         raise ValueError("Realtime requires a selected OpenClaw integration Agent")
     session._connection = connection
+    if getattr(session, "_handoff_pending", False):
+        from config import get_config
+        if get_config().realtime.esp32_mode:
+            from realtime_transport import use_websocket_control
+            use_websocket_control(connection)
     llm = LiveService(session, active.id, get_store().voice_settings(session.device_id))
     # Bootstrap may create remote scope even when its reply fails or is invalid.
     # Give session teardown ownership before the first remote request.
@@ -234,6 +241,14 @@ async def start_live(session: Any, connection: Any) -> None:
     messages = bootstrap.get("messages", [])
     if not isinstance(instructions, str) or len(instructions) > 16000 or not isinstance(messages, list):
         raise ValueError("Invalid backend realtime context")
+    if getattr(session, "_handoff_pending", False):
+        # Pipecat interprets trailing developer history as a request to speak.
+        # Retain backend context as instructions without replaying completed work.
+        messages = list(messages)
+        trailing = []
+        while messages and messages[-1].get("role") == "developer":
+            trailing.insert(0, {**messages.pop(), "role": "system"})
+        messages = [*trailing, *messages]
     context = LLMContext(messages=[{"role": "system", "content": LIVE_INSTRUCTIONS + "\n" + instructions},
                                    *messages])
     user, assistant = LLMContextAggregatorPair(context)

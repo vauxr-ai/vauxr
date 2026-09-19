@@ -331,6 +331,7 @@ async def _recv_json(ws) -> dict:
 
 
 async def test_hello_realtime_policy_includes_taper_and_vad(client: TestClient) -> None:
+    dev_reg.update_config("dev1", {"pipeline_mode": "realtime"})
     async with client.ws_connect("/ws") as ws:
         await ws.send_json(
             {

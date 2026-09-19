@@ -299,3 +299,70 @@ async def test_failed_bootstrap_releases_scope_through_real_offer_cleanup(monkey
     finally:
         await asyncio.wait_for(handler.close(), 2)
         await asyncio.wait_for(remote.close(), 2)
+
+
+async def test_device_handoff_bootstraps_completed_action_without_speaking_again(monkeypatch):
+    """Exercise the existing bootstrap contract and pinned session.start encoding."""
+    import agent_registry
+    import realtime_live
+    import realtime_session
+    from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+
+    monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
+    monkeypatch.setattr(agent_registry, "get_active", lambda: SimpleNamespace(id="selected", type="openclaw"))
+    manager = realtime_session.RealtimeManager()
+    monkeypatch.setattr(realtime_session, "_manager", manager)
+    operations, wire = [], []
+    completed = [
+        {"role": "user", "content": "Switch on the lamp"},
+        {"role": "assistant", "content": "The lamp is on."},
+        {"role": "developer", "content": "Action lamp-42 completed successfully. Do not repeat it."},
+    ]
+
+    async def request(agent, device, scope, operation, payload, timeout):
+        operations.append(operation)
+        assert (agent, device) == ("selected", "device")
+        assert operation == "bootstrap"
+        return {"instructions": "Use the completed backend action state.", "messages": completed}
+
+    # Keep the actual Live service, context adapter and event encoding. No paid
+    # provider, RTP negotiation or running pipeline is needed for this wire probe.
+    blocked = asyncio.Event()
+    monkeypatch.setattr(realtime_live, "WorkerRunner", lambda **kwargs: SimpleNamespace(
+        add_workers=AsyncMock(), run=blocked.wait))
+    session = realtime_session.RealtimeSession("device", SimpleNamespace(realtime_request=request))
+    manager.prepare_handoff("device")
+    session._handoff_pending = True
+    connection = SmallWebRTCConnection(ice_servers=[])
+    try:
+        await session.start(connection)
+        service = session._live_service
+        async def capture(event):
+            wire.append(event.model_dump(exclude_none=True))
+        service.send_client_event = capture
+        await service._handle_context(session._context)
+        assert operations == ["bootstrap"]
+        assert len(wire) == 1 and wire[0]["type"] == "session.start"
+        encoded = json.dumps(wire[0])
+        assert "Switch on the lamp" in encoded and "The lamp is on." in encoded
+        assert "lamp-42 completed successfully" in encoded
+        assert not service._opening_instruction
+        assert completed[-1]["role"] == "developer"  # Do not mutate backend records.
+        # Before media acknowledgement the pinned service receives no microphone PCM.
+        parent_process = AsyncMock()
+        monkeypatch.setattr(realtime_live.OpenAILiveLLMService, "process_frame", parent_process)
+        from pipecat.processors.frame_processor import FrameDirection
+        frame = InputAudioRawFrame(bytes(960), 24000, 1)
+        await service.process_frame(frame, FrameDirection.DOWNSTREAM)
+        parent_process.assert_not_awaited()
+        session._handoff_pending = False
+        await service.process_frame(frame, FrameDirection.DOWNSTREAM)
+        parent_process.assert_awaited_once()
+    finally:
+        for task in (session._runner_task, session._backstop_task):
+            if task:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        if session._live_service:
+            await session._live_service.cleanup()
+        await connection.disconnect()
