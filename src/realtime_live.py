@@ -21,6 +21,7 @@ from pipecat.workers.runner import WorkerRunner
 
 import agent_registry
 from speech import get_store
+from realtime_transcript import TranscriptRelay
 
 LIVE_INSTRUCTIONS = (
     "Handle casual voice conversation naturally. Consult the backend for personal memory, "
@@ -65,6 +66,7 @@ class LiveService(OpenAILiveLLMService):
         self.finishing = False
         self.flush_lock = asyncio.Lock()
         self.flush_task: asyncio.Task | None = None
+        self.transcript_relay = TranscriptRelay(lambda message: session._send_control(message), self._transcript_failed)
         super().__init__(api_key=os.environ["OPENAI_API_KEY"],
                          settings=self.Settings(model=settings["realtime_model"], voice=settings["realtime_voice"]),
                          delegation=ClientDelegation(backend=BackendWorker(self), timeout_secs=300))
@@ -113,10 +115,15 @@ class LiveService(OpenAILiveLLMService):
             self.user_turn_done.set()
 
     async def _send_transcript_turn(self, role: str, text: str, *, final: bool) -> None:
-        await self.session._send_control({
-            "type": "realtime.transcript", "role": role, "text": text,
-            "turn_id": self.transcript_turns[role], "final": final,
-        })
+        self.transcript_relay.enqueue(role, text, self.transcript_turns[role], final)
+
+    def _transcript_failed(self) -> None:
+        if not self.finishing:
+            asyncio.create_task(self.session.close())
+
+    async def cleanup(self) -> None:
+        await self.transcript_relay.close()
+        await super().cleanup()
 
     async def _flush_later(self) -> None:
         await asyncio.sleep(0.5)
@@ -143,6 +150,8 @@ class LiveService(OpenAILiveLLMService):
             from realtime_session import _device_ws, _send_json
             await _send_json(_device_ws(self.session.device_id), {"type": "error",
                 "code": "REALTIME_HISTORY_FAILED", "message": "Some voice history could not be saved to the backend."})
+        finally:
+            await self.transcript_relay.close(drain=True)
 
     async def release(self) -> None:
         """Release the plugin's transient connection scope without touching history."""

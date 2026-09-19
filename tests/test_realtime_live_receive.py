@@ -31,7 +31,7 @@ from realtime_session import RealtimeManager, RealtimeSession
 async def test_installed_live_config_leaves_barge_in_with_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     assert version("pipecat-ai") == "1.9.0"
     monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
-    live = LiveService(SimpleNamespace(), "selected", {
+    live = LiveService(SimpleNamespace(_send_control=AsyncMock()), "selected", {
         "realtime_model": "gpt-live-1", "realtime_voice": "cedar",
     })
     live._context = LLMContext()
@@ -49,10 +49,10 @@ async def test_installed_live_config_leaves_barge_in_with_provider(monkeypatch: 
     assert TransportParams().audio_out_auto_silence is True
 
 
-async def test_blocked_browser_transcript_send_holds_later_provider_audio(
+async def test_blocked_browser_transcript_send_does_not_hold_provider_audio(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A characterization of a remaining stall path, not evidence of its live incidence.
+    """Provider PCM must flow while the independent browser transcript writer is held.
 
     Only the browser WS writer is held. The installed receive loop, transcript
     override and RealtimeSession control path run unchanged against a local peer.
@@ -107,20 +107,14 @@ async def test_blocked_browser_transcript_send_holds_later_provider_audio(
             await worker.queue_frame(LLMRunFrame())
             await asyncio.wait_for(sent.wait(), 5)
             await asyncio.wait_for(entered.wait(), 5)
-            # Provider has already sent audio, but the browser text writer holds
-            # its receive loop. The output track still advances with silence.
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(received.wait(), .15)
-            silent = [await track.recv() for _ in range(3)]
-            assert all(not frame.to_ndarray().any() for frame in silent)
-            assert [frame.pts for frame in silent] == [0, 240, 480]
-            assert not audio_writes
-            release.set()
-            await asyncio.wait_for(received.wait(), 5)
+            # This fails on 0045d56: the installed provider receive loop is
+            # stuck awaiting the browser transcript writer until release.
+            await asyncio.wait_for(received.wait(), .5)
+            assert not release.is_set()
             resumed = await track.recv()
             assert resumed.to_ndarray().any()
-            assert resumed.pts == 720
             assert audio_writes[0].done()
+            release.set()
             assert not errors
         finally:
             release.set()
