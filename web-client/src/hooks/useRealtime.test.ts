@@ -92,3 +92,84 @@ it("ignores a rejected play and late track from a stopped session after restart"
   expect(result.current.error).toBe("");
   expect(send).not.toHaveBeenCalledWith({ type: "realtime.stop" });
 });
+
+function heartbeatSetup() {
+  const channels: { readyState: string; send: ReturnType<typeof vi.fn>; onopen?: () => void }[] = [];
+  const peers: { connectionState: string; onconnectionstatechange?: () => void }[] = [];
+  vi.stubGlobal("RTCPeerConnection", class extends EventTarget {
+    connectionState = "connected";
+    constructor() { super(); peers.push(this); }
+    close = vi.fn(); addTrack = vi.fn();
+    createDataChannel = () => {
+      const channel = { readyState: "open", send: vi.fn() };
+      channels.push(channel);
+      return channel;
+    };
+  });
+  vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) } });
+  return { ...setup(), channels, peers };
+}
+
+describe("Pipecat data-channel heartbeat", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("keeps the actual hook below Pipecat 1.9's three-second write rejection gate", async () => {
+    const { channels, unmount } = heartbeatSetup();
+    await act(async () => {});
+    const channel = channels[0];
+    let lastPing = -Infinity;
+    channel.send.mockImplementation((message: string) => {
+      expect(message).toBe("ping");
+      lastPing = Date.now();
+    });
+    act(() => channel.onopen?.());
+    expect(lastPing).toBe(Date.now());
+    // Cross several former five-second cycles, checking between timer ticks.
+    for (let i = 0; i < 60; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(Date.now() - lastPing).toBeLessThan(3000);
+    }
+    unmount();
+  });
+
+  it.each(["stop", "unmount", "failed", "disconnected"])("ends heartbeats on %s", async (reason) => {
+    const { channels, peers, result, unmount } = heartbeatSetup();
+    await act(async () => {});
+    const channel = channels[0];
+    act(() => channel.onopen?.());
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    act(() => {
+      if (reason === "unmount") unmount();
+      else if (reason === "stop") result.current.stop();
+      else { peers[0].connectionState = reason; peers[0].onconnectionstatechange?.(); }
+    });
+    channel.send.mockClear();
+    // Late open callbacks must not resurrect a stopped attempt's interval.
+    act(() => channel.onopen?.());
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+    expect(channel.send).not.toHaveBeenCalled();
+  });
+
+  it("does not send on a closed channel or let an old open replace the new timer", async () => {
+    const { channels, result, unmount } = heartbeatSetup();
+    await act(async () => {});
+    act(() => channels[0].onopen?.());
+    channels[0].readyState = "closed";
+    channels[0].send.mockClear();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(channels[0].send).not.toHaveBeenCalled();
+    await act(async () => { void result.current.start("browser", "token"); });
+    act(() => channels[1].onopen?.());
+    channels[0].readyState = "open";
+    act(() => channels[0].onopen?.());
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(channels[0].send).not.toHaveBeenCalled();
+    expect(channels[1].send).toHaveBeenCalledTimes(3);
+    act(() => result.current.stop());
+    channels[1].send.mockClear();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(channels[1].send).not.toHaveBeenCalled();
+    unmount();
+  });
+});
