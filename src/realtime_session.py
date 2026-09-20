@@ -1289,9 +1289,12 @@ class RealtimeManager:
 
     def activate_handoff(self, device_id: str) -> bool:
         session = self._sessions.get(device_id)
+        # This correlated device receipt authorizes input; it is not a provider
+        # readiness event. Accept it once even if provider startup is slower.
+        # The pinned Live service independently drops PCM until session.started.
+        # Requiring that event here loses the one-shot receipt permanently.
         if (device_id not in self._handoff_devices or session is None
-                or not session.is_peer_live() or session._live_service is None
-                or not session._live_service._session_started):
+                or not session.is_peer_live() or session._live_service is None):
             return False
         session._handoff_pending = False
         self._handoff_devices.discard(device_id)

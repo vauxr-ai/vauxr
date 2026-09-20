@@ -55,14 +55,15 @@ async def test_completed_standard_turn_waits_for_playback_before_live_offer(env,
     assert not ctx.realtime_media
     await send(ws, ctx, {"type": "audio.playback_complete", "turn_id": ctx.turn_id})
     assert manager.can_accept_offer("dev")
-    # A receipt admits an offer, but never transfers media before provider readiness.
+    # Accept a correlated device receipt once; the provider owns its own
+    # pre-session audio gate rather than requiring a second device receipt.
     session = SimpleNamespace(is_peer_live=lambda: True, _handoff_pending=True,
                               _live_service=SimpleNamespace(_session_started=False))
     manager._sessions["dev"] = session
     await send(ws, ctx, {"type": "realtime.media_ready", "turn_id": ctx.turn_id})
-    assert not ctx.realtime_media and ctx.handoff_ready
+    assert ctx.realtime_media and not ctx.handoff_ready
+    assert not session._handoff_pending
     session._live_service._session_started = True
-    await send(ws, ctx, {"type": "realtime.media_ready", "turn_id": ctx.turn_id})
     assert ctx.realtime_media and not session._handoff_pending
     assert pipeline.await_count == 1
 

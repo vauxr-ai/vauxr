@@ -102,10 +102,16 @@ class LiveService(OpenAILiveLLMService):
         await super().send_client_event(event)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        if self.audio_diagnostics and isinstance(frame, InputAudioRawFrame):
+            self.audio_diagnostics.count("input_frames_at_service")
         if isinstance(frame, InputAudioRawFrame) and getattr(self.session, "_handoff_pending", False):
+            if self.audio_diagnostics:
+                self.audio_diagnostics.count("input_blocked_handoff")
             return
         if self.audio_diagnostics and isinstance(frame, InputAudioRawFrame):
             self.audio_diagnostics.pcm("mic", frame.audio, frame.sample_rate)
+            if not self._session_started:
+                self.audio_diagnostics.count("input_waiting_provider")
         await super().process_frame(frame, direction)
 
     async def push_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
