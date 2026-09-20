@@ -58,6 +58,9 @@ services:
       REALTIME_ESP32: ${REALTIME_ESP32:-1}
       REALTIME_HOST: ${REALTIME_HOST:-}
       REALTIME_STUN_URL: ${REALTIME_STUN_URL:-stun:stun.l.google.com:19302}
+      # GPT-Live speech is quieter than Standard-mode TTS at the same device
+      # volume; this dB boost (soft-clipped) equalises them. 0 disables.
+      REALTIME_OUTPUT_GAIN_DB: ${REALTIME_OUTPUT_GAIN_DB:-6}
       # Diagnostic: when set, the realtime pipeline writes the decoded inbound
       # WebRTC audio (exactly what Silero/Whisper see) to per-session WAVs here.
       # Leave empty to disable. Point at /data/recordings to land files in the

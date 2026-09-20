@@ -21,7 +21,7 @@ MATRIX = {
     O.CONTROL: "oi",
     O.PLAYBACK: "oi",
     O.FIRMWARE_INITIATE: "oi",
-    O.FIRMWARE_DELIVERY_MINT: "o",
+    O.FIRMWARE_DELIVERY_MINT: "oi",
     O.FIRMWARE_READ: "od",
     O.FIRMWARE_PUBLISH: "o",
     O.AGENT_LIST: "o",

@@ -186,6 +186,7 @@ class RealtimeSession:
         # resumes RTP on warm wake without a WS cue, so audio.end must never
         # latch it; quiet timeout diagnostics are managed separately below.
         self._mic_paused = False
+        self._handoff_pending = False
         # VAD profile swapping: a snappy idle profile so quiet speech is heard,
         # and a stricter barge-in profile applied while the bot speaks so the
         # device's residual echo doesn't self-interrupt the reply. Populated when
@@ -195,6 +196,10 @@ class RealtimeSession:
         self._vad_normal_params: Any = None
         self._vad_barge_in_params: Any = None
         self._vad_active_params: Any = None
+        # Metadata-only aiortc receiver monitor, enabled with the existing audio
+        # diagnostics flag and owned by this session's teardown.
+        self._rtp_diag_task: asyncio.Task[None] | None = None
+        self._rtp_probes: list[Any] = []
 
     @property
     def is_closed(self) -> bool:
@@ -993,7 +998,7 @@ class RealtimeSession:
 
     async def _notify_ended(self) -> None:
         """Relay a terminal audio.end{follow_up:false} for abnormal teardown."""
-        if self._ended_notified:
+        if self._ended_notified or self._handoff_pending:
             return
         self._ended_notified = True
         self._pending_ends.clear()
@@ -1013,6 +1018,11 @@ class RealtimeSession:
             self._cancel_drain_timer()
             if self._backstop_task is not None:
                 self._backstop_task.cancel()
+            if self._rtp_diag_task is not None:
+                self._rtp_diag_task.cancel()
+            for probe in self._rtp_probes:
+                probe.restore()
+            self._rtp_probes.clear()
             self._close_attempts = []
             if self._live_service is not None:
                 if self._live_service.flush_task is not None:
@@ -1038,6 +1048,7 @@ class RealtimeManager:
 
     def __init__(self) -> None:
         self._live_devices: set[str] = set()
+        self._handoff_devices: set[str] = set()
         self._agent_server: Any = None
         self._sessions: dict[str, RealtimeSession] = {}
         self._preroll: dict[str, bytearray] = {}
@@ -1246,11 +1257,13 @@ class RealtimeManager:
         if (self._sessions.get(device_id) not in (None, session)
                 or self._wake_generations.get(device_id) is not wake or _device_ws(device_id) is not ws):
             return
+        pending_handoff = device_id in self._handoff_devices
+        self._handoff_devices.discard(device_id)
         self._live_devices.discard(device_id)
         self._preroll.pop(device_id, None)
         self._speech_preroll.pop(device_id, None)
         self._cold_wait.discard(device_id)
-        if notify:
+        if notify and not pending_handoff:
             await _send_json(ws, {"type": "audio.end", "follow_up": False})
         if (self._sessions.get(device_id) in (None, session)
                 and self._wake_generations.get(device_id) is wake and _device_ws(device_id) is ws):
@@ -1259,13 +1272,33 @@ class RealtimeManager:
     async def stop_all(self) -> None:
         """Retire media and armed wakes when their active integration is revoked."""
         results = await asyncio.gather(*(self.stop(device_id)
-                                         for device_id in set(self._sessions) | set(self._preroll)),
+                                         for device_id in set(self._sessions) | set(self._preroll) | self._live_devices),
                                        return_exceptions=True)
         if any(isinstance(result, BaseException) for result in results):
             raise RuntimeError("transport_teardown_unavailable")
 
     async def stop(self, device_id: str) -> None:
         await self._stop_wake(device_id, notify=False)
+
+    def prepare_handoff(self, device_id: str) -> bool:
+        """Admit a fresh Live bootstrap only after the Standard playback receipt."""
+        self._wake_generations[device_id] = object()
+        self._handoff_devices.add(device_id)
+        self._live_devices.add(device_id)
+        return True
+
+    def activate_handoff(self, device_id: str) -> bool:
+        session = self._sessions.get(device_id)
+        # This correlated device receipt authorizes input; it is not a provider
+        # readiness event. Accept it once even if provider startup is slower.
+        # The pinned Live service independently drops PCM until session.started.
+        # Requiring that event here loses the one-shot receipt permanently.
+        if (device_id not in self._handoff_devices or session is None
+                or not session.is_peer_live() or session._live_service is None):
+            return False
+        session._handoff_pending = False
+        self._handoff_devices.discard(device_id)
+        return True
 
     def can_accept_offer(self, device_id: str) -> bool:
         """Whether an /api/offer for this device_id is tied to a real wake."""
@@ -1298,6 +1331,8 @@ class RealtimeManager:
             {k: body[k] for k in ("sdp", "type", "pc_id", "restart_pc") if k in body}
         )
 
+        wake = self._wake_generations.get(device_id)
+
         async def _on_connection(connection: Any) -> None:
             from realtime_teardown import protect_handshake_teardown
 
@@ -1307,12 +1342,17 @@ class RealtimeManager:
                 log.info("realtime[%s]: closing previous session before new offer", device_id)
                 await existing.close()
             session = RealtimeSession(device_id, self._agent_server)
+            session._handoff_pending = device_id in self._handoff_devices
             try:
                 await session.start(connection)
             except Exception:
                 log.exception("realtime[%s]: session start failed", device_id)
                 await session.close()
                 raise
+            if (self._wake_generations.get(device_id) is not wake
+                    or not self.can_accept_offer(device_id)):
+                await session.close()
+                raise ValueError("Realtime wake superseded")
             self._sessions[device_id] = session
 
         lock = self._offer_locks.setdefault(device_id, asyncio.Lock())

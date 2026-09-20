@@ -39,6 +39,14 @@ def load_device_display_name(data_dir: str, device_id: str) -> str | None:
     return (name.strip() or None) if units <= 128 else None
 
 
+PipelineMode = Literal["standard", "realtime"]
+VALID_PIPELINE_MODES = frozenset({"standard", "realtime"})
+
+
+def pipeline_mode(cfg: DeviceConfig | None) -> PipelineMode:
+    return "realtime" if cfg and cfg.get("pipeline_mode") == "realtime" else "standard"
+
+
 FollowUpMode = Literal["auto", "always", "never"]
 VALID_FOLLOW_UP_MODES: frozenset[str] = frozenset({"auto", "always", "never"})
 
@@ -49,7 +57,7 @@ VALID_ACTION_KINDS: frozenset[str] = frozenset(
 VALID_BUTTON_COMMANDS: frozenset[str] = frozenset({"set_volume", "mute", "unmute", "reboot"})
 
 KNOWN_FIELDS: frozenset[str] = frozenset(
-    {"name", "voice", "follow_up_mode", "output_sample_rate", "barge_in", "button_actions"}
+    {"pipeline_mode", "name", "voice", "follow_up_mode", "output_sample_rate", "barge_in", "button_actions"}
 )
 
 
@@ -62,6 +70,7 @@ class ButtonAction(TypedDict, total=False):
 
 
 class DeviceConfig(TypedDict, total=False):
+    pipeline_mode: PipelineMode
     name: str
     voice: bool
     follow_up_mode: FollowUpMode
@@ -151,7 +160,9 @@ def _sanitize_entry(device_id: str, raw: Any) -> DeviceConfig:
     for key, value in raw.items():
         if key not in KNOWN_FIELDS:
             continue
-        if key == "name" and isinstance(value, str):
+        if key == "pipeline_mode":
+            cfg["pipeline_mode"] = "realtime" if value == "realtime" else "standard"
+        elif key == "name" and isinstance(value, str):
             cfg["name"] = value
         elif key == "voice" and isinstance(value, bool):
             cfg["voice"] = value

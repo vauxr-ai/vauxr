@@ -101,6 +101,15 @@ async def synthesize(
     generator stops mid-stream when it fires.
     """
     selection = selection or resolve()
+    if selection.tts.adapter == "openai":
+        import openai_tts
+
+        async for chunk in openai_tts.synthesize(
+            text, selection=selection, target_rate=target_rate,
+            abort_event=abort_event, on_sample_rate=on_sample_rate,
+        ):
+            yield chunk
+        return
     host, port = selection.tts.host, selection.tts.port
 
     reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=30)

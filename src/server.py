@@ -23,6 +23,7 @@ from auth import authenticate, current, get_store
 from auth_policy import WS_OPERATIONS, Operation, Principal, allowed, audit_denial
 from agent_server import AgentServer
 from config import get_config
+from device_config import pipeline_mode
 from device_settings import realtime_policy_extras
 from http_server import (
     attach_http_routes,
@@ -56,10 +57,12 @@ class ConnectionCtx:
     audio_chunks: list[bytes] = field(default_factory=list)
     output_sample_rate: int | None = None
     speech_selection: Selection | None = None
-    # Realtime (WebRTC) hybrid: armed on realtime.start, cleared on
-    # realtime.media_ready (device has switched mic to the WebRTC track).
+    # Only acknowledged Standard playback permits a device Live handoff.
     realtime: bool = False
     realtime_media: bool = False
+    turn_id: int = 0
+    playback_pending: int | None = None
+    handoff_ready: bool = False
 
 
 @dataclass
@@ -94,6 +97,10 @@ async def handle_text(
     if not await _authorize_message(ws, ctx, msg):
         return
     msg_type = msg["type"]
+    if ctx.realtime_media and msg_type in {"voice.start", "voice.end"}:
+        from realtime_session import get_manager
+        if not get_manager().has_live_session(ctx.device_id):
+            await _realtime_stop(ctx)
     if msg_type == "hello":
         await _hello(ws, ctx, msg)
     elif msg_type == "voice.start":
@@ -101,19 +108,15 @@ async def handle_text(
         # would clobber the agent response listener and force registry state to
         # idle while WebRTC is still up. (A device using realtime won't send this;
         # this is a guard against a stale/confused client.)
-        if ctx.realtime:
+        if ctx.realtime_media:
             log.warning("ignoring voice.start during realtime session: %s", ctx.device_id)
         else:
             await _voice_start(state, ws, ctx, msg)
     elif msg_type == "voice.end":
-        if ctx.realtime:
-            await _realtime_or_voice_end(state, ws, ctx, msg)
-        else:
+        if not ctx.realtime_media:
             await _voice_end(state, ws, ctx)
     elif msg_type == "abort":
-        # In a realtime/WebRTC session the turn-based abort_event is irrelevant;
-        # tear the Pipecat session down (same as realtime.stop) so abort actually
-        # stops the bot and returns the device to idle.
+        # End both the Standard turn and any initializing or active peer.
         if ctx.realtime:
             await _realtime_stop(ctx)
         else:
@@ -121,7 +124,19 @@ async def handle_text(
     elif msg_type == "realtime.start":
         await _realtime_start(state, ws, ctx, msg)
     elif msg_type == "realtime.media_ready":
-        _realtime_media_ready(ctx)
+        if ctx.handoff_ready and type(msg.get("turn_id")) is int and msg["turn_id"] == ctx.turn_id:
+            from realtime_session import get_manager
+            ctx.realtime_media = get_manager().activate_handoff(ctx.device_id)
+            if ctx.realtime_media:
+                ctx.handoff_ready = False
+    elif msg_type == "audio.playback_complete":
+        if (type(msg.get("turn_id")) is int and msg["turn_id"] == ctx.playback_pending
+                and ctx.state == ConnectionState.IDLE and ctx.realtime):
+            from realtime_session import get_manager
+            if get_manager().prepare_handoff(ctx.device_id):
+                ctx.handoff_ready = True
+                ctx.playback_pending = None
+                await send_json(ws, {"type": "realtime.handoff", "turn_id": ctx.turn_id})
     elif msg_type == "realtime.pause":
         _realtime_pause(ctx)
     elif msg_type == "realtime.resume":
@@ -192,10 +207,14 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
     caps = msg.get("caps")
     caps_list = [c for c in caps if isinstance(c, str)] if isinstance(caps, list) else []
     rt = get_config().realtime
-    # WebRTC needs an absolute, device-reachable offer URL and reliable ICE host
-    # munging (esp32 mode). Without REALTIME_HOST the offer_url is relative and
-    # ICE is unreliable, so fall back to ws rather than advertise a broken policy.
-    webrtc_ok = rt.enabled and "webrtc" in caps_list and bool(rt.host)
+    # WebRTC needs an absolute offer URL at the device's trusted signaling origin
+    # (firmware only arms realtime when offer_url shares that same origin — see
+    # applyHelloPolicy's same-origin credential guard) and reliable ICE host
+    # munging (esp32 mode, driven separately by REALTIME_HOST). Without
+    # REALTIME_HOST, ICE is unreliable, so fall back to ws rather than advertise
+    # a broken policy.
+    mode = pipeline_mode(registry.get_config_for(ctx.device_id or ""))
+    webrtc_ok = mode == "realtime" and rt.enabled and "webrtc" in caps_list and bool(rt.host)
     if rt.enabled and "webrtc" in caps_list and not rt.host:
         log.warning(
             "realtime: %s is webrtc-capable but REALTIME_HOST is unset — falling back to ws",
@@ -218,13 +237,19 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
 
     realtime_policy: dict[str, Any] = {"enabled": False, "transport": "ws"}
     if webrtc_ok:
-        http_port = get_config().http.port
-        offer_url = f"http://{rt.host}:{http_port}{rt.offer_path}"
+        # offer_url must be same-origin with the device's trusted signaling
+        # origin (owner_auth.configured_origin) so firmware's credential guard
+        # accepts it — REALTIME_HOST is for ICE candidate host munging only and
+        # must never appear in this URL.
+        from owner_auth import configured_origin
+        offer_url = configured_origin() + rt.offer_path
         realtime_policy = {
             "enabled": True,
             "transport": "webrtc",
             "offer_url": offer_url,
             "stun": rt.stun_url,
+            "handoff": "standard_playback_v1",
+            "voice_source": "live_voice_settings",
             **realtime_policy_extras(device_key),
         }
 
@@ -235,7 +260,7 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
         caps_list,
         realtime_policy.get("transport"),
     )
-    await send_json(ws, {"type": "hello", "realtime": realtime_policy})
+    await send_json(ws, {"type": "hello", "pipeline_mode": mode, "realtime": realtime_policy})
 
 
 async def _device_button(state: AppState, ctx: ConnectionCtx, msg: dict[str, Any]) -> None:
@@ -268,7 +293,14 @@ async def _voice_start(
     if ctx.device_id:
         registry.abort_active_turn(ctx.device_id)
 
+    from realtime_session import get_manager
+    manager = get_manager()
+    if device_id in manager._handoff_devices:
+        await manager.stop(device_id)
     ctx.device_id = device_id
+    ctx.turn_id += 1
+    ctx.playback_pending = None
+    ctx.handoff_ready = False
     ctx.audio_chunks = []
     try:
         ctx.speech_selection = resolve(device_id)
@@ -287,46 +319,6 @@ async def _voice_start(
     await send_json(ws, {"type": "ready"})
 
 
-async def _realtime_or_voice_end(
-    state: AppState,
-    ws: web.WebSocketResponse,
-    ctx: ConnectionCtx,
-    msg: dict[str, Any],
-) -> None:
-    """Route voice.end during realtime: cold-wait turns branch; warm turns ignore."""
-    if ctx.device_id is None:
-        await send_json(
-            ws,
-            {"type": "error", "code": "INVALID_STATE", "message": "Not in listening state"},
-        )
-        return
-
-    from realtime_session import get_manager
-
-    manager = get_manager()
-    if not manager.is_cold_wait(ctx.device_id):
-        log.debug(
-            "ignoring voice.end during warm realtime session: %s",
-            ctx.device_id,
-        )
-        return
-
-    webrtc_connected = msg.get("webrtc_connected") is True
-    log.info(
-        "voice.end from %s during cold realtime wait (webrtc_connected=%s)",
-        ctx.device_id,
-        webrtc_connected,
-    )
-    await manager.handle_cold_voice_end(
-        ctx.device_id,
-        webrtc_connected=webrtc_connected,
-        ws=ws,
-        openclaw_client=state.openclaw_client,
-        agent_server=state.agent_server,
-        output_sample_rate=ctx.output_sample_rate,
-    )
-
-
 @dataclass
 class _VoiceTurnOutput:
     """Fence delayed pipeline output at the socket boundary after cancellation.
@@ -338,6 +330,11 @@ class _VoiceTurnOutput:
     ws: web.WebSocketResponse
     abort: asyncio.Event
     device_id: str
+    completed: bool = False
+    failed: bool = False
+
+    def turn_completed(self) -> None:
+        self.completed = True
 
     @property
     def closed(self) -> bool:
@@ -346,6 +343,9 @@ class _VoiceTurnOutput:
                 or entry.ws is not self.ws or entry.abort_event is not self.abort)
 
     async def send_str(self, data: str) -> None:
+        message = parse_text_message(data)
+        if message and message.get("type") == "error":
+            self.failed = True
         if not self.closed:
             await self.ws.send_str(data)
 
@@ -365,6 +365,7 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
     ctx.state = ConnectionState.PROCESSING
     registry.set_state(ctx.device_id, "processing")
     device_id = ctx.device_id
+    turn_id = ctx.turn_id
     selection = ctx.speech_selection
     chunks = ctx.audio_chunks
     total = sum(len(c) for c in chunks)
@@ -377,17 +378,23 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
         entry.abort_event = abort
 
     async def _run() -> None:
+        output = _VoiceTurnOutput(ws, abort, device_id)
         try:
             await run_voice_turn(
                 device_id,
                 chunks,
-                _VoiceTurnOutput(ws, abort, device_id),
+                output,
                 state.openclaw_client,
                 state.agent_server,
                 abort,
                 ctx.output_sample_rate,
                 selection=selection,
             )
+            if (not abort.is_set() and ctx.turn_id == turn_id and ctx.realtime
+                    and output.completed and not output.failed and not output.closed):
+                ctx.state = ConnectionState.IDLE
+                ctx.playback_pending = turn_id
+                await send_json(ws, {"type": "audio.playback_pending", "turn_id": turn_id})
         except Exception:  # noqa: BLE001
             log.error("Pipeline error")
             if not abort.is_set():
@@ -407,6 +414,9 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
 
 
 def _voice_abort(ctx: ConnectionCtx) -> None:
+    ctx.turn_id += 1
+    ctx.playback_pending = None
+    ctx.handoff_ready = False
     if ctx.device_id:
         registry.abort_active_turn(ctx.device_id)
         registry.set_state(ctx.device_id, "idle")
@@ -417,7 +427,7 @@ def _voice_abort(ctx: ConnectionCtx) -> None:
 async def _realtime_start(
     state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]
 ) -> None:
-    """Wake fired: register the device and arm pre-roll capture while WebRTC connects."""
+    """Keep explicit Talk Live; devices start with one complete Standard turn."""
     device_id = ctx.device_id
     # Realtime must actually be reachable server-side before we arm pre-roll: the
     # /api/offer endpoint only exists when REALTIME_ENABLED=1 and REALTIME_HOST is
@@ -425,7 +435,8 @@ async def _realtime_start(
     # would strand the device in "listening" with no WebRTC path — the first
     # utterance gets buffered and never processed until it disconnects.
     rt = get_config().realtime
-    if not (rt.enabled and rt.host):
+    if not (rt.enabled and rt.host and (msg.get("mode") == "live"
+            or pipeline_mode(registry.get_config_for(device_id)) == "realtime")):
         await send_json(
             ws,
             {
@@ -453,7 +464,8 @@ async def _realtime_start(
     from realtime_session import get_manager
 
     manager = get_manager()
-    if manager.has_live_session(device_id):
+    if manager.has_live_session(device_id) and device_id not in manager._handoff_devices:
+        ctx.realtime_media = True
         # Warm re-wake: peer + Pipecat session stay alive; Silero end-points the
         # turn on the WebRTC track — no WS pre-roll or device-VAD marker.
         registry.set_state(device_id, "listening")
@@ -461,7 +473,14 @@ async def _realtime_start(
         log.info("realtime.start from %s — warm re-wake on live session", device_id)
         return
 
-    if msg.get("mode") == "live":
+    # Firmware never sends `mode` on realtime.start (see vauxr_client.cpp
+    # sendRealtimeStart) — it only exists as an explicit Talk Live trigger from
+    # non-firmware clients (web-client). A device persisted as pipeline_mode
+    # realtime must still route to GPT-Live on its own, or it silently falls
+    # through to the legacy Standard-then-AgentLLM WebRTC path below.
+    persisted_live = pipeline_mode(registry.get_config_for(device_id)) == "realtime"
+    explicit_live = msg.get("mode") == "live"
+    if explicit_live or persisted_live:
         import os
         from speech import get_store as speech_store
         if speech_store().voice_settings(device_id)["mode"] != "realtime" or not os.environ.get("OPENAI_API_KEY"):
@@ -474,38 +493,19 @@ async def _realtime_start(
             await ws.close()
             return
         manager._live_devices.add(device_id)
-        registry.set_state(device_id, "listening")
-        await send_json(ws, {"type": "realtime.armed"})
-        return
+        if explicit_live:
+            # Browser Talk Live has no Standard opening turn; admit its offer now.
+            ctx.realtime_media = True
+            registry.set_state(device_id, "listening")
+            await send_json(ws, {"type": "realtime.armed"})
+            return
 
-    # Cold wake: arm WS pre-roll and wait for the device-VAD voice.end marker.
-    # A stale session from a dropped peer must be cleared first.
-    try:
-        selection = resolve(device_id)
-    except (KeyError, ValueError):
-        ctx.realtime = False
-        await send_json(ws, {"type": "error", "code": "SPEECH_UNAVAILABLE",
-                             "message": "Selected speech provider is not configured"})
-        return
-    await manager.stop(device_id)
-    if not current(ctx.principal):
-        await ws.close()
-        return
-    manager.begin_preroll(device_id, selection)
-    registry.set_state(device_id, "listening")
-    await send_json(ws, {"type": "ready"})
-    log.info("realtime.start from %s — cold pre-roll armed", device_id)
-
-
-def _realtime_media_ready(ctx: ConnectionCtx) -> None:
-    """Device switched its mic to the WebRTC track; stop forwarding WS pre-roll.
-
-    Transport-state only — turn processing is driven by the device-VAD
-    ``voice.end`` marker during cold wait, not by media_ready.
-    """
-    ctx.realtime_media = True
-    if ctx.device_id:
-        log.info("realtime.media_ready from %s", ctx.device_id)
+    # Firmware omits `mode`: run one complete Standard opening turn while the
+    # GPT-Live selection is armed in _live_devices. The device sends playback
+    # receipt -> realtime.handoff -> offer, and start_live() then selects GPT-Live.
+    ctx.realtime_media = False
+    if ctx.state == ConnectionState.IDLE:
+        await _voice_start(state, ws, ctx, msg)
 
 
 def _realtime_pause(ctx: ConnectionCtx) -> None:
@@ -533,6 +533,7 @@ async def _realtime_stop(ctx: ConnectionCtx) -> None:
         return
     from realtime_session import get_manager
 
+    _voice_abort(ctx)
     await get_manager().stop(ctx.device_id)
     ctx.realtime = False
     ctx.realtime_media = False
@@ -549,13 +550,7 @@ def handle_binary(ctx: ConnectionCtx, data: bytes) -> None:
     if msg_type != 0x01:
         return
     payload = bytes(data[3:])
-    if ctx.realtime and not ctx.realtime_media and ctx.device_id:
-        # Pre-roll: the wake-word command, captured before the WebRTC media path
-        # is up. Buffered server-side and seeded into the realtime pipeline.
-        from realtime_session import get_manager
-
-        get_manager().add_preroll(ctx.device_id, payload)
-    elif ctx.state == ConnectionState.LISTENING:
+    if ctx.state == ConnectionState.LISTENING and not ctx.realtime_media:
         ctx.audio_chunks.append(payload)
 
 

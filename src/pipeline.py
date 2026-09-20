@@ -214,6 +214,8 @@ async def _route_via_openclaw_direct(
     await _synthesize_and_send(ws, device_id, result.reply_text, abort, target_rate, selection)
     if not abort.is_set():
         _record_completed_turn(device_id, transcript_text, result.reply_text)
+        if hasattr(ws, "turn_completed"):
+            ws.turn_completed()
         await send_audio_end(result.follow_up)
 
 
@@ -376,6 +378,8 @@ async def _route_via_agent(
             result.reply_text[:200],
         )
         _record_completed_turn(device_id, transcript_text, result.reply_text)
+        if hasattr(ws, "turn_completed"):
+            ws.turn_completed()
         await send_audio_end(result.follow_up)
     finally:
         abort_waiter.cancel()

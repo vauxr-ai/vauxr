@@ -14,8 +14,8 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
   const output = useRef<HTMLAudioElement>();
   const diagnostics = useRef<ReturnType<typeof observePlayback>>();
   const generation = useRef(0);
-  const timer = useRef<ReturnType<typeof setInterval>>();
-  const readyTimer = useRef<ReturnType<typeof setTimeout>>();
+  const timer = useRef<number>();
+  const readyTimer = useRef<number>();
   const request = useRef<AbortController>();
   const armed = useRef<{ resolve: () => void; reject: (e: Error) => void }>();
   const sendRef = useRef(send); sendRef.current = send;
@@ -23,7 +23,7 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
     const wasActive = !!peer.current;
     generation.current++;
     armed.current?.reject(new Error("Realtime stopped")); armed.current = undefined;
-    clearInterval(timer.current); clearTimeout(readyTimer.current);
+    window.clearInterval(timer.current); window.clearTimeout(readyTimer.current);
     request.current?.abort();
     diagnostics.current?.stop(); diagnostics.current = undefined;
     peer.current?.close(); peer.current = undefined;
@@ -37,7 +37,7 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
   const control = useCallback((message: Control) => {
     if (message.type === "realtime.armed") { armed.current?.resolve(); armed.current = undefined; }
     if (message.type === "realtime.ready" && peer.current) {
-      clearTimeout(readyTimer.current); setState("listening");
+      window.clearTimeout(readyTimer.current); setState("listening");
     }
     if (message.type === "realtime.transcript" && peer.current &&
         typeof message.text === "string" && typeof message.turn_id === "string" &&
@@ -72,7 +72,7 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
     const audio = new Audio(); audio.autoplay = true; output.current = audio;
     const observation = observePlayback(pc, audio); diagnostics.current = observation;
     const controller = new AbortController(); request.current = controller;
-    readyTimer.current = setTimeout(() => { setError("Realtime did not become ready. Check Vauxr's provider and Agent connection."); stop(); }, 45000);
+    readyTimer.current = window.setTimeout(() => { setError("Realtime did not become ready. Check Vauxr's provider and Agent connection."); stop(); }, 45000);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       if (attempt !== generation.current) { stream.getTracks().forEach(t => t.stop()); return; }
@@ -102,19 +102,19 @@ export function useRealtime(send: (message: Record<string, unknown>) => void) {
         const ping = () => {
           if (attempt === generation.current && data.readyState === "open") data.send("ping");
         };
-        clearInterval(timer.current);
+        window.clearInterval(timer.current);
         ping();
-        timer.current = setInterval(ping, 1000);
+        timer.current = window.setInterval(ping, 1000);
       };
       const wait = new Promise<void>((resolve, reject) => { armed.current = { resolve, reject }; });
       sendRef.current({ type: "realtime.start", mode: "live" });
       await wait;
       await pc.setLocalDescription(await pc.createOffer());
       if (pc.iceGatheringState !== "complete") await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => { cleanup(); reject(new Error("ICE gathering timed out")); }, 10000);
+        const timeout = window.setTimeout(() => { cleanup(); reject(new Error("ICE gathering timed out")); }, 10000);
         const changed = () => { if (pc.iceGatheringState === "complete") { cleanup(); resolve(); } };
         const abort = () => { cleanup(); reject(new Error("Realtime stopped")); };
-        function cleanup() { clearTimeout(timeout); pc.removeEventListener("icegatheringstatechange", changed); controller.signal.removeEventListener("abort", abort); }
+        function cleanup() { window.clearTimeout(timeout); pc.removeEventListener("icegatheringstatechange", changed); controller.signal.removeEventListener("abort", abort); }
         pc.addEventListener("icegatheringstatechange", changed); controller.signal.addEventListener("abort", abort);
       });
       // The offer is authenticated by the scoped device bearer, never the owner

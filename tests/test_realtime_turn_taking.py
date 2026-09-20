@@ -331,6 +331,7 @@ async def _recv_json(ws) -> dict:
 
 
 async def test_hello_realtime_policy_includes_taper_and_vad(client: TestClient) -> None:
+    dev_reg.update_config("dev1", {"pipeline_mode": "realtime"})
     async with client.ws_connect("/ws") as ws:
         await ws.send_json(
             {
@@ -350,6 +351,58 @@ async def test_hello_realtime_policy_includes_taper_and_vad(client: TestClient) 
         assert policy["taper"]["t_idle1_ms"] > 0
         assert "confidence" in policy["vad"]
         assert policy["vad"]["stop_secs"] == 2.0
+
+
+async def test_hello_offer_url_uses_trusted_owner_origin_not_realtime_host(client: TestClient) -> None:
+    """offer_url must be same-origin with the device's trusted signaling origin
+    (owner_auth.configured_origin), not REALTIME_HOST — firmware's applyHelloPolicy
+    same-origin credential guard rejects any other authority and silently keeps
+    the device on the Standard pipeline forever.
+    """
+    dev_reg.update_config("dev1", {"pipeline_mode": "realtime"})
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json(
+            {
+                "type": "hello",
+                "device_id": "dev1",
+                "token": "ws-test-token",
+                "platform": "satellite1",
+                "caps": ["ws", "webrtc"],
+            }
+        )
+        hello = await _recv_json(ws)
+        policy = hello["realtime"]
+        assert policy["enabled"] is True
+        from owner_auth import configured_origin
+        assert policy["offer_url"] == configured_origin() + "/api/offer"
+        assert "192.168.1.50" not in policy["offer_url"]
+
+
+async def test_realtime_start_without_mode_field_routes_persisted_realtime_to_live(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Firmware's sendRealtimeStart() never sends a `mode` field (see
+    vauxr_client.cpp) — a device persisted as pipeline_mode realtime must still
+    route into GPT-Live on its own, not silently fall through to the legacy
+    Standard-then-AgentLLM WebRTC path.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
+    dev_reg.update_config("dev1", {"pipeline_mode": "realtime"})
+    from speech import get_store as speech_store
+    speech_store().update({"mode": "realtime"}, device_id="dev1")
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json(
+            {"type": "hello", "device_id": "dev1", "token": "ws-test-token", "caps": ["ws", "webrtc"]}
+        )
+        await _recv_json(ws)
+        await ws.send_json({"type": "realtime.start", "device_id": "dev1", "token": "ws-test-token"})
+        reply = await _recv_json(ws)
+        # Firmware expects ready, captures one Standard opening turn, then sends
+        # playback receipt -> handoff -> offer. GPT-Live is selected in parallel.
+        assert reply == {"type": "ready"}
+        manager = realtime_session.get_manager()
+        assert "dev1" in manager._live_devices
+        assert manager.is_cold_wait("dev1") is False
 
 
 async def test_hello_registers_device_identity(client: TestClient) -> None:

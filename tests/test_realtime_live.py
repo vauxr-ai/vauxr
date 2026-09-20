@@ -24,7 +24,8 @@ from pipecat.transports.smallwebrtc.transport import RawAudioTrack, SmallWebRTCC
 from realtime_live import LiveService
 
 
-async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatch):
+@pytest.mark.parametrize('physical', [False, True])
+async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatch, physical):
     assert version("pipecat-ai") == "1.9.0"
     monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
     wire, operations, output_audio = [], [], []
@@ -42,8 +43,13 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
         return {"recorded": len(payload["fragments"])}
 
     session = SimpleNamespace(_agent_server=SimpleNamespace(realtime_request=request), device_id="browser",
-        _send_control=AsyncMock(), _touch_activity=lambda: None, close=AsyncMock())
+        _send_control=AsyncMock(return_value=True), _touch_activity=lambda: None, close=AsyncMock(),
+        _handoff_pending=physical, _closed=False, _ended_notified=False, _mic_paused=False,
+        _owns_control=lambda: True)
     llm = LiveService(session, "selected", {"realtime_model": "gpt-live-1", "realtime_voice": "cedar"})
+    session._handoff_pending = False
+    if physical:
+        llm.device_activity.start()
 
     # Exercise the installed output queue, client writer and track consumer.
     # Only peer connection setup/RTP are omitted; enqueue is not consumption.
@@ -68,6 +74,9 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
 
     client.write_audio_frame = write
     output = SmallWebRTCOutputTransport(client, TransportParams(audio_out_enabled=True))
+    if physical:
+        llm.device_activity.bind_output(output)
+        llm.device_activity.bind_track(track)
 
     async def receive():
         await consume.wait()
@@ -184,6 +193,12 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
             release.set()
             await asyncio.wait_for(spoken.wait(), 5)
             await wait_for_controls(lambda ts: any(t["text"] == "Done" for t in ts))
+            if physical:
+                controls = [c.args[0]['type'] for c in session._send_control.call_args_list]
+                assert 'audio.start' in controls
+                assert llm.device_activity.ready
+            else:
+                assert llm.device_activity is None
             # Stop mid-turn: seal the partial speaker turn once without waiting
             # for a provider final or recording cumulative UI snapshots.
             await llm.finish_transcript()
@@ -299,3 +314,70 @@ async def test_failed_bootstrap_releases_scope_through_real_offer_cleanup(monkey
     finally:
         await asyncio.wait_for(handler.close(), 2)
         await asyncio.wait_for(remote.close(), 2)
+
+
+async def test_device_handoff_bootstraps_completed_action_without_speaking_again(monkeypatch):
+    """Exercise the existing bootstrap contract and pinned session.start encoding."""
+    import agent_registry
+    import realtime_live
+    import realtime_session
+    from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+
+    monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
+    monkeypatch.setattr(agent_registry, "get_active", lambda: SimpleNamespace(id="selected", type="openclaw"))
+    manager = realtime_session.RealtimeManager()
+    monkeypatch.setattr(realtime_session, "_manager", manager)
+    operations, wire = [], []
+    completed = [
+        {"role": "user", "content": "Switch on the lamp"},
+        {"role": "assistant", "content": "The lamp is on."},
+        {"role": "developer", "content": "Action lamp-42 completed successfully. Do not repeat it."},
+    ]
+
+    async def request(agent, device, scope, operation, payload, timeout):
+        operations.append(operation)
+        assert (agent, device) == ("selected", "device")
+        assert operation == "bootstrap"
+        return {"instructions": "Use the completed backend action state.", "messages": completed}
+
+    # Keep the actual Live service, context adapter and event encoding. No paid
+    # provider, RTP negotiation or running pipeline is needed for this wire probe.
+    blocked = asyncio.Event()
+    monkeypatch.setattr(realtime_live, "WorkerRunner", lambda **kwargs: SimpleNamespace(
+        add_workers=AsyncMock(), run=blocked.wait))
+    session = realtime_session.RealtimeSession("device", SimpleNamespace(realtime_request=request))
+    manager.prepare_handoff("device")
+    session._handoff_pending = True
+    connection = SmallWebRTCConnection(ice_servers=[])
+    try:
+        await session.start(connection)
+        service = session._live_service
+        async def capture(event):
+            wire.append(event.model_dump(exclude_none=True))
+        service.send_client_event = capture
+        await service._handle_context(session._context)
+        assert operations == ["bootstrap"]
+        assert len(wire) == 1 and wire[0]["type"] == "session.start"
+        encoded = json.dumps(wire[0])
+        assert "Switch on the lamp" in encoded and "The lamp is on." in encoded
+        assert "lamp-42 completed successfully" in encoded
+        assert not service._opening_instruction
+        assert completed[-1]["role"] == "developer"  # Do not mutate backend records.
+        # Before media acknowledgement the pinned service receives no microphone PCM.
+        parent_process = AsyncMock()
+        monkeypatch.setattr(realtime_live.OpenAILiveLLMService, "process_frame", parent_process)
+        from pipecat.processors.frame_processor import FrameDirection
+        frame = InputAudioRawFrame(bytes(960), 24000, 1)
+        await service.process_frame(frame, FrameDirection.DOWNSTREAM)
+        parent_process.assert_not_awaited()
+        session._handoff_pending = False
+        await service.process_frame(frame, FrameDirection.DOWNSTREAM)
+        parent_process.assert_awaited_once()
+    finally:
+        for task in (session._runner_task, session._backstop_task):
+            if task:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        if session._live_service:
+            await session._live_service.cleanup()
+        await connection.disconnect()
