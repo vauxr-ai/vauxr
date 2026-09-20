@@ -156,7 +156,11 @@ def resolve(device_id: str = "") -> Selection:
 
 
 async def readiness(backend: Backend) -> str:
-    """Bounded Wyoming describe probe; not an inference or hardware benchmark."""
+    """Bounded provider probe; not an inference or hardware benchmark."""
+    if backend.adapter == "openai":
+        import openai_tts
+
+        return await openai_tts.readiness(backend)
     from wyoming_protocol import WyomingEvent, encode_event, parse_wyoming_events
 
     writer = None

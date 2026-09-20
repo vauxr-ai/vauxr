@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from speech_models import Backend, Selection
 from wyoming_protocol import WyomingEvent
+import openai_tts
 
 if TYPE_CHECKING:
     from config import Config
@@ -23,7 +24,7 @@ _LEGACY_ENV = {
     "TTS_URL": ("PIPER_URL", "tcp://piper:10200"),
     "TTS_VOICE": ("PIPER_VOICE", "en_US-libritts_r-medium"),
 }
-_ADAPTERS = {"stt": {"wyoming", "whisper", "parakeet-v3"}, "tts": {"wyoming", "piper", "kokoro"}}
+_ADAPTERS = {"stt": {"wyoming", "whisper", "parakeet-v3"}, "tts": {"wyoming", "piper", "kokoro", openai_tts.ADAPTER}}
 
 
 def speech_env(name: str) -> str:
@@ -53,6 +54,10 @@ def load_backends(cfg: Config) -> tuple[Backend, ...]:
         Backend("whisper", "stt", "whisper", "legacy-whisper", cfg.stt.host, cfg.stt.port),
         Backend("piper", "tts", "piper", cfg.tts.voice, cfg.tts.host, cfg.tts.port, (cfg.tts.voice,)),
     ]
+    if os.environ.get("OPENAI_API_KEY"):
+        # Optional hosted TTS sharing the GPT-Live voices; Piper stays the default.
+        backends.append(Backend("openai-tts", "tts", openai_tts.ADAPTER, openai_tts.MODEL,
+                                "api.openai.com", 443, openai_tts.VOICES))
     path = Path(cfg.data_dir) / "speech-providers.json"
     if path.exists():
         for item in json.loads(path.read_text()):
