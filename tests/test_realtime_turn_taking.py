@@ -378,6 +378,29 @@ async def test_hello_offer_url_uses_trusted_owner_origin_not_realtime_host(clien
         assert "192.168.1.50" not in policy["offer_url"]
 
 
+async def test_realtime_start_without_mode_field_routes_persisted_realtime_to_live(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Firmware's sendRealtimeStart() never sends a `mode` field (see
+    vauxr_client.cpp) — a device persisted as pipeline_mode realtime must still
+    route into GPT-Live on its own, not silently fall through to the legacy
+    Standard-then-AgentLLM WebRTC path.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
+    dev_reg.update_config("dev1", {"pipeline_mode": "realtime"})
+    from speech import get_store as speech_store
+    speech_store().update({"mode": "realtime"}, device_id="dev1")
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json(
+            {"type": "hello", "device_id": "dev1", "token": "ws-test-token", "caps": ["ws", "webrtc"]}
+        )
+        await _recv_json(ws)
+        await ws.send_json({"type": "realtime.start", "device_id": "dev1", "token": "ws-test-token"})
+        reply = await _recv_json(ws)
+        assert reply == {"type": "realtime.armed"}
+        assert "dev1" in realtime_session.get_manager()._live_devices
+
+
 async def test_hello_registers_device_identity(client: TestClient) -> None:
     async with client.ws_connect("/ws") as ws:
         await ws.send_json(

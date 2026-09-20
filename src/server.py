@@ -473,7 +473,13 @@ async def _realtime_start(
         log.info("realtime.start from %s — warm re-wake on live session", device_id)
         return
 
-    if msg.get("mode") == "live":
+    # Firmware never sends `mode` on realtime.start (see vauxr_client.cpp
+    # sendRealtimeStart) — it only exists as an explicit Talk Live trigger from
+    # non-firmware clients (web-client). A device persisted as pipeline_mode
+    # realtime must still route to GPT-Live on its own, or it silently falls
+    # through to the legacy Standard-then-AgentLLM WebRTC path below.
+    wants_live = msg.get("mode") == "live" or pipeline_mode(registry.get_config_for(device_id)) == "realtime"
+    if wants_live:
         import os
         from speech import get_store as speech_store
         if speech_store().voice_settings(device_id)["mode"] != "realtime" or not os.environ.get("OPENAI_API_KEY"):
