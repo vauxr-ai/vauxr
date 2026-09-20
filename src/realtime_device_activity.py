@@ -153,9 +153,11 @@ class DeviceActivity:
                 return
             elif self.state == 'output':
                 message = {'type': 'audio.start', 'sample_rate': 24000}
-            elif self.state in ('processing', 'startup'):
-                message = {'type': 'transcript', 'text': ''}
             else:
+                # Legacy transcript controls put firmware in PROCESSING, which
+                # intentionally substitutes silence for microphone PCM. Live
+                # must remain full-duplex during provider/backend work. The
+                # speech/activity control holds its idle timer without muting TX.
                 message = {'type': 'speech.start'}
             revision = self.revision
             first_notice = self.last_sent == float('-inf')

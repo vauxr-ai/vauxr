@@ -24,8 +24,14 @@ class FirmwareIdle:
         self.open_mic = True
         self.deadline = clock() + 8
         self.messages = []
+        self.tx_muted = False
     async def send(self, message):
         self.messages.append(message)
+        # VauxrClient::setState: PROCESSING mutes TX; speech.start keeps it live.
+        if message['type'] == 'transcript':
+            self.tx_muted = True
+        elif message['type'] in ('speech.start', 'audio.start', 'audio.end'):
+            self.tx_muted = False
         if message['type'] in ('speech.start', 'transcript', 'audio.start'):
             self.open_mic = False
         elif message['type'] == 'audio.end':
@@ -175,7 +181,7 @@ async def test_startup_and_backend_stall_are_bounded():
     clock, fw, session, activity = setup_activity()
     activity.ready = False
     await activity.tick()
-    assert fw.messages[-1]['type'] == 'transcript'
+    assert fw.messages[-1]['type'] == 'speech.start'
     clock.advance(16)
     await activity.tick()
     await asyncio.sleep(0)
@@ -190,3 +196,22 @@ async def test_startup_and_backend_stall_are_bounded():
     await asyncio.sleep(0)
     assert activity.closed
     session.close.assert_awaited_once()
+
+async def test_processing_lease_preserves_microphone_for_next_utterance():
+    clock, fw, _, activity = setup_activity()
+    await activity.tick()
+    await activity.transcript('user', 'request')
+    for _ in range(15):
+        await activity.tick()
+        assert not fw.tx_muted, 'processing lease must not force silence into Opus'
+        assert not fw.expired()
+        clock.advance()
+    assert not any(m['type'] == 'transcript' for m in fw.messages)
+    await activity.delegation('work', True)
+    await activity.tick()
+    assert not fw.tx_muted
+    await activity.delegation('work', False)
+    await activity.tick()
+    clock.advance(9)
+    await activity.tick()
+    assert fw.expired(), 'real inactivity still expires after work ends'
