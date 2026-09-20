@@ -207,9 +207,12 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
     caps = msg.get("caps")
     caps_list = [c for c in caps if isinstance(c, str)] if isinstance(caps, list) else []
     rt = get_config().realtime
-    # WebRTC needs an absolute, device-reachable offer URL and reliable ICE host
-    # munging (esp32 mode). Without REALTIME_HOST the offer_url is relative and
-    # ICE is unreliable, so fall back to ws rather than advertise a broken policy.
+    # WebRTC needs an absolute offer URL at the device's trusted signaling origin
+    # (firmware only arms realtime when offer_url shares that same origin — see
+    # applyHelloPolicy's same-origin credential guard) and reliable ICE host
+    # munging (esp32 mode, driven separately by REALTIME_HOST). Without
+    # REALTIME_HOST, ICE is unreliable, so fall back to ws rather than advertise
+    # a broken policy.
     mode = pipeline_mode(registry.get_config_for(ctx.device_id or ""))
     webrtc_ok = mode == "realtime" and rt.enabled and "webrtc" in caps_list and bool(rt.host)
     if rt.enabled and "webrtc" in caps_list and not rt.host:
@@ -234,8 +237,12 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
 
     realtime_policy: dict[str, Any] = {"enabled": False, "transport": "ws"}
     if webrtc_ok:
-        http_port = get_config().http.port
-        offer_url = f"http://{rt.host}:{http_port}{rt.offer_path}"
+        # offer_url must be same-origin with the device's trusted signaling
+        # origin (owner_auth.configured_origin) so firmware's credential guard
+        # accepts it — REALTIME_HOST is for ICE candidate host munging only and
+        # must never appear in this URL.
+        from owner_auth import configured_origin
+        offer_url = configured_origin() + rt.offer_path
         realtime_policy = {
             "enabled": True,
             "transport": "webrtc",

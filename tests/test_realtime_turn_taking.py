@@ -353,6 +353,31 @@ async def test_hello_realtime_policy_includes_taper_and_vad(client: TestClient) 
         assert policy["vad"]["stop_secs"] == 2.0
 
 
+async def test_hello_offer_url_uses_trusted_owner_origin_not_realtime_host(client: TestClient) -> None:
+    """offer_url must be same-origin with the device's trusted signaling origin
+    (owner_auth.configured_origin), not REALTIME_HOST — firmware's applyHelloPolicy
+    same-origin credential guard rejects any other authority and silently keeps
+    the device on the Standard pipeline forever.
+    """
+    dev_reg.update_config("dev1", {"pipeline_mode": "realtime"})
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json(
+            {
+                "type": "hello",
+                "device_id": "dev1",
+                "token": "ws-test-token",
+                "platform": "satellite1",
+                "caps": ["ws", "webrtc"],
+            }
+        )
+        hello = await _recv_json(ws)
+        policy = hello["realtime"]
+        assert policy["enabled"] is True
+        from owner_auth import configured_origin
+        assert policy["offer_url"] == configured_origin() + "/api/offer"
+        assert "192.168.1.50" not in policy["offer_url"]
+
+
 async def test_hello_registers_device_identity(client: TestClient) -> None:
     async with client.ws_connect("/ws") as ws:
         await ws.send_json(
