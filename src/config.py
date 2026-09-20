@@ -61,6 +61,8 @@ class RealtimeConfig:
     host: str
     stun_url: str
     offer_path: str
+    # dB applied to GPT-Live spoken audio so it matches Standard-mode TTS loudness.
+    output_gain_db: float
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,7 @@ def load_config() -> Config:
             host=_optional("REALTIME_HOST", ""),
             stun_url=_optional("REALTIME_STUN_URL", "stun:stun.l.google.com:19302"),
             offer_path=_optional("REALTIME_OFFER_PATH", "/api/offer"),
+            output_gain_db=float(_optional("REALTIME_OUTPUT_GAIN_DB", "6")),
         ),
         log_level=_optional("LOG_LEVEL", "info"),
         tls=load_tls_config(_optional("DATA_DIR", "/data")),

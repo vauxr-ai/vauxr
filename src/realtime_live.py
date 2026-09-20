@@ -8,14 +8,22 @@ import time
 from typing import Any
 
 from pipecat.bus import BusJobRequestMessage
-from pipecat.frames.frames import (CancelFrame, EndFrame, Frame, InputAudioRawFrame,
-    InterruptionFrame, LLMRunFrame, SpeechOutputAudioRawFrame)
+from pipecat.frames.frames import (
+    CancelFrame,
+    EndFrame,
+    Frame,
+    InputAudioRawFrame,
+    InterruptionFrame,
+    LLMRunFrame,
+    OutputAudioRawFrame,
+    SpeechOutputAudioRawFrame,
+)
 from pipecat.pipeline.job_decorator import job
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
-from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.openai.live import events as live_events
 from pipecat.services.openai.live.llm import ClientDelegation, OpenAILiveLLMService
 from pipecat.transports.base_transport import TransportParams
@@ -24,7 +32,9 @@ from pipecat.workers.base_worker import BaseWorker
 from pipecat.workers.runner import WorkerRunner
 
 import agent_registry
+from config import get_config
 from realtime_audio_diagnostics import LiveAudioDiagnostics
+from realtime_gain import apply_gain, db_to_linear
 from realtime_transcript import TranscriptRelay
 from speech import get_store
 
@@ -264,13 +274,26 @@ class LiveService(OpenAILiveLLMService):
                 del self.fragments[:len(batch)]
 
 
+class OutputGain(FrameProcessor):
+    """Scale spoken PCM leaving the Live service so it matches Standard-mode loudness."""
+
+    def __init__(self, gain_db: float) -> None:
+        super().__init__()
+        self.gain = db_to_linear(gain_db)
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if isinstance(frame, OutputAudioRawFrame) and direction == FrameDirection.DOWNSTREAM:
+            frame.audio = apply_gain(frame.audio, self.gain)
+        await self.push_frame(frame, direction)
+
+
 async def start_live(session: Any, connection: Any) -> None:
     active = agent_registry.get_active()
     if active is None or active.type != "openclaw":
         raise ValueError("Realtime requires a selected OpenClaw integration Agent")
     session._connection = connection
     if getattr(session, "_handoff_pending", False):
-        from config import get_config
         if get_config().realtime.esp32_mode:
             from realtime_transport import use_websocket_control
             use_websocket_control(connection)
@@ -307,7 +330,8 @@ async def start_live(session: Any, connection: Any) -> None:
             session._rtp_probes = rtp_probes
         llm.audio_diagnostics.bind_output(transport.output())
     session._context = context
-    session._task = PipelineWorker(Pipeline([transport.input(), user, llm, transport.output(), assistant]),
+    gain = OutputGain(get_config().realtime.output_gain_db)
+    session._task = PipelineWorker(Pipeline([transport.input(), user, llm, gain, transport.output(), assistant]),
         params=PipelineParams(audio_in_sample_rate=24000, audio_out_sample_rate=24000))
     session._runner = WorkerRunner(handle_sigint=False)
 

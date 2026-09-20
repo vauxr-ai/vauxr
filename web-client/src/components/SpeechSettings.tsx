@@ -108,6 +108,6 @@ export default function SpeechSettings({ deviceId, onModeChange }: {
       <button className={style} onClick={() => void update()}>Refresh speech</button>
     </fieldset>}
     {data?.voice?.mode !== "realtime" && effective && <p className="text-sm">Effective: {effective.stt_backend} / {effective.tts_backend} / {effective.voice_id}</p>}
-    <p className="text-xs text-zinc-500">Readiness checks Wyoming capabilities, not model inference. Unavailable providers do not fall back automatically.</p>
+    <p className="text-xs text-zinc-500">Readiness checks provider availability, not model inference. Unavailable providers do not fall back automatically.</p>
   </section>;
 }
