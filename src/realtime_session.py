@@ -196,6 +196,9 @@ class RealtimeSession:
         self._vad_normal_params: Any = None
         self._vad_barge_in_params: Any = None
         self._vad_active_params: Any = None
+        # Metadata-only aiortc receiver monitor, enabled with the existing audio
+        # diagnostics flag and owned by this session's teardown.
+        self._rtp_diag_task: asyncio.Task[None] | None = None
 
     @property
     def is_closed(self) -> bool:
@@ -1014,6 +1017,8 @@ class RealtimeSession:
             self._cancel_drain_timer()
             if self._backstop_task is not None:
                 self._backstop_task.cancel()
+            if self._rtp_diag_task is not None:
+                self._rtp_diag_task.cancel()
             self._close_attempts = []
             if self._live_service is not None:
                 if self._live_service.flush_task is not None:

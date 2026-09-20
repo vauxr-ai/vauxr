@@ -294,4 +294,6 @@ async def start_live(session: Any, connection: Any) -> None:
     session._runner_task = asyncio.create_task(run())
     session._backstop_task = asyncio.create_task(session._safety_backstop())
     if llm.audio_diagnostics:
+        from realtime_rtp_diagnostics import monitor
         llm.audio_diagnostics.start()
+        session._rtp_diag_task = asyncio.create_task(monitor(connection, session.device_id))
