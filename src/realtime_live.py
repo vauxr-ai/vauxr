@@ -254,7 +254,12 @@ async def start_live(session: Any, connection: Any) -> None:
     user, assistant = LLMContextAggregatorPair(context)
     transport = SmallWebRTCTransport(webrtc_connection=connection,
         params=TransportParams(audio_in_enabled=True, audio_out_enabled=True))
+    rtp_probes = None
     if llm.audio_diagnostics:
+        from realtime_rtp_diagnostics import install
+        if getattr(session, "_handoff_pending", False):
+            rtp_probes = install(connection)
+            session._rtp_probes = rtp_probes
         llm.audio_diagnostics.bind_output(transport.output())
     session._context = context
     session._task = PipelineWorker(Pipeline([transport.input(), user, llm, transport.output(), assistant]),
@@ -296,4 +301,4 @@ async def start_live(session: Any, connection: Any) -> None:
     if llm.audio_diagnostics:
         from realtime_rtp_diagnostics import monitor
         llm.audio_diagnostics.start()
-        session._rtp_diag_task = asyncio.create_task(monitor(connection, session.device_id))
+        session._rtp_diag_task = asyncio.create_task(monitor(connection, session.device_id, rtp_probes or []))

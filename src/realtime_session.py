@@ -199,6 +199,7 @@ class RealtimeSession:
         # Metadata-only aiortc receiver monitor, enabled with the existing audio
         # diagnostics flag and owned by this session's teardown.
         self._rtp_diag_task: asyncio.Task[None] | None = None
+        self._rtp_probes: list[Any] = []
 
     @property
     def is_closed(self) -> bool:
@@ -1019,6 +1020,9 @@ class RealtimeSession:
                 self._backstop_task.cancel()
             if self._rtp_diag_task is not None:
                 self._rtp_diag_task.cancel()
+            for probe in self._rtp_probes:
+                probe.restore()
+            self._rtp_probes.clear()
             self._close_attempts = []
             if self._live_service is not None:
                 if self._live_service.flush_task is not None:
