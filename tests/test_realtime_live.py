@@ -24,7 +24,8 @@ from pipecat.transports.smallwebrtc.transport import RawAudioTrack, SmallWebRTCC
 from realtime_live import LiveService
 
 
-async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatch):
+@pytest.mark.parametrize('physical', [False, True])
+async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatch, physical):
     assert version("pipecat-ai") == "1.9.0"
     monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
     wire, operations, output_audio = [], [], []
@@ -42,8 +43,13 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
         return {"recorded": len(payload["fragments"])}
 
     session = SimpleNamespace(_agent_server=SimpleNamespace(realtime_request=request), device_id="browser",
-        _send_control=AsyncMock(), _touch_activity=lambda: None, close=AsyncMock())
+        _send_control=AsyncMock(return_value=True), _touch_activity=lambda: None, close=AsyncMock(),
+        _handoff_pending=physical, _closed=False, _ended_notified=False, _mic_paused=False,
+        _owns_control=lambda: True)
     llm = LiveService(session, "selected", {"realtime_model": "gpt-live-1", "realtime_voice": "cedar"})
+    session._handoff_pending = False
+    if physical:
+        llm.device_activity.start()
 
     # Exercise the installed output queue, client writer and track consumer.
     # Only peer connection setup/RTP are omitted; enqueue is not consumption.
@@ -68,6 +74,9 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
 
     client.write_audio_frame = write
     output = SmallWebRTCOutputTransport(client, TransportParams(audio_out_enabled=True))
+    if physical:
+        llm.device_activity.bind_output(output)
+        llm.device_activity.bind_track(track)
 
     async def receive():
         await consume.wait()
@@ -184,6 +193,12 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
             release.set()
             await asyncio.wait_for(spoken.wait(), 5)
             await wait_for_controls(lambda ts: any(t["text"] == "Done" for t in ts))
+            if physical:
+                controls = [c.args[0]['type'] for c in session._send_control.call_args_list]
+                assert 'audio.start' in controls
+                assert llm.device_activity.ready
+            else:
+                assert llm.device_activity is None
             # Stop mid-turn: seal the partial speaker turn once without waiting
             # for a provider final or recording cumulative UI snapshots.
             await llm.finish_transcript()

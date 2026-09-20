@@ -8,7 +8,8 @@ import time
 from typing import Any
 
 from pipecat.bus import BusJobRequestMessage
-from pipecat.frames.frames import Frame, InputAudioRawFrame, LLMRunFrame, SpeechOutputAudioRawFrame
+from pipecat.frames.frames import (CancelFrame, EndFrame, Frame, InputAudioRawFrame,
+    InterruptionFrame, LLMRunFrame, SpeechOutputAudioRawFrame)
 from pipecat.pipeline.job_decorator import job
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -60,6 +61,8 @@ class LiveService(OpenAILiveLLMService):
     """
     def __init__(self, session: Any, agent_id: str, settings: dict[str, str]) -> None:
         self.session = session
+        from realtime_device_activity import DeviceActivity
+        self.device_activity = DeviceActivity(session) if getattr(session, "_handoff_pending", False) else None
         self.agent_id = agent_id
         self.session_id = secrets.token_hex(16)
         self.fragments: list[dict[str, object]] = []
@@ -78,6 +81,17 @@ class LiveService(OpenAILiveLLMService):
                          delegation=ClientDelegation(backend=BackendWorker(self), timeout_secs=300))
 
     async def _handle_server_event(self, evt: live_events.ServerEvent) -> None:
+        activity = self.device_activity
+        if activity:
+            if evt.type == "session.started":
+                activity.ready = True
+            elif evt.type in ("session.closed", "error"):
+                await activity.stop()
+            elif isinstance(evt, live_events.SessionDelegationCreatedEvent):
+                await activity.delegation(evt.delegation.id, True)
+            elif isinstance(evt, live_events.ResponseEventEnvelope):
+                if evt.inner_type in ("response.completed", "response.incomplete", "response.failed", "response.cancelled"):
+                    await activity.delegation(evt.delegation_id, False)
         diagnostic = self.audio_diagnostics
         if diagnostic is None or not diagnostic.active:
             await super()._handle_server_event(evt)
@@ -108,6 +122,13 @@ class LiveService(OpenAILiveLLMService):
             if self.audio_diagnostics:
                 self.audio_diagnostics.count("input_blocked_handoff")
             return
+        if self.device_activity:
+            if isinstance(frame, InputAudioRawFrame):
+                await self.device_activity.input_audio(frame)
+            elif isinstance(frame, InterruptionFrame):
+                await self.device_activity.interrupt()
+            elif isinstance(frame, (CancelFrame, EndFrame)):
+                self.device_activity.close()
         if self.audio_diagnostics and isinstance(frame, InputAudioRawFrame):
             self.audio_diagnostics.pcm("mic", frame.audio, frame.sample_rate)
             if not self._session_started:
@@ -115,6 +136,8 @@ class LiveService(OpenAILiveLLMService):
         await super().process_frame(frame, direction)
 
     async def push_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+        if self.device_activity and isinstance(frame, SpeechOutputAudioRawFrame):
+            await self.device_activity.provider_audio(frame.audio)
         if self.audio_diagnostics and isinstance(frame, SpeechOutputAudioRawFrame):
             self.audio_diagnostics.pcm("provider", frame.audio, frame.sample_rate)
         await super().push_frame(frame, direction)
@@ -129,6 +152,8 @@ class LiveService(OpenAILiveLLMService):
             return
         if evt.delta:
             self.session._touch_activity()
+            if self.device_activity:
+                await self.device_activity.transcript(evt.role, evt.delta)
         await super()._handle_evt_transcript_delta(evt)
 
     async def _open_turn(self, role: str) -> None:
@@ -169,7 +194,16 @@ class LiveService(OpenAILiveLLMService):
         if not self.finishing:
             asyncio.create_task(self.session.close())
 
+    async def _run_client_delegation(self, delegation: Any) -> None:
+        try:
+            await super()._run_client_delegation(delegation)
+        finally:
+            if self.device_activity:
+                await self.device_activity.delegation(delegation.id, False)
+
     async def cleanup(self) -> None:
+        if self.device_activity:
+            self.device_activity.close()
         await self.transcript_relay.close()
         if self.audio_diagnostics:
             await self.audio_diagnostics.close()
@@ -186,6 +220,8 @@ class LiveService(OpenAILiveLLMService):
 
     async def finish_transcript(self) -> None:
         self.finishing = True
+        if self.device_activity:
+            self.device_activity.close()
 
         async def finish() -> None:
             # Seal partial output once, before the provider/pipeline is cancelled.
@@ -260,6 +296,9 @@ async def start_live(session: Any, connection: Any) -> None:
     user, assistant = LLMContextAggregatorPair(context)
     transport = SmallWebRTCTransport(webrtc_connection=connection,
         params=TransportParams(audio_in_enabled=True, audio_out_enabled=True))
+    if llm.device_activity:
+        llm.device_activity.bind_output(transport.output())
+        llm.device_activity.start()
     rtp_probes = None
     if llm.audio_diagnostics:
         from realtime_rtp_diagnostics import install
@@ -276,6 +315,8 @@ async def start_live(session: Any, connection: Any) -> None:
     async def connected(_transport: Any, _connection: Any) -> None:
         if llm.audio_diagnostics:
             llm.audio_diagnostics.bind_track(transport.output()._client._audio_output_track)
+        if llm.device_activity:
+            llm.device_activity.bind_track(transport.output()._client._audio_output_track)
         session._pipeline_ready.set()
         await session._task.queue_frame(LLMRunFrame())
 
