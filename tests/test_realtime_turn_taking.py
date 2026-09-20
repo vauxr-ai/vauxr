@@ -397,8 +397,12 @@ async def test_realtime_start_without_mode_field_routes_persisted_realtime_to_li
         await _recv_json(ws)
         await ws.send_json({"type": "realtime.start", "device_id": "dev1", "token": "ws-test-token"})
         reply = await _recv_json(ws)
-        assert reply == {"type": "realtime.armed"}
-        assert "dev1" in realtime_session.get_manager()._live_devices
+        # Firmware expects ready, captures one Standard opening turn, then sends
+        # playback receipt -> handoff -> offer. GPT-Live is selected in parallel.
+        assert reply == {"type": "ready"}
+        manager = realtime_session.get_manager()
+        assert "dev1" in manager._live_devices
+        assert manager.is_cold_wait("dev1") is False
 
 
 async def test_hello_registers_device_identity(client: TestClient) -> None:

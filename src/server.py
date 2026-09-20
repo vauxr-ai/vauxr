@@ -478,8 +478,9 @@ async def _realtime_start(
     # non-firmware clients (web-client). A device persisted as pipeline_mode
     # realtime must still route to GPT-Live on its own, or it silently falls
     # through to the legacy Standard-then-AgentLLM WebRTC path below.
-    wants_live = msg.get("mode") == "live" or pipeline_mode(registry.get_config_for(device_id)) == "realtime"
-    if wants_live:
+    persisted_live = pipeline_mode(registry.get_config_for(device_id)) == "realtime"
+    explicit_live = msg.get("mode") == "live"
+    if explicit_live or persisted_live:
         import os
         from speech import get_store as speech_store
         if speech_store().voice_settings(device_id)["mode"] != "realtime" or not os.environ.get("OPENAI_API_KEY"):
@@ -491,13 +492,17 @@ async def _realtime_start(
         if not current(ctx.principal):
             await ws.close()
             return
-        ctx.realtime_media = True
         manager._live_devices.add(device_id)
-        registry.set_state(device_id, "listening")
-        await send_json(ws, {"type": "realtime.armed"})
-        return
+        if explicit_live:
+            # Browser Talk Live has no Standard opening turn; admit its offer now.
+            ctx.realtime_media = True
+            registry.set_state(device_id, "listening")
+            await send_json(ws, {"type": "realtime.armed"})
+            return
 
-    # Devices complete one Standard turn before a Live offer is admitted.
+    # Firmware omits `mode`: run one complete Standard opening turn while the
+    # GPT-Live selection is armed in _live_devices. The device sends playback
+    # receipt -> realtime.handoff -> offer, and start_live() then selects GPT-Live.
     ctx.realtime_media = False
     if ctx.state == ConnectionState.IDLE:
         await _voice_start(state, ws, ctx, msg)
