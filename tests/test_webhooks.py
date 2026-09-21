@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-import config as cfg_mod
-import webhooks
+import vauxr.config as cfg_mod
+import vauxr.web.webhooks as webhooks
 
 
 @pytest.fixture(autouse=True)
@@ -18,7 +18,7 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
     monkeypatch.setenv("DEVICE_TOKEN", "tok")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    from auth_policy import Role
+    from vauxr.auth.policy import Role
     from tests.auth_helpers import seed
     seed("tok", Role.OWNER, "owner")
     webhooks.reset_for_tests()
@@ -142,7 +142,7 @@ from collections.abc import AsyncIterator
 
 from aiohttp.test_utils import TestClient, TestServer
 
-from http_server import make_http_app
+from vauxr.web.server import make_http_app
 from tests.auth_helpers import owner_headers
 
 

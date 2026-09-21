@@ -38,7 +38,7 @@ from pipecat.transports.smallwebrtc.transport import (
 )
 from pipecat.workers.runner import WorkerRunner
 
-from realtime_live import LiveService
+from vauxr.realtime.live import LiveService
 
 
 async def until(predicate: Callable[[], bool]) -> None:

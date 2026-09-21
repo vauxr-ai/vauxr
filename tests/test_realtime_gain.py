@@ -3,7 +3,7 @@ from array import array
 
 import pytest
 
-from realtime_gain import apply_gain, db_to_linear
+from vauxr.realtime.gain import apply_gain, db_to_linear
 
 
 def _pcm(*samples: int) -> bytes:
@@ -49,7 +49,7 @@ def test_odd_trailing_byte_is_preserved():
 
 
 def test_realtime_config_reads_output_gain(monkeypatch):
-    import config
+    import vauxr.config as config
 
     monkeypatch.setenv("REALTIME_OUTPUT_GAIN_DB", "3.5")
     assert config.load_config().realtime.output_gain_db == 3.5
@@ -62,7 +62,7 @@ async def test_output_gain_processor_scales_live_speech_frames(monkeypatch):
     from pipecat.frames.frames import SpeechOutputAudioRawFrame, TextFrame
     from pipecat.processors.frame_processor import FrameDirection
 
-    from realtime_live import OutputGain
+    from vauxr.realtime.live import OutputGain
 
     monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
     gain = OutputGain(6.0)

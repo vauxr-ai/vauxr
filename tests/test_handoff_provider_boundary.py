@@ -10,10 +10,10 @@ from aiortc import AudioStreamTrack, RTCConfiguration, RTCPeerConnection, RTCSes
 from pipecat.services.openai.live.llm import OpenAILiveLLMService
 from websockets.asyncio.server import serve
 
-import agent_registry
-import device_registry
-import realtime_session
-import server
+import vauxr.agents.registry as agent_registry
+import vauxr.devices.registry as device_registry
+import vauxr.realtime.session as realtime_session
+import vauxr.server as server
 
 
 @pytest.mark.asyncio

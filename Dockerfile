@@ -44,5 +44,4 @@ USER vauxr
 EXPOSE 8765
 EXPOSE 8080
 EXPOSE 8443
-# Flat layout — server modules sit at top level after hatchling's sources=["src"]
-CMD ["python", "-m", "server"]
+CMD ["python", "-m", "vauxr"]

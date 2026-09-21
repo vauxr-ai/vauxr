@@ -20,16 +20,16 @@ from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import RawAudioTrack
 
-import auth_connections
-import agent_registry
-import device_registry
-import realtime_llm
-import realtime_session
-import realtime_wyoming
-from agent_server import AgentServer, _Connection
-from lifecycle import Lifecycle
-from realtime_llm import AgentLLMService, OutputDrainTap
-from realtime_transport import AudioConsumption
+import vauxr.auth.connections as auth_connections
+import vauxr.agents.registry as agent_registry
+import vauxr.devices.registry as device_registry
+import vauxr.realtime.llm as realtime_llm
+import vauxr.realtime.session as realtime_session
+import vauxr.realtime.wyoming as realtime_wyoming
+from vauxr.agents.server import AgentServer, _Connection
+from vauxr.provisioning.lifecycle import Lifecycle
+from vauxr.realtime.llm import AgentLLMService, OutputDrainTap
+from vauxr.realtime.transport import AudioConsumption
 from tests.test_integration import ORIGIN, ack_body, deliver, env, setup
 
 assert env and setup  # imported enrollment fixtures

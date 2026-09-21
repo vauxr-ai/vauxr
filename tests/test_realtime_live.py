@@ -21,7 +21,7 @@ from pipecat.workers.runner import WorkerRunner
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import RawAudioTrack, SmallWebRTCClient, SmallWebRTCOutputTransport
 
-from realtime_live import LiveService
+from vauxr.realtime.live import LiveService
 
 
 @pytest.mark.parametrize('physical', [False, True])
@@ -266,9 +266,9 @@ async def test_record_retry_preserves_turn_ids_and_serializes_flushes(monkeypatc
 async def test_failed_bootstrap_releases_scope_through_real_offer_cleanup(monkeypatch, failure):
     from aiortc import AudioStreamTrack, RTCConfiguration, RTCPeerConnection
 
-    import agent_registry
-    import realtime_session
-    from realtime_session import RealtimeManager
+    import vauxr.agents.registry as agent_registry
+    import vauxr.realtime.session as realtime_session
+    from vauxr.realtime.session import RealtimeManager
 
     assert version("pipecat-ai") == "1.9.0"
     monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
@@ -318,9 +318,9 @@ async def test_failed_bootstrap_releases_scope_through_real_offer_cleanup(monkey
 
 async def test_device_handoff_bootstraps_completed_action_without_speaking_again(monkeypatch):
     """Exercise the existing bootstrap contract and pinned session.start encoding."""
-    import agent_registry
-    import realtime_live
-    import realtime_session
+    import vauxr.agents.registry as agent_registry
+    import vauxr.realtime.live as realtime_live
+    import vauxr.realtime.session as realtime_session
     from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 
     monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")

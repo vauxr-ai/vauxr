@@ -11,13 +11,13 @@ import pytest
 from aiohttp import ClientWebSocketResponse
 from aiohttp.test_utils import TestClient, TestServer
 
-import auth
-import agent_registry as agents
-import config
-import device_registry as devices
-import pipeline
-from auth_policy import Role
-from server import APP_STATE, make_app
+import vauxr.auth.service as auth
+import vauxr.agents.registry as agents
+import vauxr.config as config
+import vauxr.devices.registry as devices
+import vauxr.pipeline as pipeline
+from vauxr.auth.policy import Role
+from vauxr.server import APP_STATE, make_app
 from tests.auth_helpers import seed
 
 A = "dev_" + "a" * 64

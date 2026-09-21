@@ -9,8 +9,8 @@ import pytest
 from aiohttp import WSMsgType
 from aiohttp.test_utils import TestServer, TestClient
 
-import config as cfg_mod
-from server import make_app
+import vauxr.config as cfg_mod
+from vauxr.server import make_app
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +19,7 @@ def _device_token(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setenv("DEVICE_TOKEN", "ws-test-token")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     from tests.auth_helpers import seed
-    from auth_policy import Role
+    from vauxr.auth.policy import Role
     seed("ws-test-token", Role.DEVICE, "dev1")
     yield
     cfg_mod.reset_config()
@@ -149,7 +149,7 @@ async def test_device_button_without_hello_is_ignored(
     async def fake_handle(**kwargs):
         called.append(kwargs.get("device_id") or "")
 
-    monkeypatch.setattr("button_dispatch.handle_device_button", fake_handle)
+    monkeypatch.setattr("vauxr.buttons.handle_device_button", fake_handle)
     async with client.ws_connect("/ws") as ws:
         await ws.send_json(
             {
@@ -173,7 +173,7 @@ async def test_device_button_ignores_spoofed_device_id(
     async def fake_handle(**kwargs):
         called.append(kwargs.get("device_id") or "")
 
-    monkeypatch.setattr("button_dispatch.handle_device_button", fake_handle)
+    monkeypatch.setattr("vauxr.buttons.handle_device_button", fake_handle)
     async with client.ws_connect("/ws") as ws:
         await ws.send_json(
             {
@@ -206,8 +206,8 @@ async def test_aborted_turn_finally_cannot_clear_replacement(
 ) -> None:
     import asyncio
     from unittest.mock import AsyncMock
-    import server
-    import device_registry as registry
+    import vauxr.server as server
+    import vauxr.devices.registry as registry
 
     release = asyncio.Event()
     started = asyncio.Event()
@@ -271,7 +271,7 @@ def _browser_abort_message() -> dict[str, str]:
     """Couple the real WS test to the message used by every browser stop path."""
     import re
     from pathlib import Path
-    from auth_policy import WS_OPERATIONS
+    from vauxr.auth.policy import WS_OPERATIONS
 
     source = (Path(__file__).parents[1] / "web-client/src/hooks/voiceProtocol.ts").read_text()
     match = re.search(r'export const ABORT_MESSAGE = \{ type: "([^"]+)" \}', source)
@@ -288,8 +288,8 @@ async def test_browser_abort_through_authenticated_ws_dispatch(
 ) -> None:
     """Real auth + WS routing + PCM; deterministic speech boundary, no provider."""
     import asyncio
-    import server
-    import device_registry as registry
+    import vauxr.server as server
+    import vauxr.devices.registry as registry
 
     abort_message = _browser_abort_message()
     old_aborted = asyncio.Event()

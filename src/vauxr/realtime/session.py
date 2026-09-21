@@ -1,0 +1,1370 @@
+"""Per-device realtime session: a Pipecat WebRTC pipeline wired into vauxr.
+
+A `RealtimeSession` owns one device's WebRTC media pipeline (STT -> agent LLM
+-> TTS) and relays turn control (transcript / audio.start / audio.end{follow_up})
+back over the device's existing WS connection so the firmware's LED state machine
+and follow_up handling work unchanged.
+
+Cold wake: the command spoken right after the wake word is streamed over the
+always-on WS while WebRTC connects. On the device-VAD ``voice.end`` marker the
+server transcribes that buffered PCM (batch STT) and either seeds it into
+Pipecat (when WebRTC is connected) or runs the WS turn pipeline (fallback).
+Live follow-up turns use WebRTC audio -> VAD -> STT as normal.
+"""
+
+from __future__ import annotations
+
+import array
+import asyncio
+import json
+import logging
+import os
+import time
+import wave
+from collections import deque
+from collections.abc import Awaitable, Callable
+from functools import partial
+from typing import Any
+
+from aiohttp import web
+
+import vauxr.auth.connections as auth_connections
+import vauxr.devices.registry as registry
+from vauxr.config import get_config
+from vauxr.devices.config import barge_in_enabled
+from vauxr.devices.settings import get_realtime_vad, get_realtime_vad_barge_in, get_taper
+from vauxr.pipeline import strip_follow_up_tag
+from vauxr.speech.store import Selection, resolve
+
+log = logging.getLogger("vauxr.realtime")
+
+VOICE_SYSTEM = (
+    "You are a helpful voice assistant on a smart speaker. "
+    "Responses are spoken aloud — no emojis, markdown, code blocks, or URLs. "
+    "Use short, natural sentences. Be concise."
+)
+
+# How long the bot must stay silent before a reply counts as fully spoken. Must
+# comfortably exceed the gap between consecutive sentence-chunk TTS spans, but
+# stay short enough that follow-up/teardown feel responsive.
+_BOT_IDLE_DEBOUNCE_S = 1.0
+
+# Coarse last-resort reap for leaked sessions (device lost power with no peer
+# close). This is an *inactivity* deadline measured from the last sign of life
+# (turn, user speech, or seed) — NOT a fixed wall clock from session start —
+# so an actively-used warm session (device re-waking within its taper window) is
+# never reaped mid-conversation. Must exceed the device's taper drop timer
+# (T_idle1 + T_idle2): a healthy idle device drops its peer (closing the session
+# via on_client_disconnected) long before this fires.
+_SAFETY_BACKSTOP_S = 600.0
+# How often the backstop wakes to check the inactivity deadline.
+_SAFETY_BACKSTOP_POLL_S = 30.0
+
+
+async def _send_json(ws: Any, obj: dict[str, Any]) -> bool:
+    """Report local send success; this is not a device acknowledgement."""
+    if ws is None or getattr(ws, "closed", True):
+        return False
+    try:
+        await ws.send_str(json.dumps(obj, separators=(",", ":")))
+    except (ConnectionResetError, RuntimeError):
+        return False
+    return True
+
+
+def _device_ws(device_id: str) -> web.WebSocketResponse | None:
+    entry = registry.get(device_id)
+    return entry.ws if entry is not None else None
+
+
+def _latest_user_text(context: Any) -> str:
+    """Pull the most recent user-role text out of an LLMContext."""
+    try:
+        messages = context.get_messages()
+    except Exception:  # noqa: BLE001
+        return ""
+    for msg in reversed(messages):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = [p.get("text", "") for p in content if isinstance(p, dict)]
+            return " ".join(t for t in parts if t).strip()
+    return ""
+
+
+class _MediaCompletion:
+    """Bind control completion and output acknowledgement to one exact turn."""
+
+    def __init__(self, session: RealtimeSession, abort: asyncio.Event) -> None:
+        self.session = session
+        self.abort = abort
+        self.generation = session._turn_generation
+
+    async def __call__(self, follow_up: bool, reply: str) -> None:
+        await self.session._on_turn_complete(
+            follow_up, reply, turn_generation=self.generation, media_abort=self.abort,
+        )
+
+    async def output_drained(self) -> None:
+        if self.abort in self.session._agent_media and not self.session._closed:
+            self.session._drained_media.add(self.abort)
+            await self.session._drain_ends()
+
+
+class RealtimeSession:
+    """One device's live WebRTC pipeline + WS control relay."""
+
+    def __init__(self, device_id: str, agent_server: Any) -> None:
+        self.device_id = device_id
+        self._agent_server = agent_server
+        self._live_service: Any = None
+        self._task: Any = None
+        self._runner: Any = None
+        self._context: Any = None
+        self._connection: Any = None
+        self._audio_input_generation = 0
+        # Pause changes diagnostic policy but does not supersede a delivered
+        # idle transition; speech, resume and newer ends do supersede it.
+        self._audio_activity_generation = 0
+        self._speech_selection: Selection | None = None
+        self._turn_generation = 0
+        self._runner_task: asyncio.Task | None = None
+        self._backstop_task: asyncio.Task | None = None
+        # Monotonic timestamp of the last sign of life; drives the inactivity
+        # backstop. Seeded when the pipeline starts.
+        self._last_activity = time.monotonic()
+        self._closed = False
+        self._close_attempts: list[auth_connections.Teardown] | None = None
+        # Set once the pipeline is built and the WebRTC client is connected.
+        self._pipeline_ready = asyncio.Event()
+        # Deferred audio.end queue, in turn order. Each entry is (follow_up,
+        # has_audio, media_abort). Agent turns require their exact downstream
+        # output acknowledgement, even for empty/error control completions.
+        # Non-agent callbacks retain the legacy bot-idle credit behavior.
+        # FIFO prevents a later silent turn from advancing an earlier reply.
+        self._pending_ends: deque[tuple[bool, bool, asyncio.Event | None]] = deque()
+        self._agent_media: dict[asyncio.Event, str] = {}
+        self._drained_media: set[asyncio.Event] = set()
+        self._bot_stop_credits = 0
+        # Bot-speaking bookkeeping. Wyoming TTS speaks one sentence per run_tts,
+        # so a single reply produces several BotStarted/BotStoppedSpeaking pairs.
+        self._bot_speaking = 0
+        self._drain_timer: asyncio.Task | None = None
+        # True once we've relayed a terminal audio.end for an abnormal teardown.
+        self._ended_notified = False
+        # True from the moment a real user transcript is in flight until the reply
+        # starts speaking (or the turn ends with no reply). Marks the PROCESSING
+        # window — after the user stops, before the bot speaks — during which
+        # SuppressibleVADUserTurnStartStrategy ignores new user-turn starts so a
+        # residual-echo/noise blip can't broadcast an interruption that cancels
+        # the in-flight LLM turn (which would drop a real reply: the device hangs
+        # in PROCESSING, then its watchdog tapers to warm-quiet). Barge-in resumes
+        # the instant the bot speaks, when this clears.
+        self._awaiting_reply = False
+        # Set when the user barges in over the bot (an InterruptionFrame). The
+        # interrupted turn may have already completed with follow_up=false and had
+        # its audio.end *deferred* until the bot finished speaking; the barge-in is
+        # what finishes it, so that deferred end would warm-quiet the device (which
+        # pauses its media) exactly as the new turn's reply is about to play —
+        # dropping it. While set, _drain_ends keeps the device listening instead of
+        # warm-quiet; consumed (one-shot) when that interrupted turn's deferred end
+        # drains — NOT when the new reply starts speaking, which races ahead of it.
+        self._user_barged_in = False
+        # True between a real turn-level user-turn start and its transcript. Wyoming
+        # is a SegmentedSTTService: it transcribes every raw-VAD segment, even ones
+        # the turn controller never promotes to a turn (suppressed echo blips, or
+        # speech during bot playback that the strict barge-in profile rejects).
+        # Relaying those orphaned transcripts drove the device into PROCESSING
+        # waiting on a reply that never came (the turn was never routed to
+        # OpenClaw) — stuck PROCESSING + "ignored". Only relay a transcript to the
+        # device when a turn-level UserStartedSpeaking actually opened a turn.
+        self._turn_active = False
+        # Only an explicit realtime.pause latches this gate. Current firmware
+        # resumes RTP on warm wake without a WS cue, so audio.end must never
+        # latch it; quiet timeout diagnostics are managed separately below.
+        self._mic_paused = False
+        self._handoff_pending = False
+        # VAD profile swapping: a snappy idle profile so quiet speech is heard,
+        # and a stricter barge-in profile applied while the bot speaks so the
+        # device's residual echo doesn't self-interrupt the reply. Populated when
+        # the pipeline is built; _vad_active_params tracks which is live to avoid
+        # redundant set_params() churn across inter-sentence gaps.
+        self._vad_analyzer: Any = None
+        self._vad_normal_params: Any = None
+        self._vad_barge_in_params: Any = None
+        self._vad_active_params: Any = None
+        # Metadata-only aiortc receiver monitor, enabled with the existing audio
+        # diagnostics flag and owned by this session's teardown.
+        self._rtp_diag_task: asyncio.Task[None] | None = None
+        self._rtp_probes: list[Any] = []
+
+    @property
+    def is_closed(self) -> bool:
+        return self._closed
+
+    def is_peer_live(self) -> bool:
+        """Whether the WebRTC pipeline is up and the peer has connected."""
+        return self._pipeline_ready.is_set() and not self._closed
+
+    # --- lifecycle ---
+
+    async def start(self, connection: Any) -> None:
+        """Build and run the pipeline around an established WebRTC connection."""
+        if self.device_id in get_manager()._live_devices:
+            from vauxr.realtime.live import start_live
+            await start_live(self, connection)
+            return
+        from pipecat.audio.vad.silero import SileroVADAnalyzer
+        from pipecat.audio.vad.vad_analyzer import VADParams
+        from pipecat.frames.frames import (
+            BotStartedSpeakingFrame,
+            BotStoppedSpeakingFrame,
+            Frame,
+            InputAudioRawFrame,
+            InterruptionFrame,
+            TranscriptionFrame,
+            UserStartedSpeakingFrame,
+            UserStoppedSpeakingFrame,
+        )
+        from pipecat.pipeline.pipeline import Pipeline
+        from pipecat.pipeline.runner import PipelineRunner
+        from pipecat.pipeline.task import PipelineParams, PipelineTask
+        from pipecat.processors.aggregators.llm_context import LLMContext
+        from pipecat.processors.aggregators.llm_response_universal import (
+            LLMContextAggregatorPair,
+            LLMUserAggregatorParams,
+        )
+        from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+        from pipecat.services.tts_service import TextAggregationMode
+        from pipecat.transports.base_transport import TransportParams
+        from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+        from pipecat.turns.user_turn_strategies import UserTurnStrategies
+
+        from vauxr.devices.settings import get_segmentation
+        from vauxr.realtime.llm import AgentLLMService, OutputDrainTap
+        from vauxr.realtime.turn import (
+            SuppressibleVADUserTurnStartStrategy,
+            VADStopUserTurnStopStrategy,
+        )
+        from vauxr.realtime.wyoming import WyomingSTTService, WyomingTTSService
+
+        self._connection = connection
+        if get_config().realtime.esp32_mode:
+            from vauxr.realtime.transport import use_websocket_control
+
+            use_websocket_control(connection)
+        transport = SmallWebRTCTransport(
+            webrtc_connection=connection,
+            params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
+        )
+
+        from vauxr.realtime.transport import AudioConsumption
+
+        consumption = AudioConsumption(transport.output())
+        stt = WyomingSTTService(selection=self._require_speech_selection)
+        # Per-device segmentation: sentence mode lets pipecat's TTS aggregator cut
+        # on sentence boundaries; otherwise TOKEN mode and the upstream
+        # IdleSegmenter (in AgentLLMService) owns segmentation.
+        seg = get_segmentation(self.device_id)
+        tts = WyomingTTSService(
+            selection=self._require_speech_selection,
+            text_aggregation_mode=(
+                TextAggregationMode.SENTENCE if seg.sentence else TextAggregationMode.TOKEN
+            )
+        )
+        llm = AgentLLMService(
+            device_id=self.device_id,
+            agent_server=self._agent_server,
+            turn_complete_factory=self._agent_turn_complete_callback,
+            on_turn_skipped=self._on_turn_skipped,
+        )
+
+        vad = get_realtime_vad(self.device_id)
+        vad_bi = get_realtime_vad_barge_in(self.device_id)
+        log.info(
+            "realtime[%s]: VAD idle confidence=%.2f start_secs=%.2f "
+            "stop_secs=%.2f min_volume=%.2f | barge-in enabled=%s confidence=%.2f "
+            "start_secs=%.2f stop_secs=%.2f min_volume=%.2f",
+            self.device_id,
+            vad.confidence,
+            vad.start_secs,
+            vad.stop_secs,
+            vad.min_volume,
+            self._barge_in_enabled(),
+            vad_bi.confidence,
+            vad_bi.start_secs,
+            vad_bi.stop_secs,
+            vad_bi.min_volume,
+        )
+        # Keep handles to both profiles + the analyzer so _apply_vad_profile()
+        # can swap them as the bot starts/stops speaking.
+        self._vad_normal_params = VADParams(
+            confidence=vad.confidence,
+            start_secs=vad.start_secs,
+            stop_secs=vad.stop_secs,
+            min_volume=vad.min_volume,
+        )
+        self._vad_barge_in_params = VADParams(
+            confidence=vad_bi.confidence,
+            start_secs=vad_bi.start_secs,
+            stop_secs=vad_bi.stop_secs,
+            min_volume=vad_bi.min_volume,
+        )
+        self._vad_active_params = self._vad_normal_params
+        self._vad_analyzer = SileroVADAnalyzer(params=self._vad_normal_params)
+        context = LLMContext()
+        for msg in get_manager().context_messages(self.device_id):
+            context.add_message(msg)
+        self._context = context
+        user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
+            context,
+            user_params=LLMUserAggregatorParams(
+                vad_analyzer=self._vad_analyzer,
+                user_turn_strategies=UserTurnStrategies(
+                    # Suppress new user-turn starts (and the interruption they
+                    # broadcast) while a reply is pending but the bot hasn't begun
+                    # speaking — stops residual echo from cancelling a real reply.
+                    # Barge-in resumes the moment the bot speaks unless this
+                    # device has barge_in disabled, in which case starts stay
+                    # suppressed for the whole reply (echo can't cut TTS short).
+                    start=[
+                        SuppressibleVADUserTurnStartStrategy(
+                            is_suppressed=self._turns_suppressed
+                        )
+                    ],
+                    stop=[VADStopUserTurnStopStrategy()],
+                ),
+            ),
+        )
+
+        session = self
+
+        class _AudioMeter(FrameProcessor):
+            """Log inbound WebRTC audio level ~1×/s so VAD min_volume can be tuned.
+
+            Shows whether the device's mic audio is reaching the server at all and
+            how loud it is (peak normalized 0..1, directly comparable to the Silero
+            ``min_volume`` gate). Purely diagnostic — passes frames through.
+
+            If ``VAUXR_RECORD_DIR`` is set, also writes the decoded inbound PCM to
+            a per-session WAV in that directory so the exact audio VAD/STT
+            see can be played back and inspected for static/clipping/level.
+            """
+
+            def __init__(self) -> None:
+                super().__init__()
+                self._peak = 0
+                self._frames = 0
+                self._t0 = time.monotonic()
+                self._rec_dir = os.getenv("VAUXR_RECORD_DIR") or None
+                self._wav: wave.Wave_write | None = None
+                self._wav_path: str | None = None
+
+            def _ensure_wav(self, frame: InputAudioRawFrame) -> None:
+                if self._wav is not None or not self._rec_dir:
+                    return
+                try:
+                    os.makedirs(self._rec_dir, exist_ok=True)
+                    ts = time.strftime("%Y%m%d-%H%M%S")
+                    safe_id = "".join(
+                        c if (c.isalnum() or c in "-_") else "_"
+                        for c in session.device_id
+                    )
+                    self._wav_path = os.path.join(
+                        self._rec_dir, f"{safe_id}-{ts}.wav"
+                    )
+                    w = wave.open(self._wav_path, "wb")
+                    w.setnchannels(frame.num_channels or 1)
+                    w.setsampwidth(2)  # InputAudioRawFrame is 16-bit PCM
+                    w.setframerate(frame.sample_rate or 16000)
+                    self._wav = w
+                    log.info(
+                        "realtime[%s]: recording inbound audio -> %s",
+                        session.device_id,
+                        self._wav_path,
+                    )
+                except Exception as exc:  # never let recording break the pipeline
+                    log.warning(
+                        "realtime[%s]: audio recording disabled (%s)",
+                        session.device_id,
+                        exc,
+                    )
+                    self._rec_dir = None
+                    self._wav = None
+
+            def _close_wav(self) -> None:
+                if self._wav is None:
+                    return
+                try:
+                    self._wav.close()
+                    log.info(
+                        "realtime[%s]: saved inbound audio recording %s",
+                        session.device_id,
+                        self._wav_path,
+                    )
+                except Exception:
+                    pass
+                finally:
+                    self._wav = None
+
+            async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+                await super().process_frame(frame, direction)
+                if isinstance(frame, InputAudioRawFrame) and frame.audio:
+                    if self._rec_dir:
+                        self._ensure_wav(frame)
+                        if self._wav is not None:
+                            try:
+                                self._wav.writeframes(frame.audio)
+                            except Exception:
+                                self._close_wav()
+                                self._rec_dir = None
+                    samples = array.array("h")
+                    samples.frombytes(frame.audio)
+                    if samples:
+                        peak = max(abs(max(samples)), abs(min(samples)))
+                        self._peak = max(self._peak, peak)
+                    self._frames += 1
+                    now = time.monotonic()
+                    if now - self._t0 >= 1.0:
+                        log.info(
+                            "realtime[%s]: audio in — %d frames, peak=%d (~%.2f)",
+                            session.device_id,
+                            self._frames,
+                            self._peak,
+                            self._peak / 32768.0,
+                        )
+                        self._peak = 0
+                        self._frames = 0
+                        self._t0 = now
+                await self.push_frame(frame, direction)
+
+            async def cleanup(self) -> None:
+                await super().cleanup()
+                self._close_wav()
+
+        class _MicGate(FrameProcessor):
+            """Drop inbound mic audio while the device must not be heard.
+
+            Covers PROCESSING and explicit device pauses so
+            leftover RTP or a still-open track cannot start a new user turn.
+            """
+
+            async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+                await super().process_frame(frame, direction)
+                if (
+                    direction == FrameDirection.DOWNSTREAM
+                    and isinstance(frame, InputAudioRawFrame)
+                    and session._turns_suppressed()
+                    and frame.audio
+                ):
+                    frame.audio = bytes(len(frame.audio))
+                await self.push_frame(frame, direction)
+
+        class _ControlTap(FrameProcessor):
+            """Relay transcript + bot-speaking events to the device WS."""
+
+            async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+                await super().process_frame(frame, direction)
+                if isinstance(frame, InterruptionFrame):
+                    session._on_interruption()
+                elif isinstance(frame, UserStartedSpeakingFrame):
+                    # Server VAD detected speech onset. Tell the device a turn is
+                    # underway so it holds off its active-idle taper — otherwise it
+                    # can fall into warm-quiet mid-utterance (before STT/LLM emits
+                    # the transcript) and mishandle the late reply.
+                    if session._turns_suppressed():
+                        log.info(
+                            "realtime[%s]: ignoring VAD speech START (processing/warm-quiet)",
+                            session.device_id,
+                        )
+                    else:
+                        # Warm wake can resume RTP without a WS cue. Only an
+                        # accepted speech turn restores timeout diagnostics.
+                        session._set_audio_input_expected(True)
+                        log.info("realtime[%s]: VAD speech START", session.device_id)
+                        # A real turn-level start opened a turn — its transcript
+                        # may now be relayed to the device.
+                        if not await session._snapshot_speech_selection():
+                            return
+                        session._turn_generation += 1
+                        session._turn_active = True
+                        session._touch_activity()
+                        await session._send_control({"type": "speech.start"})
+                elif isinstance(frame, UserStoppedSpeakingFrame):
+                    log.info("realtime[%s]: VAD speech STOP", session.device_id)
+                elif isinstance(frame, TranscriptionFrame) and frame.text and frame.text.strip():
+                    text = frame.text.strip()
+                    log.info("realtime[%s]: transcript %r", session.device_id, text)
+                    # Orphaned transcript: Wyoming transcribed a raw-VAD segment the
+                    # turn controller never promoted to a turn (no turn-level start).
+                    # Relaying it would strand the device in PROCESSING for a reply
+                    # that is never routed. Log it (diagnostic) but don't relay.
+                    if not session._turn_active:
+                        log.info(
+                            "realtime[%s]: dropping orphaned transcript "
+                            "(no active turn): %r",
+                            session.device_id,
+                            text,
+                        )
+                    else:
+                        session._turn_active = False  # one transcript per turn
+                        session._touch_activity()
+                        # A real user turn is headed for the LLM. Open the PROCESSING
+                        # window: until the bot starts speaking, suppress new
+                        # user-turn starts so a residual-echo blip can't trip an
+                        # interruption that cancels this pending reply.
+                        session._awaiting_reply = True
+                        await session._send_control({"type": "transcript", "text": text})
+                elif isinstance(frame, BotStartedSpeakingFrame):
+                    session._on_bot_started_speaking()
+                    await session._send_control({"type": "audio.start"})
+                elif isinstance(frame, BotStoppedSpeakingFrame):
+                    session._on_bot_stopped_speaking()
+                await self.push_frame(frame, direction)
+
+        pipeline = Pipeline(
+            [
+                transport.input(),
+                _MicGate(),
+                _AudioMeter(),
+                stt,
+                _ControlTap(),
+                user_aggregator,
+                llm,
+                tts,
+                transport.output(),
+                OutputDrainTap(consumption.drained),
+                assistant_aggregator,
+            ]
+        )
+
+        self._task = PipelineTask(
+            pipeline,
+            params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
+        )
+
+        @transport.event_handler("on_client_connected")
+        async def _on_connected(_t, _c) -> None:
+            log.info("realtime[%s]: WebRTC client connected", self.device_id)
+            self._pipeline_ready.set()
+
+        @transport.event_handler("on_client_disconnected")
+        async def _on_disconnected(_t, _c) -> None:
+            if self._closed:
+                return
+            log.info("realtime[%s]: WebRTC peer dropped", self.device_id)
+            await self._notify_ended()
+            await self.close()
+
+        self._runner = PipelineRunner(handle_sigint=False)
+        self._runner_task = asyncio.create_task(self._runner.run(self._task))
+        self._touch_activity()
+        self._backstop_task = asyncio.create_task(self._safety_backstop())
+
+    def _require_speech_selection(self) -> Selection:
+        """Never re-resolve a rejected turn when its buffered audio reaches STT."""
+        if self._speech_selection is None:
+            raise ValueError("Speech turn has no selection snapshot")
+        return self._speech_selection
+
+    async def _snapshot_speech_selection(self) -> bool:
+        self._speech_selection = None
+        try:
+            self._speech_selection = resolve(self.device_id)
+        except (KeyError, ValueError):
+            self._turn_active = False
+            await self._send_control({
+                "type": "error", "code": "SPEECH_UNAVAILABLE",
+                "message": "Selected speech provider is not configured",
+            })
+            await self._send_audio_end(False)
+            return False
+        return True
+
+    def _touch_activity(self) -> None:
+        """Mark a sign of life so the inactivity backstop holds off."""
+        self._last_activity = time.monotonic()
+
+    async def _safety_backstop(self) -> None:
+        """Reap a session only after prolonged inactivity (leaked peer: device
+        lost power with no clean close). Resets on every turn/user-speech, so an
+        actively-used warm session is never reaped mid-conversation."""
+        try:
+            while not self._closed:
+                idle = time.monotonic() - self._last_activity
+                remaining = _SAFETY_BACKSTOP_S - idle
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(_SAFETY_BACKSTOP_POLL_S, remaining))
+        except asyncio.CancelledError:
+            return
+        if not self._closed:
+            log.warning(
+                "realtime[%s]: safety backstop fired after %.0fs idle — closing session",
+                self.device_id,
+                _SAFETY_BACKSTOP_S,
+            )
+            await self._notify_ended()
+            await self.close()
+
+    async def _release_failed_turn(self, reason: str) -> None:
+        """Tell the device a turn ended with no reply so it leaves PROCESSING.
+
+        Every cold-seed failure path below funnels through here: without an
+        audio.end the device sits in PROCESSING until its watchdog fires. We keep
+        the session alive (warm) so the user can simply try again.
+        """
+        log.info("realtime[%s]: cold seed released (%s)", self.device_id, reason)
+        if not self._closed:
+            await self._send_audio_end(False)
+
+    async def seed_buffered_turn(self, pcm: bytes, selection: Selection | None = None) -> None:
+        """Transcribe cold-wake WS audio and seed one turn into Pipecat."""
+        if self._closed:
+            return
+        if not pcm:
+            await self._release_failed_turn("empty pre-roll")
+            return
+
+        try:
+            await asyncio.wait_for(self._pipeline_ready.wait(), timeout=15.0)
+        except asyncio.TimeoutError:
+            log.warning(
+                "realtime[%s]: pipeline never ready — dropping buffered seed",
+                self.device_id,
+            )
+            await self._release_failed_turn("pipeline not ready")
+            return
+
+        if not self.is_peer_live():
+            log.warning(
+                "realtime[%s]: peer not live — refusing ghost seed turn",
+                self.device_id,
+            )
+            await self._release_failed_turn("peer not live")
+            return
+
+        try:
+            from vauxr.speech.wyoming_stt import transcribe
+
+            self._speech_selection = selection or resolve(self.device_id)
+            text = await transcribe([pcm], backend=self._speech_selection.stt)
+        except Exception as e:  # noqa: BLE001
+            log.error("realtime[%s]: buffered transcribe failed: %s", self.device_id, e)
+            await self._release_failed_turn("transcribe failed")
+            return
+
+        text = (text or "").strip()
+        if not text:
+            log.info("realtime[%s]: buffered utterance empty after STT", self.device_id)
+            await self._release_failed_turn("empty transcript")
+            return
+
+        if not self.is_peer_live():
+            log.warning(
+                "realtime[%s]: peer dropped during STT — refusing ghost seed turn",
+                self.device_id,
+            )
+            await self._release_failed_turn("peer dropped during STT")
+            return
+
+        await self._seed_user_text(text)
+
+    async def seed_text_turn(self, text: str) -> None:
+        """Seed a canned user utterance into Pipecat (no STT)."""
+        selected = resolve(self.device_id)
+        text = (text or "").strip()
+        if not text:
+            await self._release_failed_turn("empty text")
+            return
+        if self._closed:
+            return
+        try:
+            await asyncio.wait_for(self._pipeline_ready.wait(), timeout=15.0)
+        except asyncio.TimeoutError:
+            log.warning(
+                "realtime[%s]: pipeline never ready — dropping text seed",
+                self.device_id,
+            )
+            await self._release_failed_turn("pipeline not ready")
+            return
+        if not self.is_peer_live():
+            log.warning(
+                "realtime[%s]: peer not live — refusing text seed turn",
+                self.device_id,
+            )
+            await self._release_failed_turn("peer not live")
+            return
+        self._speech_selection = selected
+        await self._seed_user_text(text)
+
+    async def _seed_user_text(self, text: str) -> None:
+        from pipecat.frames.frames import LLMRunFrame
+
+        log.info("realtime[%s]: seeding turn: %r", self.device_id, text)
+        self._touch_activity()
+        # Same PROCESSING-window protection as warm turns (see _ControlTap):
+        # suppress new user-turn starts until this seeded reply begins speaking so
+        # echo can't cancel it.
+        self._turn_generation += 1
+        self._awaiting_reply = True
+        await self._send_control({"type": "transcript", "text": text})
+        self._context.add_message({"role": "user", "content": text})
+        if self._task is not None:
+            await self._task.queue_frames([LLMRunFrame()])
+
+    def _on_interruption(self) -> None:
+        """Pipecat broadcasts InterruptionFrame on every user-turn start.
+
+        Only treat it as barge-in when a reply is still playing or in the
+        post-TTS drain window. A normal follow-up/wake start would otherwise
+        leave ``_user_barged_in`` set through this turn's own TTS, and
+        ``_drain_ends`` would flip a statement's follow_up=false to true.
+        """
+        if self._reply_active():
+            self._user_barged_in = True
+
+    def _barge_in_enabled(self) -> bool:
+        return barge_in_enabled(registry.get_config_for(self.device_id))
+
+    def _reply_active(self) -> bool:
+        """True while the bot is speaking or the post-reply drain debounce is pending."""
+        return self._bot_speaking > 0 or self._drain_timer is not None
+
+    def _turns_suppressed(self) -> bool:
+        """Whether new user-turn starts should be ignored.
+
+        Always suppress during PROCESSING (awaiting the reply) and an explicit
+        device pause (until realtime.resume). When barge-in is disabled, also
+        suppress for the whole bot-speaking / drain window so residual echo
+        cannot cancel TTS.
+        """
+        if self._awaiting_reply or self._mic_paused:
+            return True
+        return (not self._barge_in_enabled()) and self._reply_active()
+
+    def set_mic_paused(self, paused: bool) -> None:
+        """Honor explicit device pause/resume; never infer a gate from audio.end."""
+        self._mic_paused = paused
+        self._set_audio_input_expected(not paused)
+        if paused:
+            self._turn_active = False
+        else:
+            self._touch_activity()
+
+    def _turn_complete_callback(self) -> Callable[[bool, str], Awaitable[None]]:
+        """Bind completion to the user turn before the LLM yields to barge-in."""
+        return partial(self._on_turn_complete, turn_generation=self._turn_generation)
+
+    async def _agent_turn_complete_callback(self) -> Callable[[bool, str], Awaitable[None]] | None:
+        """Retain agent ownership through playback on this exact peer."""
+        active = self._agent_server.get_active_agent()
+        if self._closed:
+            return None
+        if active is None or any(origin != active.id for origin in self._agent_media.values()):
+            # Pipecat's output queue is shared by a peer. Retire it before a
+            # different agent can add media that an old-agent revoke could
+            # otherwise cancel. A replacement peer has its own authority.
+            await self.close()
+            return None
+        abort = asyncio.Event()
+        self._agent_media[abort] = active.id
+        self._agent_server.retain_media_turn(active.id, abort, self.close)
+        return _MediaCompletion(self, abort)
+
+    def _release_agent_media(self, abort: asyncio.Event | None) -> None:
+        if abort is not None:
+            self._drained_media.discard(abort)
+            self._agent_media.pop(abort, None)
+            self._agent_server.release_media_turn(abort)
+
+    async def _on_turn_complete(
+        self, follow_up: bool, reply: str, *, turn_generation: int | None = None,
+        media_abort: asyncio.Event | None = None,
+    ) -> None:
+        """Called when an LLM turn ends. Queue its audio.end in turn order."""
+        if self._closed or self._ended_notified:
+            return
+        self._touch_activity()
+        user_text = _latest_user_text(self._context)
+        if self._owns_control():
+            get_manager().record_turn(self.device_id, user_text, reply)
+
+        has_audio = bool(reply and reply.strip())
+        # Keep the resolver's follow_up. Agent timeout/error completes with
+        # (False, "") — forcing True here reopened the mic after a hung turn.
+        # Barge-in cut-short ends are handled separately in _drain_ends.
+        # Turn is resolved — close the PROCESSING window so the user can start a
+        # new turn again. (For replies that do speak, _on_bot_started_speaking has
+        # already cleared this; clearing here covers empty/cancelled turns that
+        # never produced bot audio so the device isn't left unable to be heard.)
+        # An interrupted reply may finish its text after the next user turn
+        # started. Do not close that turn's transcript/PROCESSING gates.
+        if turn_generation is None or turn_generation == self._turn_generation:
+            self._awaiting_reply = False
+            self._turn_active = False
+        # Text completion precedes playback completion. In particular it must
+        # not pause barge-in, or overwrite an explicit device pause/resume.
+        self._pending_ends.append((follow_up, has_audio, media_abort))
+        if has_audio and self._bot_speaking == 0:
+            self._schedule_drain_timer()
+        await self._drain_ends()
+
+    def _on_turn_skipped(self) -> None:
+        """A promoted turn was skipped (empty/duplicate transcript, VAD re-finalize).
+
+        It produced no bot speech and never calls _on_turn_complete, so it never
+        clears _turn_active on its own. If a real turn-level start opened it (set
+        _turn_active), leaving the flag stuck true lets a later *orphaned* Wyoming
+        segment — one the turn controller never promoted — match the stale flag and
+        relay a ghost transcript, stranding the device in a phantom PROCESSING turn.
+        Drop the relay gate here. (A genuine next turn re-sets it on its own
+        UserStartedSpeakingFrame, so this can't swallow a real transcript.)
+        """
+        self._turn_active = False
+        self._touch_activity()
+
+    def _on_bot_started_speaking(self) -> None:
+        self._bot_speaking += 1
+        # Reply is now playing — close the PROCESSING window so genuine barge-in
+        # over the bot works again (the strict barge-in VAD profile, applied just
+        # below, rejects the residual echo while letting real speech through).
+        self._awaiting_reply = False
+        # NB: do NOT clear _user_barged_in here. The barge-in override protects the
+        # *interrupted* turn's deferred end, which drains later (it waits for a
+        # bot-stop credit + debounce) — usually after this new reply has already
+        # started speaking. Clearing it now would strand that deferred follow_up=
+        # false end and warm-quiet the device mid-reply. The flag is one-shot and is
+        # consumed by _drain_ends on the first end to drain after the barge-in (that
+        # end is the interrupted turn's, since _pending_ends is FIFO in turn order).
+        self._cancel_drain_timer()
+        self._apply_vad_profile()
+
+    def _on_bot_stopped_speaking(self) -> None:
+        if self._bot_speaking > 0:
+            self._bot_speaking -= 1
+        if self._bot_speaking == 0:
+            self._schedule_drain_timer()
+        self._apply_vad_profile()
+
+    def _apply_vad_profile(self) -> None:
+        """Swap the live VAD profile based on whether the bot is speaking.
+
+        A reply is considered "in progress" while any bot-speaking frame is
+        active *or* the post-reply drain timer is pending — the latter keeps the
+        stricter barge-in profile latched across the brief inter-sentence gaps
+        that Wyoming TTS produces (one BotStarted/Stopped pair per sentence), so
+        we don't thrash set_params() back to the snappy profile mid-reply and let
+        echo slip through. Restored to the idle profile once the reply drains.
+
+        The pre-speech PROCESSING window is handled separately: new user turns
+        are suppressed there entirely (see SuppressibleVADUserTurnStartStrategy),
+        so the VAD profile doesn't need to change until the bot speaks. When
+        barge_in is disabled for this device, stay on the idle profile and
+        suppress turn starts for the whole reply window instead.
+        """
+        if self._vad_analyzer is None:
+            return
+        use_barge_in = self._barge_in_enabled() and self._reply_active()
+        desired = self._vad_barge_in_params if use_barge_in else self._vad_normal_params
+        if desired is not self._vad_active_params:
+            self._vad_active_params = desired
+            self._vad_analyzer.set_params(desired)
+
+    def _schedule_drain_timer(self) -> None:
+        self._cancel_drain_timer()
+        self._drain_timer = asyncio.create_task(self._drain_after_idle())
+
+    def _cancel_drain_timer(self) -> None:
+        if self._drain_timer is not None:
+            self._drain_timer.cancel()
+            self._drain_timer = None
+
+    async def _drain_after_idle(self) -> None:
+        try:
+            await asyncio.sleep(_BOT_IDLE_DEBOUNCE_S)
+        except asyncio.CancelledError:
+            return
+        self._drain_timer = None
+        # Silence restores idle VAD; it is not proof of agent output drain.
+        # Slow TTS or later segments may still be queued before playback.
+        self._apply_vad_profile()
+        if self._closed or self._bot_speaking != 0:
+            return
+        if not any(has_audio and abort is None for _, has_audio, abort in self._pending_ends):
+            return
+        self._bot_stop_credits += 1
+        await self._drain_ends()
+
+    async def _drain_ends(self) -> None:
+        """Emit deferred audio.end events in turn order."""
+        while self._pending_ends and not self._ended_notified and not self._closed:
+            follow_up, has_audio, media_abort = self._pending_ends[0]
+            # Text/error completion and bot-idle credits cannot prove that a
+            # agent response has left TTS and the ordered output queue. Only
+            # its exact end frame at the output tap (or successful close) can.
+            if media_abort is not None:
+                if media_abort not in self._drained_media:
+                    break
+            elif has_audio:
+                if self._bot_stop_credits <= 0:
+                    break
+                self._bot_stop_credits -= 1
+            self._pending_ends.popleft()
+            self._release_agent_media(media_abort)
+            if not self._owns_control():
+                # A may release its own consumed media, but cannot complete B.
+                continue
+            # A barge-in cut a turn short: this end (the FIFO front) is the
+            # interrupted turn's, so its bot-stop was the interruption, not a
+            # natural reply end, and a new user turn is already underway. Emitting
+            # follow_up=false now would warm-quiet the device (pausing its media)
+            # right as the barge-in reply is about to arrive, dropping it. Keep it
+            # listening; the new turn's own end carries the real follow_up. One-shot:
+            # consume the flag on this first post-barge-in end (regardless of its
+            # follow_up) so later genuine ends warm-quiet normally.
+            if self._user_barged_in:
+                self._user_barged_in = False
+                if not follow_up:
+                    log.info(
+                        "realtime[%s]: barge-in cut short a follow_up=false end — stay listening",
+                        self.device_id,
+                    )
+                    follow_up = True
+            await self._send_audio_end(follow_up)
+
+    def _owns_control(self) -> bool:
+        """Only the exact active peer may change shared device control state."""
+        return get_manager()._sessions.get(self.device_id) is self
+
+    async def _send_control(self, message: dict[str, Any]) -> bool:
+        if self._closed or self._ended_notified or not self._owns_control():
+            return False
+        return await _send_json(_device_ws(self.device_id), message)
+
+    async def _send_audio_end(self, follow_up: bool, *, resume_mic: bool = False) -> None:
+        if self._closed or self._ended_notified or not self._owns_control():
+            return
+        # Keep diagnostics active until control delivery succeeds, including if
+        # an earlier turn was quiet or this send is cancelled.
+        self._set_audio_input_expected(True)
+        generation = self._audio_input_generation
+        activity_generation = self._audio_activity_generation
+        ws = _device_ws(self.device_id)
+        delivered = await _send_json(ws, {"type": "audio.end", "follow_up": follow_up})
+        if (
+            not delivered or activity_generation != self._audio_activity_generation
+            or self._closed or self._ended_notified or not self._owns_control()
+            or _device_ws(self.device_id) is not ws
+        ):
+            return
+        if resume_mic and follow_up and generation == self._audio_input_generation:
+            self.set_mic_paused(False)
+        if not follow_up and generation == self._audio_input_generation:
+            # Speech/follow-up during the send must not be overwritten by this
+            # older turn's quiet transition.
+            self._set_audio_input_expected(False)
+        # follow_up:false → Warm-quiet on the device; keep the Pipecat session alive.
+        registry.set_state(self.device_id, "listening" if follow_up and not self._mic_paused else "idle")
+        if follow_up:
+            log.info("realtime[%s]: follow_up=true — stay listening", self.device_id)
+        else:
+            log.info(
+                "realtime[%s]: follow_up=false — Warm-quiet (session stays alive)",
+                self.device_id,
+            )
+
+    def _set_audio_input_expected(self, expected: bool) -> None:
+        """Match timeout diagnostics to the device's intentional mic pause.
+
+        In pinned Pipecat 1.9.0, set_enabled(False) only gates video reads;
+        audio recv continues normally. The audio timeout warning checks this
+        flag. Re-enable on speech onset or follow-up so active stalls are visible.
+        Never disable the RTP receiver or stop reading: warm wake has no WS cue.
+        """
+        self._audio_input_generation += 1
+        if expected:
+            self._audio_activity_generation += 1
+        if self._connection is None or not get_config().realtime.esp32_mode:
+            return
+        # Only ESP32/no-SCTP policy establishes that audio.end pauses the mic.
+        # Browser track status remains owned by Pipecat/the browser controls.
+        track = self._connection.audio_input_track()
+        if track is not None:
+            track.set_enabled(expected)
+
+    async def _notify_ended(self) -> None:
+        """Relay a terminal audio.end{follow_up:false} for abnormal teardown."""
+        if self._ended_notified or self._handoff_pending:
+            return
+        self._ended_notified = True
+        self._pending_ends.clear()
+        self._bot_stop_credits = 0
+        self._cancel_drain_timer()
+        if not self._owns_control():
+            return
+        ws = _device_ws(self.device_id)
+        await _send_json(ws, {"type": "audio.end", "follow_up": False})
+        if self._owns_control() and _device_ws(self.device_id) is ws:
+            registry.set_state(self.device_id, "idle")
+
+    async def close(self) -> None:
+        if self._close_attempts is None:
+            self._closed = True
+            log.info("realtime[%s]: closing session", self.device_id)
+            self._cancel_drain_timer()
+            if self._backstop_task is not None:
+                self._backstop_task.cancel()
+            if self._rtp_diag_task is not None:
+                self._rtp_diag_task.cancel()
+            for probe in self._rtp_probes:
+                probe.restore()
+            self._rtp_probes.clear()
+            self._close_attempts = []
+            if self._live_service is not None:
+                if self._live_service.flush_task is not None:
+                    self._live_service.flush_task.cancel()
+                # Keep transcript failures visible; provider teardown still runs.
+                self._close_attempts.append(auth_connections.Teardown(self._live_service.finish_transcript))
+                self._close_attempts.append(auth_connections.Teardown(self._live_service.release))
+            if self._task is not None:
+                self._close_attempts.append(auth_connections.Teardown(self._task.cancel))
+            if self._connection is not None:
+                self._close_attempts.append(auth_connections.Teardown(self._connection.disconnect))
+        await auth_connections.run_teardowns(self._close_attempts)
+        for abort in list(self._agent_media):
+            self._release_agent_media(abort)
+        self._pending_ends.clear()
+        manager = get_manager()
+        if manager._sessions.get(self.device_id) is self:
+            manager.forget(self.device_id)
+
+
+class RealtimeManager:
+    """Tracks per-device pre-roll buffers, conversation log, and live sessions."""
+
+    def __init__(self) -> None:
+        self._live_devices: set[str] = set()
+        self._handoff_devices: set[str] = set()
+        self._agent_server: Any = None
+        self._sessions: dict[str, RealtimeSession] = {}
+        self._preroll: dict[str, bytearray] = {}
+        self._cold_wait: set[str] = set()
+        self._speech_preroll: dict[str, Selection] = {}
+        self._conversation_log: dict[str, list[dict[str, str]]] = {}
+        self._offer_locks: dict[str, asyncio.Lock] = {}
+        self._wake_generations: dict[str, object] = {}
+        self._handler: Any = None
+        self._max_preroll_bytes = 16000 * 2 * 10  # 10s @ 16kHz mono
+        # Sanity: server backstop must outlive the device taper drop timer.
+        taper = get_taper("")
+        drop_ms = taper.t_idle1_ms + taper.t_idle2_ms
+        if _SAFETY_BACKSTOP_S * 1000 <= drop_ms:
+            log.warning(
+                "realtime safety backstop (%.0fs) is shorter than device taper drop (%dms)",
+                _SAFETY_BACKSTOP_S,
+                drop_ms,
+            )
+
+    def configure(self, agent_server: Any) -> None:
+        self._agent_server = agent_server
+
+    # --- transport-agnostic conversation log ---
+
+    def context_messages(self, device_id: str) -> list[dict[str, str]]:
+        """Snapshot of the per-device log for LLMContext reconstruction."""
+        return [dict(m) for m in self._conversation_log.get(device_id, [])]
+
+    def record_turn(self, device_id: str, user_text: str, assistant_text: str) -> None:
+        """Single choke point for completed turns (WS or realtime)."""
+        user_text = (user_text or "").strip()
+        assistant_text = strip_follow_up_tag(assistant_text or "").strip()
+        if not user_text and not assistant_text:
+            return
+
+        messages = self._conversation_log.setdefault(device_id, [])
+
+        if user_text:
+            if messages and messages[-1]["role"] == "user":
+                messages[-1]["content"] = user_text
+            else:
+                messages.append({"role": "user", "content": user_text})
+
+        if assistant_text:
+            if messages and messages[-1]["role"] == "assistant":
+                messages[-1]["content"] = assistant_text
+            elif messages and messages[-1]["role"] == "user":
+                messages.append({"role": "assistant", "content": assistant_text})
+            else:
+                messages.append({"role": "assistant", "content": assistant_text})
+
+    # --- pre-roll buffering (cold wake: WS audio until voice.end) ---
+
+    def begin_preroll(self, device_id: str, selection: Selection | None = None) -> None:
+        self._wake_generations[device_id] = object()
+        self._speech_preroll[device_id] = selection or resolve(device_id)
+        self._preroll[device_id] = bytearray()
+        self._cold_wait.add(device_id)
+        log.info("realtime[%s]: cold pre-roll capture armed", device_id)
+
+    def add_preroll(self, device_id: str, pcm: bytes) -> None:
+        buf = self._preroll.get(device_id)
+        if buf is None:
+            return
+        if len(buf) < self._max_preroll_bytes:
+            buf.extend(pcm)
+
+    def take_preroll(self, device_id: str) -> bytes:
+        buf = self._preroll.pop(device_id, None)
+        return bytes(buf) if buf else b""
+
+    def is_cold_wait(self, device_id: str) -> bool:
+        """Whether the device is in cold realtime wait (awaiting voice.end)."""
+        return device_id in self._cold_wait
+
+    def has_live_session(self, device_id: str) -> bool:
+        """Whether a warm Pipecat session with a live peer exists."""
+        session = self._sessions.get(device_id)
+        return session is not None and session.is_peer_live()
+
+    async def send_prompt_audio_end(self, device_id: str, follow_up: bool) -> None:
+        """Complete WS button playback and synchronize a retained realtime peer."""
+        session = self._sessions.get(device_id)
+        if session is not None:
+            await session._send_audio_end(follow_up, resume_mic=True)
+        else:
+            ws = _device_ws(device_id)
+            wake = self._wake_generations.get(device_id)
+            delivered = await _send_json(ws, {"type": "audio.end", "follow_up": follow_up})
+            if (delivered and self._sessions.get(device_id) is None
+                    and self._wake_generations.get(device_id) is wake and _device_ws(device_id) is ws):
+                registry.set_state(device_id, "listening" if follow_up else "idle")
+
+    def set_mic_paused(self, device_id: str, paused: bool) -> None:
+        """Hold or release inbound WebRTC mic audio for a live session."""
+        session = self._sessions.get(device_id)
+        if session is not None:
+            session.set_mic_paused(paused)
+
+    async def seed_text_turn(self, device_id: str, text: str) -> bool:
+        """Seed canned text into a live Pipecat session. Returns False if none."""
+        session = self._sessions.get(device_id)
+        if session is None or not session.is_peer_live():
+            return False
+        await session.seed_text_turn(text)
+        return True
+
+    async def handle_cold_voice_end(
+        self,
+        device_id: str,
+        *,
+        webrtc_connected: bool,
+        ws: Any,
+        openclaw_client: Any,
+        agent_server: Any,
+        output_sample_rate: int | None,
+    ) -> None:
+        """Route the cold-wake utterance: WS pipeline or Pipecat text seed."""
+        if device_id not in self._cold_wait:
+            return
+
+        self._cold_wait.discard(device_id)
+        pcm = self.take_preroll(device_id)
+
+        if webrtc_connected:
+            session = self._sessions.get(device_id)
+            if session is None or session.is_closed:
+                log.warning(
+                    "realtime[%s]: webrtc_connected but no session — dropping seed",
+                    device_id,
+                )
+                # Release the device: it's in PROCESSING waiting on this turn.
+                await _send_json(ws, {"type": "audio.end", "follow_up": False})
+                registry.set_state(device_id, "idle")
+                return
+            if not pcm:
+                log.info("realtime[%s]: empty pre-roll on seed path", device_id)
+                await _send_json(ws, {"type": "audio.end", "follow_up": False})
+                registry.set_state(device_id, "idle")
+                return
+            await session.seed_buffered_turn(pcm, self._speech_preroll.pop(device_id, None))
+            return
+
+        # WS-only fallback when WebRTC is not connected at end-of-speech.
+        if not pcm:
+            log.info("realtime[%s]: empty pre-roll on WS branch", device_id)
+            await _send_json(ws, {"type": "audio.end", "follow_up": False})
+            registry.set_state(device_id, "idle")
+            return
+
+        selection = self._speech_preroll.pop(device_id, None)
+        from vauxr.pipeline import run_voice_turn
+
+        abort = asyncio.Event()
+        entry = registry.get(device_id)
+        if entry is not None:
+            entry.abort_event = abort
+
+        try:
+            await run_voice_turn(
+                device_id,
+                [pcm],
+                ws,
+                openclaw_client,
+                agent_server,
+                abort,
+                output_sample_rate,
+                selection=selection,
+            )
+            # Sustained WS fallback: while WebRTC never takes over, the device keeps
+            # sending voice.end per turn. Re-arm cold-wait + pre-roll so follow-up WS
+            # turns are handled instead of silently ignored. If the turn ended
+            # follow_up=false the device tears down and realtime.stop clears this arm.
+            if not abort.is_set():
+                self.begin_preroll(device_id)
+        except Exception as e:  # noqa: BLE001
+            log.error("realtime[%s]: WS branch pipeline error: %s", device_id, e)
+            await _send_json(
+                ws, {"type": "error", "code": "PIPELINE_ERROR", "message": str(e)}
+            )
+            # run_voice_turn aborted before emitting its own audio.end; release the
+            # device so it doesn't hang in PROCESSING.
+            await _send_json(ws, {"type": "audio.end", "follow_up": False})
+            registry.set_state(device_id, "idle")
+        finally:
+            e = registry.get(device_id)
+            if e is not None:
+                e.abort_event = None
+
+    # --- session lifecycle ---
+
+    def forget(self, device_id: str) -> None:
+        self._sessions.pop(device_id, None)
+
+    async def abort_wake(self, device_id: str) -> None:
+        """Clean up only the wake/peer captured before teardown yields."""
+        await self._stop_wake(device_id, notify=True)
+
+    async def _stop_wake(self, device_id: str, *, notify: bool) -> None:
+        session = self._sessions.get(device_id)
+        wake = self._wake_generations.get(device_id)
+        ws = _device_ws(device_id)
+        if session is not None:
+            await session.close()
+        if (self._sessions.get(device_id) not in (None, session)
+                or self._wake_generations.get(device_id) is not wake or _device_ws(device_id) is not ws):
+            return
+        pending_handoff = device_id in self._handoff_devices
+        self._handoff_devices.discard(device_id)
+        self._live_devices.discard(device_id)
+        self._preroll.pop(device_id, None)
+        self._speech_preroll.pop(device_id, None)
+        self._cold_wait.discard(device_id)
+        if notify and not pending_handoff:
+            await _send_json(ws, {"type": "audio.end", "follow_up": False})
+        if (self._sessions.get(device_id) in (None, session)
+                and self._wake_generations.get(device_id) is wake and _device_ws(device_id) is ws):
+            registry.set_state(device_id, "idle")
+
+    async def stop_all(self) -> None:
+        """Retire media and armed wakes when their active integration is revoked."""
+        results = await asyncio.gather(*(self.stop(device_id)
+                                         for device_id in set(self._sessions) | set(self._preroll) | self._live_devices),
+                                       return_exceptions=True)
+        if any(isinstance(result, BaseException) for result in results):
+            raise RuntimeError("transport_teardown_unavailable")
+
+    async def stop(self, device_id: str) -> None:
+        await self._stop_wake(device_id, notify=False)
+
+    def prepare_handoff(self, device_id: str) -> bool:
+        """Admit a fresh Live bootstrap only after the Standard playback receipt."""
+        self._wake_generations[device_id] = object()
+        self._handoff_devices.add(device_id)
+        self._live_devices.add(device_id)
+        return True
+
+    def activate_handoff(self, device_id: str) -> bool:
+        session = self._sessions.get(device_id)
+        # This correlated device receipt authorizes input; it is not a provider
+        # readiness event. Accept it once even if provider startup is slower.
+        # The pinned Live service independently drops PCM until session.started.
+        # Requiring that event here loses the one-shot receipt permanently.
+        if (device_id not in self._handoff_devices or session is None
+                or not session.is_peer_live() or session._live_service is None):
+            return False
+        session._handoff_pending = False
+        self._handoff_devices.discard(device_id)
+        return True
+
+    def can_accept_offer(self, device_id: str) -> bool:
+        """Whether an /api/offer for this device_id is tied to a real wake."""
+        return device_id in self._preroll or device_id in self._sessions or device_id in self._live_devices
+
+    def _request_handler(self) -> Any:
+        if self._handler is None:
+            from pipecat.transports.smallwebrtc.connection import IceServer
+            from pipecat.transports.smallwebrtc.request_handler import (
+                ConnectionMode,
+                SmallWebRTCRequestHandler,
+            )
+
+            cfg = get_config().realtime
+            ice = [IceServer(urls=cfg.stun_url)] if cfg.stun_url else None
+            self._handler = SmallWebRTCRequestHandler(
+                ice_servers=ice,
+                esp32_mode=cfg.esp32_mode,
+                host=cfg.host or None,
+                connection_mode=ConnectionMode.MULTIPLE,
+            )
+        return self._handler
+
+    async def handle_offer(self, device_id: str, body: dict[str, Any]) -> dict[str, str] | None:
+        """Build/refresh a session around an incoming SDP offer."""
+        from pipecat.transports.smallwebrtc.request_handler import SmallWebRTCRequest
+
+        handler = self._request_handler()
+        req = SmallWebRTCRequest.from_dict(
+            {k: body[k] for k in ("sdp", "type", "pc_id", "restart_pc") if k in body}
+        )
+
+        wake = self._wake_generations.get(device_id)
+
+        async def _on_connection(connection: Any) -> None:
+            from vauxr.realtime.teardown import protect_handshake_teardown
+
+            protect_handshake_teardown(connection)
+            existing = self._sessions.get(device_id)
+            if existing is not None:
+                log.info("realtime[%s]: closing previous session before new offer", device_id)
+                await existing.close()
+            session = RealtimeSession(device_id, self._agent_server)
+            session._handoff_pending = device_id in self._handoff_devices
+            try:
+                await session.start(connection)
+            except Exception:
+                log.exception("realtime[%s]: session start failed", device_id)
+                await session.close()
+                raise
+            if (self._wake_generations.get(device_id) is not wake
+                    or not self.can_accept_offer(device_id)):
+                await session.close()
+                raise ValueError("Realtime wake superseded")
+            self._sessions[device_id] = session
+
+        lock = self._offer_locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            return await handler.handle_web_request(req, _on_connection)
+
+
+_manager: RealtimeManager | None = None
+
+
+def get_manager() -> RealtimeManager:
+    global _manager
+    if _manager is None:
+        _manager = RealtimeManager()
+    return _manager

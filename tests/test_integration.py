@@ -13,19 +13,19 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-import auth
-import auth_store
-import agent_registry
-import config
-import integration
-from auth_policy import Operation, Role, allowed
-from auth_store import CredentialStore
-from enrollment import EnrollmentError
-from http_server import make_http_app
-from integration import Integration
-from integration_http import INTEGRATION
-from lifecycle import Lifecycle
-from owner_http import COOKIE, LAN_COOKIE, OWNER
+import vauxr.auth.service as auth
+import vauxr.auth.store as auth_store
+import vauxr.agents.registry as agent_registry
+import vauxr.config as config
+import vauxr.provisioning.integration as integration
+from vauxr.auth.policy import Operation, Role, allowed
+from vauxr.auth.store import CredentialStore
+from vauxr.provisioning.enrollment import EnrollmentError
+from vauxr.web.server import make_http_app
+from vauxr.provisioning.integration import Integration
+from vauxr.provisioning.integration_http import INTEGRATION
+from vauxr.provisioning.lifecycle import Lifecycle
+from vauxr.web.owner import COOKIE, LAN_COOKIE, OWNER
 from tests.test_enrollment import ORIGIN, owner_resolver, setup
 
 assert setup
@@ -369,9 +369,9 @@ async def test_retiring_agent_connected_before_activation_tears_down_dependents(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    import auth_connections
-    import device_registry
-    from agent_server import AgentServer, _Connection
+    import vauxr.auth.connections as auth_connections
+    import vauxr.devices.registry as device_registry
+    from vauxr.agents.server import AgentServer, _Connection
 
     service, owner = env
     body, _, issued = deliver(env)
@@ -640,10 +640,10 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    import auth_connections
-    import device_registry
-    import pipeline
-    from agent_server import AgentServer, _Connection
+    import vauxr.auth.connections as auth_connections
+    import vauxr.devices.registry as device_registry
+    import vauxr.pipeline as pipeline
+    from vauxr.agents.server import AgentServer, _Connection
     from tests.test_pipeline import FakeWs
 
     service, owner = env
@@ -731,7 +731,7 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
             Lifecycle(service.store, ORIGIN).execute(
                 "revoke", {"operation_id": "e" * 32, "role": "integration", "subject": issued["agent_id"]},
                 owner)
-            from lifecycle_http import LIFECYCLE, disconnect_media
+            from vauxr.provisioning.lifecycle_http import LIFECYCLE, disconnect_media
 
             await disconnect_media({LIFECYCLE: SimpleNamespace(store=service.store)})
         assert abort.is_set() is revoke
@@ -770,8 +770,8 @@ async def test_fallback_b_cannot_dispatch_to_a_listener_while_a_teardown_held(en
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
-    import auth_connections
-    from agent_server import AgentServer, _Connection
+    import vauxr.auth.connections as auth_connections
+    from vauxr.agents.server import AgentServer, _Connection
 
     service, owner = env
     server = AgentServer()
@@ -826,9 +826,9 @@ async def test_realtime_disconnected_agent_retains_exact_peer_until_drain(env, m
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    import auth_connections
-    import realtime_session
-    from agent_server import AgentServer, _Connection
+    import vauxr.auth.connections as auth_connections
+    import vauxr.realtime.session as realtime_session
+    from vauxr.agents.server import AgentServer, _Connection
 
     service, owner = env
     server = AgentServer()
@@ -906,8 +906,8 @@ async def test_response_dispatch_requires_principal_agent_ownership(env, kind):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
-    import auth_connections
-    from agent_server import AgentServer, _Connection
+    import vauxr.auth.connections as auth_connections
+    from vauxr.agents.server import AgentServer, _Connection
 
     service, _ = env
     server = AgentServer()

@@ -9,12 +9,12 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-import config
-import auth
-from auth_policy import Role
+import vauxr.config as config
+import vauxr.auth.service as auth
+from vauxr.auth.policy import Role
 from tests.auth_helpers import owner_headers, seed
-import speech
-from speech import Backend, SpeechStore
+import vauxr.speech.store as speech
+from vauxr.speech.store import Backend, SpeechStore
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def store(tmp_path, monkeypatch):
     )
     store = SpeechStore(tmp_path, backends)
     monkeypatch.setattr(speech, "get_store", lambda: store)
-    import speech_http
+    import vauxr.web.speech as speech_http
 
     monkeypatch.setattr(speech_http, "get_store", lambda: store)
     yield store
@@ -95,9 +95,9 @@ def test_removed_provider_is_explicit_not_fallback(store):
 
 
 async def test_http_management_auth_validation_and_isolation(store, monkeypatch):
-    import agent_registry
-    import speech_http
-    from http_server import make_http_app
+    import vauxr.agents.registry as agent_registry
+    import vauxr.web.speech as speech_http
+    from vauxr.web.server import make_http_app
 
     agent_registry._reset_for_tests()
     monkeypatch.setattr(speech_http, "readiness", AsyncMock(return_value="unavailable"))
@@ -130,9 +130,9 @@ async def test_http_management_auth_validation_and_isolation(store, monkeypatch)
 
 
 async def test_midturn_stt_to_multiple_tts_segments(store, monkeypatch):
-    import device_registry
-    import pipeline
-    from server import AppState, ConnectionCtx, _voice_end, _voice_start
+    import vauxr.devices.registry as device_registry
+    import vauxr.pipeline as pipeline
+    from vauxr.server import AppState, ConnectionCtx, _voice_end, _voice_start
 
     selections = []
     stt_backends = []
@@ -172,7 +172,7 @@ async def test_midturn_stt_to_multiple_tts_segments(store, monkeypatch):
 
 
 async def test_announcements_snapshot_and_device_isolation(store, monkeypatch):
-    import button_dispatch
+    import vauxr.buttons as button_dispatch
 
     store.update({"tts_backend": "kokoro"}, "a")
     selected = []
@@ -192,8 +192,8 @@ async def test_announcements_snapshot_and_device_isolation(store, monkeypatch):
 
 
 async def test_cold_realtime_fallback_uses_wake_snapshot(store, monkeypatch):
-    import pipeline
-    from realtime_session import RealtimeManager
+    import vauxr.pipeline as pipeline
+    from vauxr.realtime.session import RealtimeManager
 
     manager = RealtimeManager()
     manager.begin_preroll("a")
@@ -211,8 +211,8 @@ async def test_cold_realtime_fallback_uses_wake_snapshot(store, monkeypatch):
 
 @pytest.mark.parametrize("generic", [False, True])
 async def test_wyoming_adapter_wire_voice_and_readiness(store, generic):
-    from wyoming_stt import WyomingEvent, encode_event, parse_wyoming_events, transcribe
-    from wyoming_tts import synthesize
+    from vauxr.speech.wyoming_stt import WyomingEvent, encode_event, parse_wyoming_events, transcribe
+    from vauxr.speech.wyoming_tts import synthesize
 
     requests = []
 
@@ -254,7 +254,7 @@ async def test_wyoming_adapter_wire_voice_and_readiness(store, generic):
         if generic:
             # Exercise the operator file, validation, persisted selection and
             # restart path, not just directly constructed client arguments.
-            from speech_catalog import load_backends
+            from vauxr.speech.catalog import load_backends
 
             (store.path.parent / "speech-providers.json").write_text(
                 json.dumps([asdict(stt), asdict(tts)])
@@ -280,8 +280,8 @@ async def test_wyoming_adapter_wire_voice_and_readiness(store, generic):
 
 
 async def test_cold_realtime_seed_preserves_complete_selection(store, monkeypatch):
-    import wyoming_stt
-    from realtime_session import RealtimeSession
+    import vauxr.speech.wyoming_stt as wyoming_stt
+    from vauxr.realtime.session import RealtimeSession
 
     session = RealtimeSession("a", None)
     session._pipeline_ready.set()
@@ -304,7 +304,7 @@ async def test_realtime_adapter_reply_snapshot(store, monkeypatch):
     pytest.importorskip("pipecat")
     from pipecat.frames.frames import Frame
 
-    import realtime_wyoming
+    import vauxr.realtime.wyoming as realtime_wyoming
 
     service = realtime_wyoming.WyomingTTSService(selection=lambda: store.resolve("a"))
     captured = []
@@ -339,9 +339,9 @@ async def test_realtime_adapter_reply_snapshot(store, monkeypatch):
 
 
 async def test_announcement_outage_returns_503_and_error_frame(store, monkeypatch):
-    import button_dispatch
-    import device_registry
-    from http_server import make_http_app
+    import vauxr.buttons as button_dispatch
+    import vauxr.devices.registry as device_registry
+    from vauxr.web.server import make_http_app
 
     async def failed(text, **kwargs):
         raise ConnectionRefusedError()
@@ -416,8 +416,8 @@ async def test_realtime_rejected_turn_cannot_retry_resolution(store, monkeypatch
     from pipecat.services.ai_service import AIService
     from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 
-    import realtime_session
-    import realtime_wyoming
+    import vauxr.realtime.session as realtime_session
+    import vauxr.realtime.wyoming as realtime_wyoming
 
     # Capture the actual session wiring before any transport tasks start.
     processors = []
@@ -482,9 +482,9 @@ async def test_realtime_rejected_turn_cannot_retry_resolution(store, monkeypatch
 
 @pytest.mark.parametrize("path", ["/api/speech", "/api/devices/a/speech"])
 async def test_speech_owner_mutations_require_csrf_and_live_session(store, monkeypatch, path):
-    import speech_http
-    from http_server import make_http_app
-    from owner_http import OWNER
+    import vauxr.web.speech as speech_http
+    from vauxr.web.server import make_http_app
+    from vauxr.web.owner import OWNER
 
     monkeypatch.setattr(speech_http, "readiness", AsyncMock(return_value="ready"))
     async with TestClient(TestServer(make_http_app())) as client:
@@ -504,9 +504,9 @@ async def test_speech_owner_mutations_require_csrf_and_live_session(store, monke
 
 @pytest.mark.parametrize("tls", [False, True])
 async def test_speech_owner_transport_and_csrf_before_provider_io(store, monkeypatch, tls):
-    import speech_http
-    from http_server import make_http_app
-    from owner_http import COOKIE, LAN_COOKIE, OWNER
+    import vauxr.web.speech as speech_http
+    from vauxr.web.server import make_http_app
+    from vauxr.web.owner import COOKIE, LAN_COOKIE, OWNER
 
     origin = "https://owner.example" if tls else "http://192.168.10.20:8080"
     monkeypatch.delenv("OWNER_HTTPS_ORIGIN", raising=False)

@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import button_dispatch
-import config
-import device_registry as registry
-import realtime_session
-from agent_server import AgentServer
-from realtime_session import RealtimeSession
+import vauxr.buttons as button_dispatch
+import vauxr.config as config
+import vauxr.devices.registry as registry
+import vauxr.realtime.session as realtime_session
+from vauxr.agents.server import AgentServer
+from vauxr.realtime.session import RealtimeSession
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +66,7 @@ async def test_delivered_quiet_end_with_intervening_explicit_pause() -> None:
 async def test_warm_ws_prompt_completion_matches_mic_and_registry(
     monkeypatch: pytest.MonkeyPatch, follow_up: bool,
 ) -> None:
-    import pipeline
+    import vauxr.pipeline as pipeline
 
     ws = SimpleNamespace(closed=False, send_str=AsyncMock(), send_bytes=AsyncMock())
     registry.register("review", ws=ws)

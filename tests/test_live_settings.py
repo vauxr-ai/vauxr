@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from config import get_config
-from speech import SpeechStore
-from speech_catalog import load_backends
+from vauxr.config import get_config
+from vauxr.speech.store import SpeechStore
+from vauxr.speech.catalog import load_backends
 
 
 def test_modes_preserve_independent_selections_and_restart(tmp_path: Path) -> None:

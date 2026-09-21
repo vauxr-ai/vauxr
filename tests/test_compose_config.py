@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from owner_auth import configured_origin
+from vauxr.auth.owner import configured_origin
 
 ROOT = Path(__file__).resolve().parents[1]
 OWNER_KEYS = ("OWNER_HTTP_ORIGIN", "OWNER_HTTPS_ORIGIN", "OWNER_TRUSTED_PROXIES")

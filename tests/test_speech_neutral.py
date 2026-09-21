@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-import auth
-import config
-import device_registry
-import speech
-from auth_policy import Role
-from speech import Backend, SpeechStore
+import vauxr.auth.service as auth
+import vauxr.config as config
+import vauxr.devices.registry as device_registry
+import vauxr.speech.store as speech
+from vauxr.auth.policy import Role
+from vauxr.speech.store import Backend, SpeechStore
 from tests.auth_helpers import seed
-from wyoming_protocol import WyomingError, WyomingEvent, encode_event, parse_wyoming_events
+from vauxr.speech.wyoming_protocol import WyomingError, WyomingEvent, encode_event, parse_wyoming_events
 
 
 @pytest.fixture
@@ -48,8 +48,8 @@ def test_neutral_initial_defaults_and_persisted_kind_validation(neutral_store):
 
 @pytest.mark.parametrize("kind", ["stt", "tts"])
 async def test_wyoming_error_is_shared_and_does_not_wait_for_disconnect(neutral_store, kind):
-    from wyoming_stt import transcribe
-    from wyoming_tts import synthesize
+    from vauxr.speech.wyoming_stt import transcribe
+    from vauxr.speech.wyoming_tts import synthesize
 
     async def handler(reader, writer):
         try:
@@ -82,10 +82,10 @@ async def test_wyoming_error_is_shared_and_does_not_wait_for_disconnect(neutral_
 
 @pytest.mark.parametrize("path", ["ws", "cold-fallback", "button-prompt", "button-announce", "announce"])
 async def test_transport_paths_resolve_device_selection_once(neutral_store, monkeypatch, path):
-    import button_dispatch
-    import pipeline
-    from realtime_session import RealtimeManager
-    from server import AppState, ConnectionCtx, _voice_end, _voice_start
+    import vauxr.buttons as button_dispatch
+    import vauxr.pipeline as pipeline
+    from vauxr.realtime.session import RealtimeManager
+    from vauxr.server import AppState, ConnectionCtx, _voice_end, _voice_start
 
     expected = neutral_store.resolve("device")
     resolver = Mock(wraps=neutral_store.resolve)
@@ -156,9 +156,9 @@ async def test_realtime_seed_and_segment_adapters_share_neutral_snapshot(neutral
     pytest.importorskip("pipecat")
     from pipecat.frames.frames import Frame, TranscriptionFrame
 
-    import realtime_wyoming
-    import wyoming_stt
-    from realtime_session import RealtimeSession
+    import vauxr.realtime.wyoming as realtime_wyoming
+    import vauxr.speech.wyoming_stt as wyoming_stt
+    from vauxr.realtime.session import RealtimeSession
 
     session = RealtimeSession("device", None)
     session._pipeline_ready.set()

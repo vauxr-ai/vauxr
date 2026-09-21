@@ -10,11 +10,11 @@ from pathlib import Path
 import pytest
 from aiohttp import ClientConnectionError, ClientSession, TCPConnector, web
 
-import auth
-import config
-import native_tls
-from native_tls import CertificateContext, TLSConfig, TLSService, load_tls_config
-from server import make_app, run_server
+import vauxr.auth.service as auth
+import vauxr.config as config
+import vauxr.tls as native_tls
+from vauxr.tls import CertificateContext, TLSConfig, TLSService, load_tls_config
+from vauxr.server import make_app, run_server
 from tests.test_optional_tls import tls_contexts
 
 

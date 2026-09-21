@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-import device_identity as ident
-from device_identity import SignParams
+import vauxr.devices.identity as ident
+from vauxr.devices.identity import SignParams
 
 
 @pytest.fixture(autouse=True)

@@ -9,11 +9,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-import button_dispatch
-import config as cfg_mod
-import device_registry as registry
-import webhooks
-from agent_server import AgentServer
+import vauxr.buttons as button_dispatch
+import vauxr.config as cfg_mod
+import vauxr.devices.registry as registry
+import vauxr.web.webhooks as webhooks
+from vauxr.agents.server import AgentServer
 
 
 class FakeWs:
@@ -129,7 +129,7 @@ async def test_prompt_uses_ws_turn_even_with_live_realtime_session(
     manager = Mock()
     manager.has_live_session.return_value = True
     manager.seed_text_turn = AsyncMock()
-    monkeypatch.setattr("realtime_session.get_manager", lambda: manager)
+    monkeypatch.setattr("vauxr.realtime.session.get_manager", lambda: manager)
     fake = AsyncMock()
     monkeypatch.setattr(button_dispatch, "run_text_turn", fake)
     await button_dispatch.handle_device_button(
@@ -321,8 +321,8 @@ async def test_warm_prompt_emits_ws_audio_and_records_conversation(
     from collections.abc import AsyncIterator, Callable
     from types import SimpleNamespace
 
-    import pipeline
-    import realtime_session
+    import vauxr.pipeline as pipeline
+    import vauxr.realtime.session as realtime_session
 
     ws = FakeWs()
     registry.register("dev1", ws=ws)
