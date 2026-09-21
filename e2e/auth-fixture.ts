@@ -31,7 +31,7 @@ export const test = base.extend<{ server: Server }>({
     let child: ChildProcess | undefined;
     const fixture: Server = { origin: "", data,
       claim: () => execFileSync("python3", ["-c",
-        "import os; from pathlib import Path; from auth_store import CredentialStore; from owner_auth import OwnerAuth; print(OwnerAuth(CredentialStore(Path(os.environ['DATA_DIR'])/'authz.json')).console_claim())"],
+        "import os; from pathlib import Path; from vauxr.auth.store import CredentialStore; from vauxr.auth.owner import OwnerAuth; print(OwnerAuth(CredentialStore(Path(os.environ['DATA_DIR'])/'authz.json')).console_claim())"],
         { cwd: root, env: { ...env, OWNER_HTTP_ORIGIN: fixture.origin }, encoding: "utf8" }).trim(),
       restart: async () => { if (child) await stop(child); await start(); },
     };

@@ -81,7 +81,7 @@ jobs:
           for i in $(seq 1 30); do
             if curl -sf -o /dev/null http://localhost:8080/api/auth/status; then
               # Exercise the existing-volume write boundary; never print the claim code.
-              docker exec vauxr-e2e python -c 'from auth import get_store; from owner_auth import OwnerAuth; OwnerAuth(get_store()).console_claim()'
+              docker exec vauxr-e2e python -c 'from vauxr.auth.service import get_store; from vauxr.auth.owner import OwnerAuth; OwnerAuth(get_store()).console_claim()'
               echo "vauxr ready; owner bootstrap persisted"; exit 0
             fi
             sleep 1
