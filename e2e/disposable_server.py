@@ -16,7 +16,7 @@ async def main() -> None:
     origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
     os.environ["OWNER_HTTP_ORIGIN"] = origin
     # Import only after fixing the exact owner authority.
-    from server import _cleanup, _startup, make_app
+    from vauxr.server import _cleanup, _startup, make_app
 
     app = make_app()
     app.on_startup.append(_startup)

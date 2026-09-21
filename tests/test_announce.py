@@ -11,11 +11,11 @@ from typing import Any
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-import agent_registry
-import config as cfg_mod
-import device_registry as registry
-import wyoming_tts
-from http_server import make_http_app
+import vauxr.agents.registry as agent_registry
+import vauxr.config as cfg_mod
+import vauxr.devices.registry as registry
+import vauxr.speech.wyoming_tts as wyoming_tts
+from vauxr.web.server import make_http_app
 from tests.auth_helpers import owner_headers
 
 
@@ -39,7 +39,7 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
     monkeypatch.setenv("DEVICE_TOKEN", "tok-X")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    from auth_policy import Role
+    from vauxr.auth.policy import Role
     from tests.auth_helpers import seed
     seed("tok-X", Role.OWNER, "owner")
     monkeypatch.setenv("OPENCLAW_URL", "")
@@ -53,7 +53,7 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             yield b"\x00\x01" * 50
 
     monkeypatch.setattr(wyoming_tts, "synthesize", fake_synth)
-    import button_dispatch as bd
+    import vauxr.buttons as bd
 
     monkeypatch.setattr(bd, "synthesize", fake_synth)
 
@@ -129,7 +129,7 @@ async def test_announce_passes_hello_output_sample_rate(
         seen["target_rate"] = k.get("target_rate")
         yield b"\x00\x01" * 50
 
-    import button_dispatch as bd
+    import vauxr.buttons as bd
 
     monkeypatch.setattr(bd, "synthesize", fake_synth)
 

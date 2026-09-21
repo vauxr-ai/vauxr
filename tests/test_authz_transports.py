@@ -8,21 +8,21 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
-import auth
-import agent_registry
-import config
-import device_registry
-from auth_policy import HTTP_OPERATIONS, WS_OPERATIONS, Role
-from http_server import _require_auth, make_http_app
-from realtime_app import _offer_handler
-from server import make_app
+import vauxr.auth.service as auth
+import vauxr.agents.registry as agent_registry
+import vauxr.config as config
+import vauxr.devices.registry as device_registry
+from vauxr.auth.policy import HTTP_OPERATIONS, WS_OPERATIONS, Role
+from vauxr.web.server import _require_auth, make_http_app
+from vauxr.realtime.app import _offer_handler
+from vauxr.server import make_app
 from tests.auth_helpers import TRANSPORT_HEADERS, owner_headers, seed
 from tests.test_announce import FakeWs
 
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
-    import speech_http
+    import vauxr.web.speech as speech_http
     monkeypatch.setattr(speech_http, "readiness", AsyncMock(return_value="unavailable"))
     config.reset_config()
     monkeypatch.setenv("OWNER_HTTPS_ORIGIN", "https://owner.example")
@@ -87,7 +87,7 @@ async def test_http_matrix(method, path, grants, outcome, role, key):
 
 
 def test_route_inventory_complete():
-    from http_server import attach_http_routes
+    from vauxr.web.server import attach_http_routes
 
     app = web.Application()
     attach_http_routes(app)
@@ -163,7 +163,7 @@ async def test_integration_control_and_update_initiation(command, params):
 
 
 async def test_sensitive_metadata_projection():
-    import webhooks
+    import vauxr.web.webhooks as webhooks
 
     webhooks._webhooks = []
     webhooks.create(
@@ -245,7 +245,7 @@ async def test_disabled_record_rejected_on_existing_socket_and_http():
     ],
 )
 async def test_realtime_signaling_identity(monkeypatch, token, device_id, extra, status):
-    import realtime_session
+    import vauxr.realtime.session as realtime_session
 
     calls = []
 
@@ -271,7 +271,7 @@ async def test_realtime_signaling_identity(monkeypatch, token, device_id, extra,
 
 async def test_realtime_browser_offer_omits_owner_cookie_but_keeps_device_auth(monkeypatch):
     """A logged-in browser must not turn a device offer into an owner CSRF request."""
-    import realtime_session
+    import vauxr.realtime.session as realtime_session
 
     monkeypatch.setenv("REALTIME_ENABLED", "1")
     monkeypatch.setenv("REALTIME_HOST", "127.0.0.1")
@@ -332,7 +332,7 @@ async def test_agent_rejects_wrong_principal(token):
 
 async def test_inactive_agent_cannot_inject_voice_response():
 
-    from agent_server import AgentServer
+    from vauxr.agents.server import AgentServer
 
     active, _ = await agent_registry.create("Active")
     inactive, _ = await agent_registry.create("Inactive")
@@ -349,7 +349,7 @@ async def test_inactive_agent_cannot_inject_voice_response():
         },
     )
     app = make_app()
-    from server import APP_STATE
+    from vauxr.server import APP_STATE
 
     app[APP_STATE].agent_server = cs
     async with TestClient(TestServer(app)) as client, client.ws_connect("/agent", headers=TRANSPORT_HEADERS) as ws:
@@ -363,7 +363,7 @@ async def test_inactive_agent_cannot_inject_voice_response():
 
 
 async def test_new_unprotected_route_is_denied_by_middleware():
-    from http_server import policy_middleware
+    from vauxr.web.server import policy_middleware
 
     app = web.Application(middlewares=[policy_middleware])
 
@@ -411,7 +411,7 @@ async def test_realtime_conflicting_header_cannot_fall_back_to_body(header):
 
 
 def reissue_credential(subject: str, restart: bool) -> None:
-    from auth_store import CredentialStore, verifier
+    from vauxr.auth.store import CredentialStore, verifier
 
     store = auth.get_store()
     original = next(r for r in store.records if r.subject == subject)
@@ -448,8 +448,8 @@ async def test_reissued_device_rejects_already_authenticated_socket(restart: boo
 
 @pytest.mark.parametrize("restart", [False, True])
 async def test_reissued_agent_rejects_existing_connection_in_both_directions(restart: bool) -> None:
-    from agent_server import AgentServer
-    from server import APP_STATE
+    from vauxr.agents.server import AgentServer
+    from vauxr.server import APP_STATE
 
     agent, _ = await agent_registry.create("Active")
     agent_registry.activate(agent.id)
@@ -493,7 +493,7 @@ async def test_reissued_agent_rejects_existing_connection_in_both_directions(res
 
 @pytest.mark.parametrize("role", ["device", "integration"])
 async def test_lifecycle_revoke_closes_idle_socket_before_owner_response(role):
-    from lifecycle_http import LIFECYCLE
+    from vauxr.provisioning.lifecycle_http import LIFECYCLE
 
     subject = "speaker"
     token = "device-secret"
@@ -525,9 +525,9 @@ async def test_lifecycle_revoke_closes_idle_socket_before_owner_response(role):
 async def test_realtime_offer_revoked_during_await_is_closed(monkeypatch, close_fails):
     from unittest.mock import AsyncMock
 
-    import realtime_session
-    from lifecycle_http import LIFECYCLE
-    from owner_http import OWNER
+    import vauxr.realtime.session as realtime_session
+    from vauxr.provisioning.lifecycle_http import LIFECYCLE
+    from vauxr.web.owner import OWNER
 
     app = make_http_app()
     app.router.add_post("/api/offer", _offer_handler)
@@ -539,7 +539,7 @@ async def test_realtime_offer_revoked_during_await_is_closed(monkeypatch, close_
 
         async def handle_offer(self, identity, body):
             owner = app[OWNER]
-            from auth_policy import Principal
+            from vauxr.auth.policy import Principal
 
             app[LIFECYCLE].execute(
                 "revoke", {"operation_id": "1" * 32, "role": "device", "subject": identity},
@@ -559,7 +559,7 @@ async def test_realtime_offer_revoked_during_await_is_closed(monkeypatch, close_
         assert response.status == (503 if close_fails else 401)
         stop.assert_awaited_once_with("speaker")
         if close_fails:
-            import auth_connections
+            import vauxr.auth.connections as auth_connections
 
             await auth_connections.disconnect_stale(app[LIFECYCLE].store)
             assert stop.await_count == 2
@@ -570,8 +570,8 @@ async def test_integration_revocation_stops_media_without_plugin_socket(monkeypa
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    import auth_connections
-    from agent_server import AgentServer, _Connection
+    import vauxr.auth.connections as auth_connections
+    from vauxr.agents.server import AgentServer, _Connection
 
     agent, _ = await agent_registry.create("Orphaned media")
     agent_registry.activate(agent.id)
@@ -607,10 +607,10 @@ async def test_integration_revocation_stops_media_without_plugin_socket(monkeypa
 async def test_realtime_media_retains_integration_generation(monkeypatch):
     from unittest.mock import AsyncMock
 
-    import auth_connections
-    import realtime_session
-    from lifecycle_http import LIFECYCLE
-    from owner_http import OWNER
+    import vauxr.auth.connections as auth_connections
+    import vauxr.realtime.session as realtime_session
+    from vauxr.provisioning.lifecycle_http import LIFECYCLE
+    from vauxr.web.owner import OWNER
 
     agent, _ = await agent_registry.create("Media dependency")
     agent_registry.activate(agent.id)
@@ -636,7 +636,7 @@ async def test_realtime_media_retains_integration_generation(monkeypatch):
             "type": "offer", "sdp": "synthetic", "device_id": "speaker", "token": "device-secret",
         })
         assert response.status == 200
-        from auth_policy import Principal
+        from vauxr.auth.policy import Principal
 
         app[LIFECYCLE].execute(
             "revoke", {"operation_id": "1" * 32, "role": "integration", "subject": agent.id},
@@ -652,8 +652,8 @@ async def test_lifecycle_http_teardown_timeout_and_maintenance_retry(monkeypatch
     import asyncio
     from unittest.mock import AsyncMock
 
-    import auth_connections
-    from lifecycle_http import LIFECYCLE
+    import vauxr.auth.connections as auth_connections
+    from vauxr.provisioning.lifecycle_http import LIFECYCLE
 
     subject = "speaker"
     token = "device-secret"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from utils import make_binary_frame
+from vauxr.utils import make_binary_frame
 
 
 def test_basic_frame() -> None:

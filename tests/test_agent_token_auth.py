@@ -15,9 +15,9 @@ import bcrypt
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-import agent_registry
-import config as cfg_mod
-from http_server import make_http_app
+import vauxr.agents.registry as agent_registry
+import vauxr.config as cfg_mod
+from vauxr.web.server import make_http_app
 
 
 DEVICE_TOKEN = "tok-auth"

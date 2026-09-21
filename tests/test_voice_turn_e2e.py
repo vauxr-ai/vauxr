@@ -11,13 +11,13 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
-import agent_registry
-import config as cfg_mod
-import device_registry as registry
-import pipeline
-import wyoming_stt
-import wyoming_tts
-from server import APP_STATE, make_app
+import vauxr.agents.registry as agent_registry
+import vauxr.config as cfg_mod
+import vauxr.devices.registry as registry
+import vauxr.pipeline as pipeline
+import vauxr.speech.wyoming_stt as wyoming_stt
+import vauxr.speech.wyoming_tts as wyoming_tts
+from vauxr.server import APP_STATE, make_app
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +26,7 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("DEVICE_TOKEN", "tok-E")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     from tests.auth_helpers import seed
-    from auth_policy import Role
+    from vauxr.auth.policy import Role
     monkeypatch.setenv("OPENCLAW_URL", "wss://stub.invalid/")
     seed("tok-E", Role.DEVICE, "dev1")
     registry.reset()

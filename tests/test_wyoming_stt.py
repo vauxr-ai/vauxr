@@ -7,8 +7,8 @@ import json
 
 import pytest
 
-import config as cfg_mod
-from wyoming_stt import (
+import vauxr.config as cfg_mod
+from vauxr.speech.wyoming_stt import (
     WyomingEvent,
     encode_event,
     parse_wyoming_events,

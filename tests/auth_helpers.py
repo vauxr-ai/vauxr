@@ -1,8 +1,8 @@
 """Explicit schema fixtures; never infer enrollment from DEVICE_TOKEN."""
 
-from auth import get_store
-from auth_policy import Role
-from auth_store import Credential, verifier
+from vauxr.auth.service import get_store
+from vauxr.auth.policy import Role
+from vauxr.auth.store import Credential, verifier
 
 TRANSPORT_HEADERS = {"Host": "owner.example", "Origin": "https://owner.example",
                      "X-Forwarded-Proto": "https"}
@@ -16,7 +16,7 @@ def seed(token: str, role: Role, subject: str) -> None:
 
 def owner_headers(client) -> dict[str, str]:
     """A real saved-token session over the synthetic trusted proxy boundary."""
-    from owner_http import COOKIE, OWNER
+    from vauxr.web.owner import COOKIE, OWNER
     service = client.app[OWNER]
     if service.status()["state"] != "generated":
         result = service.claim(service.console_claim(recover=True))

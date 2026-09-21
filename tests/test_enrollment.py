@@ -10,15 +10,15 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-import auth_store
-import config
-import enrollment
-from auth_policy import Role
-from auth_store import Credential, CredentialStore, verifier
-from enrollment import Enrollment, EnrollmentError, transcript
-from http_server import make_http_app
-from owner_auth import OwnerAuth
-from owner_http import COOKIE, OWNER
+import vauxr.auth.store as auth_store
+import vauxr.config as config
+import vauxr.provisioning.enrollment as enrollment
+from vauxr.auth.policy import Role
+from vauxr.auth.store import Credential, CredentialStore, verifier
+from vauxr.provisioning.enrollment import Enrollment, EnrollmentError, transcript
+from vauxr.web.server import make_http_app
+from vauxr.auth.owner import OwnerAuth
+from vauxr.web.owner import COOKIE, OWNER
 
 ORIGIN = "https://owner.example"
 HEADERS = {"Host": "owner.example", "Origin": ORIGIN, "X-Forwarded-Proto": "https"}
@@ -738,7 +738,7 @@ async def test_http_rate_limit_persists_malformed_requests(client):
 
 
 async def test_http_query_duplicate_auth_and_untrusted_peer(client, monkeypatch):
-    from owner_http import PROXIES
+    from vauxr.web.owner import PROXIES
 
     response = await client.post("/api/enrollment/v1/list?token=synthetic", json={}, headers=HEADERS)
     assert response.status == 403
@@ -801,7 +801,7 @@ async def test_http_chunked_bounds_utf8_and_content_type(client):
 async def test_http_body_timeout_returns_fixed_error(client, monkeypatch):
     import asyncio
 
-    import enrollment_http
+    import vauxr.provisioning.enrollment_http as enrollment_http
 
     original_timeout = asyncio.timeout
     monkeypatch.setattr(enrollment_http.asyncio, "timeout", lambda _: original_timeout(0.01))

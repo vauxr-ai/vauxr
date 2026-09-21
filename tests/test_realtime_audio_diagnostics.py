@@ -14,8 +14,8 @@ from pipecat.processors.frame_processor import FrameDirection
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import RawAudioTrack, SmallWebRTCOutputTransport
 
-from realtime_audio_diagnostics import LiveAudioDiagnostics
-from realtime_transcript import TranscriptRelay
+from vauxr.realtime.audio_diagnostics import LiveAudioDiagnostics
+from vauxr.realtime.transcript import TranscriptRelay
 
 
 def diagnostic() -> tuple[LiveAudioDiagnostics, list[dict[str, object]]]:
@@ -146,10 +146,10 @@ async def test_real_live_peer_correlates_provider_output_and_local_silence(
     from pipecat.services.openai.live.llm import OpenAILiveLLMService
     from websockets.asyncio.server import ServerConnection, serve
 
-    import agent_registry
-    import device_registry
-    import realtime_session
-    from realtime_session import RealtimeManager
+    import vauxr.agents.registry as agent_registry
+    import vauxr.devices.registry as device_registry
+    import vauxr.realtime.session as realtime_session
+    from vauxr.realtime.session import RealtimeManager
 
     monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
     monkeypatch.setenv("REALTIME_AUDIO_DIAGNOSTICS", "1")

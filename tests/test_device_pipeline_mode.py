@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-import device_registry as registry
-import realtime_session
-import server
-from device_config import load_device_configs, pipeline_mode, save_device_configs
+import vauxr.devices.registry as registry
+import vauxr.realtime.session as realtime_session
+import vauxr.server as server
+from vauxr.devices.config import load_device_configs, pipeline_mode, save_device_configs
 
 
 def test_mode_persistence_and_default(tmp_path):

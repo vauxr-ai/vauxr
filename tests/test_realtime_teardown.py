@@ -11,10 +11,10 @@ from aiortc import AudioStreamTrack, RTCConfiguration, RTCPeerConnection
 from loguru import logger
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 
-import config
-import realtime_session
-from realtime_session import RealtimeManager, RealtimeSession
-from realtime_teardown import protect_handshake_teardown
+import vauxr.config as config
+import vauxr.realtime.session as realtime_session
+from vauxr.realtime.session import RealtimeManager, RealtimeSession
+from vauxr.realtime.teardown import protect_handshake_teardown
 
 
 @pytest.fixture

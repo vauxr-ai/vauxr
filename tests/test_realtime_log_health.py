@@ -21,13 +21,13 @@ from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection, Sma
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCClient
 from pipecat.utils.types import NOT_GIVEN
 
-import config
-import device_registry
-import realtime_session
-from realtime_llm import AgentLLMService
-from realtime_session import RealtimeSession
-from realtime_transport import use_websocket_control
-from realtime_wyoming import WyomingSTTService, WyomingTTSService
+import vauxr.config as config
+import vauxr.devices.registry as device_registry
+import vauxr.realtime.session as realtime_session
+from vauxr.realtime.llm import AgentLLMService
+from vauxr.realtime.session import RealtimeSession
+from vauxr.realtime.transport import use_websocket_control
+from vauxr.realtime.wyoming import WyomingSTTService, WyomingTTSService
 
 
 @pytest.fixture(autouse=True)
@@ -317,7 +317,7 @@ async def _assert_audio_diagnostics(
 async def test_rtp_only_warm_wake_can_promote_new_turn(control_ws: SimpleNamespace) -> None:
     from pipecat.frames.frames import VADUserStartedSpeakingFrame
 
-    from realtime_turn import SuppressibleVADUserTurnStartStrategy
+    from vauxr.realtime.turn import SuppressibleVADUserTurnStartStrategy
 
     track = _audio_track()
     session = RealtimeSession("log-health-test", agent_server=SimpleNamespace())

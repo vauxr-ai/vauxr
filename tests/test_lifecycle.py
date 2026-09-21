@@ -8,18 +8,18 @@ from unittest.mock import AsyncMock
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-import auth
-import auth_connections
-import auth_store
-import config
-import lifecycle
-from auth_policy import Role
-from auth_store import Credential, CredentialStore, verifier
-from enrollment import EnrollmentError
-from http_server import make_http_app
-from lifecycle import Lifecycle
-from lifecycle_http import LIFECYCLE
-from owner_http import COOKIE, LAN_COOKIE, OWNER
+import vauxr.auth.service as auth
+import vauxr.auth.connections as auth_connections
+import vauxr.auth.store as auth_store
+import vauxr.config as config
+import vauxr.provisioning.lifecycle as lifecycle
+from vauxr.auth.policy import Role
+from vauxr.auth.store import Credential, CredentialStore, verifier
+from vauxr.provisioning.enrollment import EnrollmentError
+from vauxr.web.server import make_http_app
+from vauxr.provisioning.lifecycle import Lifecycle
+from vauxr.provisioning.lifecycle_http import LIFECYCLE
+from vauxr.web.owner import COOKIE, LAN_COOKIE, OWNER
 from tests.test_enrollment import (
     ORIGIN,
     approve,
@@ -441,7 +441,7 @@ def test_interoperability_fixture(env, monkeypatch, role, subject):
 
     fixture = json.loads((Path(__file__).parent / "fixtures/lifecycle-v1.json").read_text())
     service, _, owner = env
-    from lifecycle_schema import LIMIT, OPERATION_LIMIT, TOMBSTONE_LIMIT
+    from vauxr.provisioning.lifecycle_schema import LIMIT, OPERATION_LIMIT, TOMBSTONE_LIMIT
 
     assert fixture["history"]["general_limit"] == LIMIT
     assert fixture["history"]["total_limit"] == OPERATION_LIMIT
@@ -450,7 +450,7 @@ def test_interoperability_fixture(env, monkeypatch, role, subject):
     monkeypatch.setattr(lifecycle.time, "time", lambda: 2000000000)
     # Test fixture time is later than the synthetic owner's session; retain its
     # current epoch for the service-only controller resolver.
-    from auth_policy import Principal
+    from vauxr.auth.policy import Principal
 
     principal = Principal(Role.OWNER, "owner", service.store.owner["generation"])
     owner = lambda: principal
@@ -484,7 +484,7 @@ async def test_teardown_failure_retries_without_restoring_authority(env):
 def _process_operation(path, action):
     from pathlib import Path
 
-    from auth_policy import Principal
+    from vauxr.auth.policy import Principal
 
     service = Lifecycle(CredentialStore(Path(path)), ORIGIN)
     try:
@@ -584,7 +584,7 @@ def test_client_storage_crash_and_restart_ack(env, tmp_path, saved_before_crash)
 
 @pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "agent")])
 def test_exhausted_history_reserves_revocation_and_permanent_retries(env, role, subject):
-    from lifecycle_schema import LIMIT
+    from vauxr.provisioning.lifecycle_schema import LIMIT
 
     service, _, owner = env
     original = delivered(service, owner, role, subject)
@@ -618,7 +618,7 @@ def test_exhausted_history_reserves_revocation_and_permanent_retries(env, role, 
 @pytest.mark.parametrize("role,subject", [("device", "speaker"), ("integration", "agent")])
 @pytest.mark.parametrize("resource", ["tombstones", "operations"])
 def test_admission_enforces_last_revocation_headroom(env, role, subject, resource):
-    from lifecycle_schema import OPERATION_LIMIT, TOMBSTONE_LIMIT
+    from vauxr.provisioning.lifecycle_schema import OPERATION_LIMIT, TOMBSTONE_LIMIT
 
     service, _, owner = env
     result = control(service, owner, "revoke", role, subject)
@@ -703,7 +703,7 @@ async def test_real_realtime_session_close_preserves_failed_cleanup(env, monkeyp
     import asyncio
     from types import SimpleNamespace
 
-    import realtime_session
+    import vauxr.realtime.session as realtime_session
 
     monkeypatch.setattr(auth_connections, "CLOSE_SECONDS", 0.02)
     manager = realtime_session.RealtimeManager()
@@ -740,7 +740,7 @@ async def test_real_realtime_session_close_preserves_failed_cleanup(env, monkeyp
 
 
 def test_exhausted_history_can_revoke_recovery_without_unblocked_credentials(env):
-    from lifecycle_schema import LIMIT
+    from vauxr.provisioning.lifecycle_schema import LIMIT
 
     service, enrollment, owner = env
     key, row, code = ready(enrollment)
@@ -773,9 +773,9 @@ async def test_rotation_teardown_cannot_untrack_replacement_realtime_offer(env, 
 
     from aiohttp import web
 
-    import agent_registry
-    import realtime_app
-    import realtime_session
+    import vauxr.agents.registry as agent_registry
+    import vauxr.realtime.app as realtime_app
+    import vauxr.realtime.session as realtime_session
 
     service, _, owner = env
     manager = realtime_session.RealtimeManager()
@@ -787,7 +787,7 @@ async def test_rotation_teardown_cannot_untrack_replacement_realtime_offer(env, 
     # manager replacement, session teardown and retained-authority machinery.
     monkeypatch.setitem(sys.modules, "pipecat.transports.smallwebrtc.request_handler",
                         SimpleNamespace(SmallWebRTCRequest=SimpleNamespace(from_dict=lambda body: body)))
-    monkeypatch.setitem(sys.modules, "realtime_teardown",
+    monkeypatch.setitem(sys.modules, "vauxr.realtime.teardown",
                         SimpleNamespace(protect_handshake_teardown=lambda connection: None))
     old_disconnect_entered = asyncio.Event()
     finish_old_disconnect = asyncio.Event()
@@ -908,10 +908,10 @@ async def test_rotation_teardown_cannot_untrack_replacement_realtime_offer(env, 
 async def test_live_start_rechecks_authority_after_teardown(env, monkeypatch, tmp_path, revoke_during_stop):
     import asyncio
 
-    import device_registry
-    import realtime_session
-    import server
-    import speech
+    import vauxr.devices.registry as device_registry
+    import vauxr.realtime.session as realtime_session
+    import vauxr.server as server
+    import vauxr.speech.store as speech
 
     service, _, owner = env
     monkeypatch.setenv("REALTIME_ENABLED", "1")

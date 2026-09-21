@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from device_settings import (
+from vauxr.devices.settings import (
     get_realtime_settings,
     get_realtime_vad,
     get_segmentation,

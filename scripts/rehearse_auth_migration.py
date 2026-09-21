@@ -34,14 +34,14 @@ def rehearse() -> None:
 
     sys.addaudithook(offline_only)
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-    from auth_policy import Principal
-    from auth_store import CredentialStore, atomic_private_json
-    from enrollment import Enrollment
-    from integration import Integration
-    from integration_schema import empty_state as integration_state
-    from lifecycle import Lifecycle
-    from lifecycle_schema import empty_state as lifecycle_state
-    from owner_auth import OwnerAuth, OwnerError, generate_token
+    from vauxr.auth.policy import Principal
+    from vauxr.auth.store import CredentialStore, atomic_private_json
+    from vauxr.provisioning.enrollment import Enrollment
+    from vauxr.provisioning.integration import Integration
+    from vauxr.provisioning.integration_schema import empty_state as integration_state
+    from vauxr.provisioning.lifecycle import Lifecycle
+    from vauxr.provisioning.lifecycle_schema import empty_state as lifecycle_state
+    from vauxr.auth.owner import OwnerAuth, OwnerError, generate_token
 
     origin = "http://localhost:8080"
     os.umask(0o077)

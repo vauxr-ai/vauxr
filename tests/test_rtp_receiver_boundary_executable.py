@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from aiortc import AudioStreamTrack, RTCConfiguration, RTCPeerConnection
 from aiortc.rtp import RtpPacket
-from realtime_rtp_diagnostics import install, monitor
+from vauxr.realtime.rtp_diagnostics import install, monitor
 
 
 class ReceiverBoundaryTest(unittest.IsolatedAsyncioTestCase):

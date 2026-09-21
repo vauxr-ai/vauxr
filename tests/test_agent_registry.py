@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-import agent_registry as cr
-import config as cfg_mod
+import vauxr.agents.registry as cr
+import vauxr.config as cfg_mod
 
 
 @pytest.fixture(autouse=True)

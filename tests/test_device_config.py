@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from device_config import (
+from vauxr.devices.config import (
     barge_in_enabled,
     device_config_path,
     load_device_configs,
@@ -150,7 +150,7 @@ def test_button_actions_unknown_gesture_dropped(tmp_path: Path) -> None:
 
 
 def test_parse_button_actions_strict_errors() -> None:
-    from device_config import parse_button_actions
+    from vauxr.devices.config import parse_button_actions
 
     _, err = parse_button_actions({"double_press": {"kind": "prompt"}})
     assert err is not None

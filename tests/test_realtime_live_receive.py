@@ -22,10 +22,10 @@ from pipecat.transports.smallwebrtc.transport import RawAudioTrack
 from pipecat.workers.runner import WorkerRunner
 from websockets.asyncio.server import ServerConnection, serve
 
-import device_registry
-import realtime_session
-from realtime_live import LiveService
-from realtime_session import RealtimeManager, RealtimeSession
+import vauxr.devices.registry as device_registry
+import vauxr.realtime.session as realtime_session
+from vauxr.realtime.live import LiveService
+from vauxr.realtime.session import RealtimeManager, RealtimeSession
 
 
 async def test_installed_live_config_leaves_barge_in_with_provider(monkeypatch: pytest.MonkeyPatch) -> None:

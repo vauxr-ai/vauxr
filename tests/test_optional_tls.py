@@ -14,12 +14,12 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
 from cryptography.x509.oid import NameOID
 
-import auth
-import config
-from http_server import make_http_app
-from owner_auth import configured_origin
-from owner_http import COOKIE, LAN_COOKIE, ORIGIN, OWNER
-from server import make_app
+import vauxr.auth.service as auth
+import vauxr.config as config
+from vauxr.web.server import make_http_app
+from vauxr.auth.owner import configured_origin
+from vauxr.web.owner import COOKIE, LAN_COOKIE, ORIGIN, OWNER
+from vauxr.server import make_app
 from tests.test_enrollment import signed
 
 
@@ -53,7 +53,7 @@ def test_explicit_https_takes_precedence_and_cannot_downgrade(monkeypatch):
 
 
 def test_lan_console_claim_requires_explicit_local_participation(monkeypatch, capsys):
-    import owner_cli
+    import vauxr.auth.cli as owner_cli
 
     monkeypatch.setenv("OWNER_HTTP_ORIGIN", "http://192.168.1.20:8080")
     monkeypatch.setattr("sys.argv", ["vauxr-owner", "claim"])
@@ -63,7 +63,7 @@ def test_lan_console_claim_requires_explicit_local_participation(monkeypatch, ca
     output = capsys.readouterr().out
     assert "http://192.168.1.20:8080" in output and "exposes credentials" in output
     code = output.splitlines()[-1]
-    from owner_auth import OwnerAuth
+    from vauxr.auth.owner import OwnerAuth
 
     assert OwnerAuth(auth.get_store()).claim(code)["save_required"]
 
@@ -223,10 +223,10 @@ def test_lifecycle_fixture_transport_policy():
 async def test_owner_canonical_boundary_preserves_enrollment_and_lifecycle(monkeypatch, scheme, port, alternate):
     import copy
 
-    from auth_policy import Role
-    from auth_store import Credential, verifier
-    from enrollment_http import ENROLLMENT
-    from lifecycle_http import LIFECYCLE
+    from vauxr.auth.policy import Role
+    from vauxr.auth.store import Credential, verifier
+    from vauxr.provisioning.enrollment_http import ENROLLMENT
+    from vauxr.provisioning.lifecycle_http import LIFECYCLE
 
     origin = f"{scheme}://127.0.0.1"
     monkeypatch.setenv(f"OWNER_{scheme.upper()}_ORIGIN", origin)
@@ -271,11 +271,11 @@ async def test_owner_canonical_boundary_preserves_enrollment_and_lifecycle(monke
 @pytest.mark.parametrize("transition", ["origin", "scheme", "owner_mode"])
 @pytest.mark.parametrize("phase", ["queued", "pending", "delivered", "recovery"])
 async def test_restart_transition_permanently_invalidates_pending_work(monkeypatch, scheme, transition, phase):
-    from auth_policy import Role
-    from auth_store import Credential, verifier
-    from enrollment import EnrollmentError, transcript
-    from enrollment_http import ENROLLMENT
-    from lifecycle_http import LIFECYCLE
+    from vauxr.auth.policy import Role
+    from vauxr.auth.store import Credential, verifier
+    from vauxr.provisioning.enrollment import EnrollmentError, transcript
+    from vauxr.provisioning.enrollment_http import ENROLLMENT
+    from vauxr.provisioning.lifecycle_http import LIFECYCLE
     from tests.test_enrollment import approve, owner_resolver, ready, request
 
     first = f"{scheme}://owner.example"
@@ -364,10 +364,10 @@ async def test_restart_transition_permanently_invalidates_pending_work(monkeypat
 @pytest.mark.parametrize("api", ["enrollment", "lifecycle"])
 @pytest.mark.parametrize("invalidate", ["logout", "expiry", "recovery", "origin_roundtrip"])
 async def test_owner_permission_rechecked_after_middleware(monkeypatch, tls, api, invalidate):
-    import enrollment_http
-    import lifecycle_http
-    from auth_policy import Role
-    from auth_store import Credential, verifier
+    import vauxr.provisioning.enrollment_http as enrollment_http
+    import vauxr.provisioning.lifecycle_http as lifecycle_http
+    from vauxr.auth.policy import Role
+    from vauxr.auth.store import Credential, verifier
 
     origin = ("https" if tls else "http") + "://owner.example"
     monkeypatch.setenv("OWNER_HTTPS_ORIGIN" if tls else "OWNER_HTTP_ORIGIN", origin)

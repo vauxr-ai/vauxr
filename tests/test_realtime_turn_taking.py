@@ -9,11 +9,11 @@ import pytest
 from aiohttp import WSMsgType
 from aiohttp.test_utils import TestClient, TestServer
 
-import config as cfg_mod
-import device_registry as dev_reg
-import realtime_session
-from realtime_session import RealtimeManager
-from server import make_app
+import vauxr.config as cfg_mod
+import vauxr.devices.registry as dev_reg
+import vauxr.realtime.session as realtime_session
+from vauxr.realtime.session import RealtimeManager
+from vauxr.server import make_app
 
 # --- conversation log (record_turn choke point) ---
 
@@ -89,7 +89,7 @@ def _audio_ends(ws: _FakeWs) -> list[dict[str, object]]:
 @pytest.mark.asyncio
 async def test_empty_timeout_completion_does_not_force_follow_up() -> None:
     """Agent timeout completes with (False, ''); do not reopen the mic."""
-    from realtime_session import RealtimeSession
+    from vauxr.realtime.session import RealtimeSession
 
     ws = _FakeWs()
     dev_reg.register("dev-empty", ws=ws)
@@ -112,7 +112,7 @@ async def test_empty_timeout_completion_does_not_force_follow_up() -> None:
 @pytest.mark.asyncio
 async def test_idle_interruption_does_not_force_follow_up() -> None:
     """Pipecat interrupts on every user-turn start; that must not reopen the mic."""
-    from realtime_session import RealtimeSession
+    from vauxr.realtime.session import RealtimeSession
 
     ws = _FakeWs()
     dev_reg.register("dev-idle-int", ws=ws)
@@ -137,7 +137,7 @@ async def test_idle_interruption_does_not_force_follow_up() -> None:
 @pytest.mark.asyncio
 async def test_barge_in_during_reply_keeps_listening() -> None:
     """A real cut-in over TTS still overrides a follow_up=false end."""
-    from realtime_session import RealtimeSession
+    from vauxr.realtime.session import RealtimeSession
 
     ws = _FakeWs()
     dev_reg.register("dev-barge-int", ws=ws)
@@ -162,7 +162,7 @@ async def test_barge_in_during_reply_keeps_listening() -> None:
 
 
 def test_turns_suppressed_when_barge_in_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    from realtime_session import RealtimeSession
+    from vauxr.realtime.session import RealtimeSession
 
     monkeypatch.setattr(dev_reg, "get_config_for", lambda _id: {"barge_in": False})
     session = RealtimeSession("dev-bi", agent_server=object())
@@ -177,7 +177,7 @@ def test_turns_suppressed_when_barge_in_disabled(monkeypatch: pytest.MonkeyPatch
 def test_turns_not_suppressed_during_tts_when_barge_in_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from realtime_session import RealtimeSession
+    from vauxr.realtime.session import RealtimeSession
 
     monkeypatch.setattr(dev_reg, "get_config_for", lambda _id: {"barge_in": True})
     session = RealtimeSession("dev-bi", agent_server=object())
@@ -190,7 +190,7 @@ def test_turns_not_suppressed_during_tts_when_barge_in_enabled(
 
 
 def test_turns_suppressed_when_mic_paused() -> None:
-    from realtime_session import RealtimeSession
+    from vauxr.realtime.session import RealtimeSession
 
     session = RealtimeSession("dev-pause", agent_server=object())
     realtime_session.get_manager()._sessions[session.device_id] = session
@@ -220,13 +220,13 @@ def test_is_cold_wait_lifecycle() -> None:
 
 async def test_ws_pipeline_records_turn_into_log(monkeypatch: pytest.MonkeyPatch) -> None:
     """A completed WS turn must flow through the record_turn choke point."""
-    import agent_registry
-    import pipeline
-    import realtime_session
-    import wyoming_stt
-    import wyoming_tts
-    from agent_server import AgentServer
-    from pipeline import run_voice_turn
+    import vauxr.agents.registry as agent_registry
+    import vauxr.pipeline as pipeline
+    import vauxr.realtime.session as realtime_session
+    import vauxr.speech.wyoming_stt as wyoming_stt
+    import vauxr.speech.wyoming_tts as wyoming_tts
+    from vauxr.agents.server import AgentServer
+    from vauxr.pipeline import run_voice_turn
 
     # Fresh manager singleton so the log starts empty.
     realtime_session._manager = None  # type: ignore[attr-defined]
@@ -308,7 +308,7 @@ def _env(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setenv("REALTIME_ENABLED", "1")
     monkeypatch.setenv("REALTIME_HOST", "192.168.1.50")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    from auth_policy import Role
+    from vauxr.auth.policy import Role
     from tests.auth_helpers import seed
     seed("ws-test-token", Role.DEVICE, "dev1")
     yield
@@ -373,7 +373,7 @@ async def test_hello_offer_url_uses_trusted_owner_origin_not_realtime_host(clien
         hello = await _recv_json(ws)
         policy = hello["realtime"]
         assert policy["enabled"] is True
-        from owner_auth import configured_origin
+        from vauxr.auth.owner import configured_origin
         assert policy["offer_url"] == configured_origin() + "/api/offer"
         assert "192.168.1.50" not in policy["offer_url"]
 
@@ -388,7 +388,7 @@ async def test_realtime_start_without_mode_field_routes_persisted_realtime_to_li
     """
     monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
     dev_reg.update_config("dev1", {"pipeline_mode": "realtime"})
-    from speech import get_store as speech_store
+    from vauxr.speech.store import get_store as speech_store
     speech_store().update({"mode": "realtime"}, device_id="dev1")
     async with client.ws_connect("/ws") as ws:
         await ws.send_json(
@@ -470,7 +470,7 @@ async def test_hello_ws_only_policy_has_no_extras(
 async def test_text_completion_leaves_barge_in_open_until_late_tts_drain(
     monkeypatch: pytest.MonkeyPatch, follow_up: bool, barge_at: str | None,
 ) -> None:
-    import realtime_session
+    import vauxr.realtime.session as realtime_session
 
     monkeypatch.setattr(realtime_session, "_BOT_IDLE_DEBOUNCE_S", 0)
     monkeypatch.setattr(dev_reg, "get_config_for", lambda _id: {"barge_in": True})
@@ -520,7 +520,7 @@ async def test_text_completion_leaves_barge_in_open_until_late_tts_drain(
 
 @pytest.mark.parametrize("paused", [False, True])
 async def test_late_completion_preserves_explicit_mic_state(paused: bool) -> None:
-    from realtime_session import RealtimeSession
+    from vauxr.realtime.session import RealtimeSession
 
     session = RealtimeSession("dev-explicit", agent_server=object())
     realtime_session.get_manager()._sessions[session.device_id] = session
@@ -531,7 +531,7 @@ async def test_late_completion_preserves_explicit_mic_state(paused: bool) -> Non
 
 @pytest.mark.parametrize("terminal", ["_closed", "_ended_notified"])
 async def test_completion_after_teardown_does_not_queue_or_send(terminal: str) -> None:
-    from realtime_session import RealtimeSession
+    from vauxr.realtime.session import RealtimeSession
 
     ws = _FakeWs()
     dev_reg.register("dev-ended", ws=ws)
@@ -550,7 +550,7 @@ async def test_completion_after_teardown_does_not_queue_or_send(terminal: str) -
 async def test_explicit_pause_resume_routes_to_existing_session(
     client: TestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import realtime_session
+    import vauxr.realtime.session as realtime_session
 
     manager = RealtimeManager()
     session = realtime_session.RealtimeSession("dev1", agent_server=object())
@@ -572,7 +572,7 @@ async def test_explicit_pause_resume_routes_to_existing_session(
 async def test_empty_barge_in_completion_releases_processing_before_old_audio_drains(
     old_text_complete: bool,
 ) -> None:
-    from realtime_session import RealtimeSession
+    from vauxr.realtime.session import RealtimeSession
 
     ws = _FakeWs()
     dev_reg.register("dev-empty-barge", ws=ws)

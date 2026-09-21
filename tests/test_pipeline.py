@@ -10,14 +10,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import agent_registry
-import config as cfg_mod
-import device_registry as dev_reg
-import pipeline
-import wyoming_stt
-import wyoming_tts
-from agent_server import AgentServer
-from pipeline import resolve_follow_up, run_text_turn, run_voice_turn
+import vauxr.agents.registry as agent_registry
+import vauxr.config as cfg_mod
+import vauxr.devices.registry as dev_reg
+import vauxr.pipeline as pipeline
+import vauxr.speech.wyoming_stt as wyoming_stt
+import vauxr.speech.wyoming_tts as wyoming_tts
+from vauxr.agents.server import AgentServer
+from vauxr.pipeline import resolve_follow_up, run_text_turn, run_voice_turn
 
 
 # --- Test doubles ---

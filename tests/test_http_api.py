@@ -8,9 +8,9 @@ from datetime import UTC, datetime
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-import config as cfg_mod
-import device_registry as registry
-from http_server import make_http_app
+import vauxr.config as cfg_mod
+import vauxr.devices.registry as registry
+from vauxr.web.server import make_http_app
 from tests.auth_helpers import owner_headers
 
 
@@ -21,7 +21,7 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
     monkeypatch.setenv("DEVICE_TOKEN", "http-test-token")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    from auth_policy import Role
+    from vauxr.auth.policy import Role
     from tests.auth_helpers import seed
     seed("http-test-token", Role.OWNER, "owner")
     registry.reset()

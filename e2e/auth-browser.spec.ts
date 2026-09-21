@@ -17,7 +17,7 @@ function consoleCode(recover = false) {
     "python3",
     [
       "-c",
-      `from pathlib import Path; import os; from auth_store import CredentialStore; from owner_auth import OwnerAuth; o=OwnerAuth(CredentialStore(Path(os.environ['DATA_DIR'])/'authz.json')); print(o.console_claim(recover=${recover ? "True" : "False"}))`,
+      `from pathlib import Path; import os; from vauxr.auth.store import CredentialStore; from vauxr.auth.owner import OwnerAuth; o=OwnerAuth(CredentialStore(Path(os.environ['DATA_DIR'])/'authz.json')); print(o.console_claim(recover=${recover ? "True" : "False"}))`,
     ],
     { cwd: root, env: environment, encoding: "utf8" },
   ).trim();
@@ -44,7 +44,7 @@ test.beforeEach(async () => {
   delete environment.OPERATOR_TOKEN;
   delete environment.OWNER_HTTPS_ORIGIN;
   delete environment.OWNER_TRUSTED_PROXIES;
-  server = spawn("python3", ["-m", "server"], {
+  server = spawn("python3", ["-m", "vauxr"], {
     cwd: root,
     env: environment,
     stdio: "ignore",
@@ -398,7 +398,7 @@ test("non-loopback HTTP administration works while browser microphone remains re
   await new Promise((r) => server.once("exit", r));
   const lan = `http://${address}:18080`;
   environment.OWNER_HTTP_ORIGIN = lan;
-  server = spawn("python3", ["-m", "server"], {
+  server = spawn("python3", ["-m", "vauxr"], {
     cwd: root,
     env: environment,
     stdio: "ignore",

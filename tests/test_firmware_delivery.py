@@ -9,8 +9,8 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from yarl import URL
 
-import firmware_delivery as delivery
-from http_server import make_http_app
+import vauxr.devices.firmware as delivery
+from vauxr.web.server import make_http_app
 from tests.auth_helpers import TRANSPORT_HEADERS, owner_headers
 from tests.test_authz_transports import isolated  # noqa: F401
 
@@ -201,7 +201,7 @@ async def test_head_cannot_redeem_and_restart_invalidates(client):
 
 
 async def test_malformed_delivery_paths_never_fall_back_to_spa(client, tmp_path, monkeypatch):
-    import http_server
+    import vauxr.web.server as http_server
 
     (tmp_path / "index.html").write_text("SPA")
     monkeypatch.setattr(http_server, "WEB_CLIENT_DIST", str(tmp_path))

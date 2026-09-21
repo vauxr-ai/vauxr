@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from realtime_rtp_diagnostics import snapshot
+from vauxr.realtime.rtp_diagnostics import snapshot
 
 
 class Stats(dict):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-import config as cfg_mod
+import vauxr.config as cfg_mod
 
 
 @pytest.fixture(autouse=True)

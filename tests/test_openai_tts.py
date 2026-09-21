@@ -7,12 +7,12 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-import config
-import openai_tts
-import speech
-from speech import Backend, SpeechStore
-from speech_catalog import load_backends, validate_backend
-from wyoming_tts import synthesize
+import vauxr.config as config
+import vauxr.speech.openai as openai_tts
+import vauxr.speech.store as speech
+from vauxr.speech.store import Backend, SpeechStore
+from vauxr.speech.catalog import load_backends, validate_backend
+from vauxr.speech.wyoming_tts import synthesize
 
 PCM = struct.pack("<2400h", *([1000, -1000] * 1200))  # 100 ms at 24 kHz
 

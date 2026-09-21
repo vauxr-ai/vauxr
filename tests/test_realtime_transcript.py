@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from realtime_transcript import TranscriptRelay
+from vauxr.realtime.transcript import TranscriptRelay
 
 
 async def test_slow_send_preserves_order_and_only_coalesces_adjacent_snapshots() -> None:

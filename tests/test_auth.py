@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from auth_policy import Operation as O
-from auth_policy import PairApprovalResult, Principal, Role, allowed
-from auth_store import Credential, CredentialStore, verifier
+from vauxr.auth.policy import Operation as O
+from vauxr.auth.policy import PairApprovalResult, Principal, Role, allowed
+from vauxr.auth.store import Credential, CredentialStore, verifier
 
 # Explicit expected grants, independent from production sets. Every new enum value
 # must get a reviewed row (the completeness assertion prevents silent coverage gaps).

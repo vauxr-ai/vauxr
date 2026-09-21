@@ -11,14 +11,14 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
-import agent_registry as cr
-import config as cfg_mod
-from agent_server import AgentServer
+import vauxr.agents.registry as cr
+import vauxr.config as cfg_mod
+from vauxr.agents.server import AgentServer
 
 
 async def create_integration(name, type_):
     from tests.auth_helpers import seed
-    from auth_policy import Role
+    from vauxr.auth.policy import Role
     agent, token = await cr.create(name, type_)
     seed(token, Role.INTEGRATION, agent.id)
     return agent, token

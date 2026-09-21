@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 from aiohttp import WSMsgType, web
 
-import config as cfg_mod
-import device_identity as ident
-from openclaw_client import OpenClawClient
+import vauxr.config as cfg_mod
+import vauxr.devices.identity as ident
+from vauxr.agents.openclaw import OpenClawClient
 
 
 # --- Fake gateway plumbing ---

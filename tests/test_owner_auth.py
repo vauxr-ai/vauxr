@@ -9,14 +9,14 @@ from unittest.mock import patch
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-import auth_store
-import config
-import owner_auth
-from auth_policy import Role
-from auth_store import Credential, CredentialStore, verifier
-from http_server import make_http_app
-from owner_auth import OwnerAuth, OwnerError, environment_token, trusted_origin
-from owner_http import COOKIE, LAN_COOKIE, OWNER
+import vauxr.auth.store as auth_store
+import vauxr.config as config
+import vauxr.auth.owner as owner_auth
+from vauxr.auth.policy import Role
+from vauxr.auth.store import Credential, CredentialStore, verifier
+from vauxr.web.server import make_http_app
+from vauxr.auth.owner import OwnerAuth, OwnerError, environment_token, trusted_origin
+from vauxr.web.owner import COOKIE, LAN_COOKIE, OWNER
 
 # Synthetic fixtures only: deliberately reproducible, never production credentials.
 TOKEN_A = "vx_op_" + "A" * 43
@@ -382,7 +382,7 @@ async def test_http_malformed_rate_limit_and_secret_free_errors(caplog):
 
 
 def test_console_rejects_redirection_and_environment_recovery(tmp_path, monkeypatch, capsys):
-    import owner_cli
+    import vauxr.auth.cli as owner_cli
 
     monkeypatch.setattr("sys.argv", ["vauxr-owner", "generate-token"])
     with pytest.raises(SystemExit) as exc:
@@ -601,7 +601,7 @@ def test_corrupt_owner_metadata_clears_all_loaded_grants(tmp_path, bad_owner):
 async def test_route_attachment_cannot_omit_owner_boundary():
     from aiohttp import web
 
-    from http_server import attach_http_routes
+    from vauxr.web.server import attach_http_routes
 
     app = web.Application()
     attach_http_routes(app)
@@ -658,7 +658,7 @@ def test_lan_origin_must_be_canonical(value):
 ])
 def test_browser_noncanonical_origin_rejected_before_startup_or_console_claim(
         monkeypatch, tmp_path, capsys, scheme, default_port, authority):
-    import owner_cli
+    import vauxr.auth.cli as owner_cli
 
     origin = f"{scheme}://{authority.format(default_port=default_port)}"
     # A valid LAN fallback must not rescue invalid TLS configuration.
@@ -858,8 +858,8 @@ def test_direct_tls_boundary_retained_and_never_accepted_as_lan(tls):
     from aiohttp import web
     from aiohttp.test_utils import make_mocked_request
 
-    from owner_http import ORIGIN as ORIGIN_KEY
-    from owner_http import PROXIES, secure_request
+    from vauxr.web.owner import ORIGIN as ORIGIN_KEY
+    from vauxr.web.owner import PROXIES, secure_request
 
     app = web.Application()
     app[ORIGIN_KEY] = "https://owner.example" if tls else "http://owner.example"
