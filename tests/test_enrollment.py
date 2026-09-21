@@ -317,8 +317,8 @@ def test_expiry_boundary_capacity_pruning_and_restart_limits(setup, monkeypatch)
     assert len(service.store.enrollment["requests"]) == 1
 
 
-def test_duplicate_keys_names_and_known_disabled_device(setup):
-    service, _, _ = setup
+def test_duplicate_keys_names_and_known_disabled_device_can_repair(setup):
+    service, owner, cookie = setup
     key, row, code = ready(service)
     with pytest.raises(EnrollmentError, match="conflict"):
         request(service, key=key)
@@ -333,8 +333,10 @@ def test_duplicate_keys_names_and_known_disabled_device(setup):
                 for record in service.store.records
             )
         )
+    _, replacement = request(service, key=key)
+    assert replacement["device_id"] == row["device_id"]
     with pytest.raises(EnrollmentError, match="already_owned"):
-        request(service, key=key)
+        request(service, owner_resolver(owner, cookie), kind="browser", key=key)
 
 
 def test_known_device_inserted_after_approval_is_not_overwritten(setup):

@@ -178,32 +178,23 @@ def test_revoke_invalidates_both_enrollment_actors_transactionally(env):
 
 
 @pytest.mark.parametrize("kind", ["physical", "browser"])
-def test_consumed_lost_response_and_revoked_known_identity_recovery(env, kind):
+def test_known_identity_repairs_through_normal_pairing(env, kind):
     service, enrollment, owner = env
     key, row = request(enrollment, owner, kind)
     code = enrollment.execute("prove", signed(key, row, "prove"))["code"]
     approve(enrollment, row, code, owner)
     lost = enrollment.execute("redeem", signed(key, row, "redeem"))
     old = service.store.authenticate(lost["device_token"])
-    # Same-key enrollment cannot silently overwrite the consumed identity.
-    with pytest.raises(EnrollmentError, match="already_owned"):
-        request(enrollment, owner, kind, key)
-    recovery = control(service, owner, action="recover", subject=row["device_id"])
-    assert not service.store.current(old)
     with pytest.raises(EnrollmentError, match="already_owned"):
         request(enrollment, owner, "browser" if kind == "physical" else "physical", key)
     _, fresh = request(enrollment, owner, kind, key)
     code = enrollment.execute("prove", signed(key, fresh, "prove"))["code"]
-    with pytest.raises(EnrollmentError, match="forbidden"):
-        enrollment.execute("initiate", {"request_id": fresh["request_id"], "code": code},
-                           client(service, "integration"))
-    approve(enrollment, fresh, code, owner)
+    approver = client(service, "integration") if kind == "physical" else owner
+    approve(enrollment, fresh, code, approver)
     result = enrollment.execute("redeem", signed(key, fresh, "redeem"))
     assert result["device_id"] == lost["device_id"]
     assert result["device_token"] != lost["device_token"]
-    assert result["operation_id"] == recovery["operation_id"]
-    assert service.execute("ack", {"operation_id": recovery["operation_id"], "saved": True},
-                           client(service, token=result["device_token"]))["state"] == "acknowledged"
+    assert "operation_id" not in result
     assert any(r.id == old.credential_id and not r.enabled for r in service.store.records)
     assert not service.store.current(old)
 
@@ -554,7 +545,7 @@ def test_expiring_pending_integration_invalidates_its_approvals(env, monkeypatch
         enrollment.execute("redeem", signed(key, row, "redeem"))
 
 
-def test_known_binding_survives_record_removal_without_silent_reenrollment(env):
+def test_known_binding_allows_repair_after_record_removal(env):
     service, enrollment, owner = env
     key, row, code = ready(enrollment)
     approve(enrollment, row, code, owner)
@@ -562,8 +553,8 @@ def test_known_binding_survives_record_removal_without_silent_reenrollment(env):
     control(service, owner, action="revoke", subject=row["device_id"])
     with service.store.transaction():
         service.store.replace(tuple(r for r in service.store.records if r.subject != row["device_id"]))
-    with pytest.raises(EnrollmentError, match="already_owned"):
-        request(enrollment, owner, key=key)
+    _, fresh = request(enrollment, owner, key=key)
+    assert fresh["device_id"] == row["device_id"]
 
 
 @pytest.mark.parametrize("saved_before_crash", [False, True])
@@ -769,8 +760,8 @@ def test_exhausted_history_can_revoke_recovery_without_unblocked_credentials(env
     service.store.load()
     assert service.store.lifecycle["blocked"] == blocked
     assert row["device_id"] not in service.store.lifecycle["recovery"]
-    with pytest.raises(EnrollmentError, match="already_owned"):
-        request(enrollment, owner, key=key)
+    _, fresh = request(enrollment, owner, key=key)
+    assert fresh["device_id"] == row["device_id"]
 
 
 @pytest.mark.parametrize("retry_disconnect", [False, True])
