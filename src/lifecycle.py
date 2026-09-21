@@ -222,3 +222,18 @@ class Lifecycle:
             raise EnrollmentError("already_owned")
         state["bindings"][row["device_id"]] = binding
         self.store.lifecycle = state
+
+    def replace_enrollment_credential(
+        self, row: dict, credential: Credential
+    ) -> tuple[Credential, ...]:
+        """Atomically stage a same-identity re-pair and retire every old token."""
+        self.bind_enrollment(row)
+        state = self._state()
+        old_ids = {
+            record.id
+            for record in self.store.records
+            if record.role == Role.DEVICE and record.subject == row["device_id"]
+        }
+        records = self._retire(state, old_ids, self.store.records)
+        self.store.lifecycle = state
+        return (*records, credential)

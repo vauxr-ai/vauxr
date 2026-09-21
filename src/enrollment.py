@@ -185,9 +185,6 @@ class Enrollment:
             principal = None
             if action in ("initiate", "approve", "deny"):
                 principal = self._controller(resolve, row["kind"])
-                if (row["device_id"] in self.store.lifecycle.get("recovery", {})
-                        and principal.role != Role.OWNER):
-                    raise EnrollmentError("forbidden")
             status = self._status(row)
             if action == "status":
                 # A terminal status is readable with the key; never exposes code/token.
@@ -233,7 +230,8 @@ class Enrollment:
                 credential = Credential(secrets.token_hex(16), Role.DEVICE, row["device_id"], verifier(token))
                 from lifecycle import Lifecycle
 
-                Lifecycle(self.store, self.origin).bind_enrollment(row)
+                lifecycle = Lifecycle(self.store, self.origin)
+                records = lifecycle.replace_enrollment_credential(row, credential)
                 recovery = self.store.lifecycle["recovery"].get(row["device_id"])
                 extra = {}
                 if recovery:
@@ -242,7 +240,7 @@ class Enrollment:
                                      overlap_until=operation["expires_at"])
                     extra = {"operation_id": recovery["operation_id"], "save_required": True}
                 row["state"] = "consumed"
-                self.store.save_enrollment(state, (*self.store.records, credential))
+                self.store.save_enrollment(state, records)
                 log.info("enrollment consumed")
                 return {
                     "version": 1,
@@ -276,21 +274,17 @@ class Enrollment:
     def _unowned(self, row: dict) -> None:
         if len(self.store.records) >= 1024:
             raise EnrollmentError("capacity")
-        # Disabled records count too. No overwrite, rotation or reset side effect.
-        if (any(record.subject == row["device_id"] for record in self.store.records)
-                or row["device_id"] in self.store.lifecycle.get("bindings", {})):
-            recovery = self.store.lifecycle.get("recovery", {}).get(row["device_id"])
-            binding = self.store.lifecycle.get("bindings", {}).get(row["device_id"])
-            operation = self.store.lifecycle.get("operations", {}).get(
-                recovery["operation_id"] if recovery else "", {}
-            )
-            if (not recovery or binding != {"public_key": row["public_key"], "kind": row["kind"]}
-                    or operation.get("state") not in ("queued", "pending")
-                    or operation["expires_at"] <= time.time()
-                    or operation["owner_generation"] != self.store.owner.get("generation")
-                    or operation["origin"] != self.origin
-                    or recovery["request_id"] not in ("", row["request_id"])):
+        binding = self.store.lifecycle.get("bindings", {}).get(row["device_id"])
+        if binding is not None:
+            # A fresh proof plus the normal physical/code approval ceremony may
+            # replace this exact identity. A different kind can never claim it.
+            if binding != {"public_key": row["public_key"], "kind": row["kind"]}:
                 raise EnrollmentError("already_owned")
+            return
+        # A credential without a durable key binding predates enrollment v1 and
+        # cannot be safely claimed merely by presenting a matching subject ID.
+        if any(record.subject == row["device_id"] for record in self.store.records):
+            raise EnrollmentError("already_owned")
 
     def _request(self, state: dict, body: dict) -> dict:
         if (
