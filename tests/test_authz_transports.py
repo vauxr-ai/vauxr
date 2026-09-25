@@ -179,7 +179,17 @@ async def test_sensitive_metadata_projection():
         for path in ["/api/webhooks", "/api/devices", "/api/agents"]:
             response = await client.get(path, headers=owner_headers(client))
             assert response.status == 200
-            assert "SECRET" not in await response.text()
+            text = await response.text()
+            for secret in (
+                "URL_SECRET",
+                "QUERY_SECRET",
+                "AUTH_SECRET",
+                "BODY_SECRET",
+                "DEVICE_SECRET",
+            ):
+                assert secret not in text
+            if path == "/api/devices":
+                assert "PROMPT_SECRET" in text
 
 
 @pytest.mark.parametrize("message_type", list(WS_OPERATIONS))

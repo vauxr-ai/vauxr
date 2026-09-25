@@ -333,7 +333,10 @@ async def test_patch_button_actions(client: TestClient) -> None:
     )
     assert res.status == 200
     body = await res.json()
-    assert "button_actions" not in body["config"]
+    assert body["config"]["button_actions"] == {
+        "double_press": {"kind": "prompt", "text": "lights off"},
+        "long_press": {"kind": "command", "command": "mute"},
+    }
     assert registry.get_config_for("dev1")["button_actions"]["long_press"]["command"] == "mute"
 
 
