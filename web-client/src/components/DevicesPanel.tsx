@@ -165,7 +165,14 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
           throw new Error(msg);
         }
         const updated = await res.json() as ApiDeviceWithConfig;
-        setDevices((list) => list.map((d) => (d.id === deviceId ? updated : d)));
+        setDevices((list) => list.map((d) => {
+          if (d.id !== deviceId) return d;
+          const config = { ...d.config, ...(updated.config ?? {}) };
+          if (updated.config && !("button_actions" in updated.config) && d.config?.button_actions) {
+            config.button_actions = d.config.button_actions;
+          }
+          return { ...d, ...updated, config };
+        }));
         setSaveStatus((s) => ({ ...s, [deviceId]: { status: "saved" } }));
         addLog("sys", `Device ${deviceId}: ${label}`);
         setTimeout(() => {

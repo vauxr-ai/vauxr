@@ -299,6 +299,45 @@ describe("DevicesPanel", () => {
       });
     });
 
+    it("selecting a webhook mapping keeps the chosen webhook after save", async () => {
+      const user = userEvent.setup();
+      const hooks = [
+        { id: "wh_1", name: "Lights", has_url: true, has_authorization: false, has_body: false },
+        { id: "wh_2", name: "Goodnight", has_url: true, has_authorization: false, has_body: false },
+      ];
+      fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
+        if (String(url).includes("/api/webhooks")) return Promise.resolve(jsonResponse(hooks));
+        if (init?.method === "PATCH") {
+          const patch = JSON.parse(String(init.body));
+          return Promise.resolve(jsonResponse({
+            ...DEVICES[0],
+            config: { ...DEVICES[0].config, ...patch },
+          }));
+        }
+        return Promise.resolve(jsonResponse(DEVICES));
+      });
+
+      renderPanel();
+      const card = await expandFirstCard(user);
+      await waitFor(() => {
+        expect(within(card).getByLabelText(/double press action/i)).toBeEnabled();
+      });
+
+      await user.selectOptions(within(card).getByLabelText(/double press action/i), "webhook");
+      const webhookSelect = await waitFor(() => within(card).getByLabelText(/double press webhook/i));
+      await user.selectOptions(webhookSelect, "wh_2");
+
+      await waitFor(() => {
+        expect((within(card).getByLabelText(/double press webhook/i) as HTMLSelectElement).value).toBe("wh_2");
+      });
+      const patchBodies = fetchSpy.mock.calls
+        .filter((c) => (c[1] as RequestInit | undefined)?.method === "PATCH")
+        .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+      expect(patchBodies).toContainEqual({
+        button_actions: { double_press: { kind: "webhook", webhook_id: "wh_2" } },
+      });
+    });
+
     it("name input saves on blur if changed", async () => {
       const user = userEvent.setup();
       fetchSpy.mockResolvedValueOnce(jsonResponse(DEVICES));

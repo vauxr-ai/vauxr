@@ -127,7 +127,8 @@ def _device_dict(d) -> dict[str, Any]:
         "state": d.state,
         "lastSeen": d.last_seen.isoformat().replace("+00:00", "Z"),
         "config": {"pipeline_mode": pipeline_mode(d.config), **{k: v for k, v in d.config.items()
-                   if k in {"name", "voice", "follow_up_mode", "barge_in", "output_sample_rate"}}},
+                   if k in {"name", "voice", "follow_up_mode", "barge_in", "output_sample_rate",
+                            "button_actions"}}},
     }
     if d.platform:
         out["platform"] = d.platform
