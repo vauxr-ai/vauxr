@@ -54,23 +54,34 @@ async def test_interrupted_standard_cleanup_does_not_reset_new_capture(env, monk
     assert ctx.state == server.ConnectionState.LISTENING
 
 
-async def test_hello_standard_default_even_when_server_supports_realtime(env, monkeypatch):
+@pytest.mark.parametrize("enabled,host,caps,webrtc", [
+    (True, "vauxr.local", ["webrtc"], True),
+    (False, "vauxr.local", ["webrtc"], False),
+    (True, "", ["webrtc"], False),
+    (True, "vauxr.local", ["ws"], False),
+])
+async def test_standard_transport_policy(env, monkeypatch, enabled, host, caps, webrtc):
+    import vauxr.auth.owner as owner
     _, ws, ctx = env
+    monkeypatch.setattr(owner, "configured_origin", lambda: "https://vauxr.test")
     monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
-        realtime=SimpleNamespace(enabled=True, host="vauxr.local")))
-    await server._hello(ws, ctx, {"caps": ["webrtc"]})
+        realtime=SimpleNamespace(enabled=enabled, host=host, offer_path="/api/offer", stun_url="")))
+    await server._hello(ws, ctx, {"caps": caps})
     hello = json.loads(ws.send_str.call_args.args[0])
     assert hello["pipeline_mode"] == "standard"
-    assert hello["realtime"] == {"enabled": False, "transport": "ws"}
+    assert hello["realtime"]["enabled"] is webrtc
+    assert hello["realtime"]["transport"] == ("webrtc" if webrtc else "ws")
 
 
-async def test_standard_mode_cannot_arm_realtime(env, monkeypatch):
+async def test_standard_webrtc_requires_streaming_startup_id(env, monkeypatch):
     manager, ws, ctx = env
+    monkeypatch.setattr(server, "current", lambda _: True)
     monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
         realtime=SimpleNamespace(enabled=True, host="vauxr.local")))
     await server._realtime_start(server.AppState(), ws, ctx, {})
     assert not ctx.realtime
     assert not manager.can_accept_offer("dev")
+    assert json.loads(ws.send_str.call_args.args[0])["code"] == "REALTIME_STARTUP_REQUIRED"
 
 
 async def test_dropped_active_peer_allows_next_standard_speech(env):

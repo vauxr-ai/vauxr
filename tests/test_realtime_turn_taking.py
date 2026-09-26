@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
@@ -602,3 +603,36 @@ async def test_empty_barge_in_completion_releases_processing_before_old_audio_dr
     finally:
         session._cancel_drain_timer()
         dev_reg.unregister("dev-empty-barge")
+
+
+@pytest.mark.parametrize("caps,enabled", [(["ws", "webrtc"], True), (["ws"], False)])
+async def test_standard_transport_depends_on_capability_not_pipeline(client, monkeypatch, caps, enabled):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    dev_reg.update_config("dev1", {"pipeline_mode": "standard"})
+    async with client.ws_connect("/ws") as ws:
+        await ws.send_json({"type":"hello", "device_id":"dev1", "token":"ws-test-token", "caps":caps})
+        hello = await _recv_json(ws)
+        assert hello["pipeline_mode"] == "standard"
+        assert hello["realtime"]["enabled"] is enabled
+        assert hello["realtime"]["transport"] == ("webrtc" if enabled else "ws")
+        if not enabled:
+            return
+        assert hello["realtime"]["voice_source"] == "speech_settings"
+        await ws.send_json({"type":"realtime.start", "startup_id":1})
+        assert await _recv_json(ws) == {"type":"ready"}
+        manager = realtime_session.get_manager()
+        assert manager.can_accept_offer("dev1")
+        assert "dev1" not in manager._live_devices
+        startup = manager._startups["dev1"]
+        assert startup.input_rate == 16000
+        await ws.send_bytes(b"\x01\x00\x00" + bytes(640))
+        await ws.send_json({"type":"realtime.media_ready", "startup_id":1, "next_seq":1})
+        async with asyncio.timeout(2):
+            while not startup.complete:
+                await asyncio.sleep(.005)
+        assert startup.next_seq == 1
+        await ws.send_json({"type":"abort"})
+        async with asyncio.timeout(2):
+            while manager.can_accept_offer("dev1"):
+                await asyncio.sleep(.005)
+        assert startup.closed
