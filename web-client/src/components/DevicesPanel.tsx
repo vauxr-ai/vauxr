@@ -21,6 +21,7 @@ interface ButtonAction {
 interface DeviceConfig {
   name?: string;
   pipeline_mode?: "standard" | "realtime";
+  voice_mode?: "websocket" | "webrtc" | "realtime";
   follow_up_mode?: FollowUpMode;
   output_sample_rate?: number;
   barge_in?: boolean;
@@ -275,6 +276,7 @@ function DeviceCard({
   const pill = STATE_PILL[device.state] ?? STATE_PILL.offline;
   const dot = STATE_DOT[device.state] ?? STATE_DOT.offline;
   const mode: FollowUpMode = device.config?.follow_up_mode ?? "auto";
+  const voiceMode = device.config?.voice_mode ?? "webrtc";
   const bargeIn = device.config?.barge_in !== false;
   const sampleRate = device.config?.output_sample_rate;
 
@@ -399,13 +401,14 @@ function DeviceCard({
                 />
               </label>
               <label className={labelClass}>
-                Pipeline
-                <select className={inputClass} value={device.config?.pipeline_mode ?? "standard"}
+                Voice mode
+                <select className={inputClass} value={voiceMode}
                   disabled={saving}
                   onChange={(e) => onPatch(device.id,
-                    { pipeline_mode: e.target.value as "standard" | "realtime" }, `Pipeline → ${e.target.value}`)}>
-                  <option value="standard">Standard</option>
-                  <option value="realtime">Realtime</option>
+                    { voice_mode: e.target.value as "websocket" | "webrtc" | "realtime" }, `Voice mode → ${e.target.value}`)}>
+                  <option value="websocket">WebSocket only · no barge-in</option>
+                  <option value="webrtc">WebRTC Standard · optional barge-in</option>
+                  <option value="realtime">WebRTC Realtime · gpt-live-1</option>
                 </select>
               </label>
               <label className={labelClass}>
@@ -425,24 +428,26 @@ function DeviceCard({
                   ))}
                 </select>
               </label>
-              <label className={labelClass}>
-                Barge-in
-                <select
-                  className={inputClass}
-                  value={bargeIn ? "on" : "off"}
-                  onChange={(e) =>
-                    onPatch(
-                      device.id,
-                      { barge_in: e.target.value === "on" },
-                      `barge_in → ${e.target.value}`,
-                    )
-                  }
-                  disabled={saving}
-                >
-                  <option value="on">on</option>
-                  <option value="off">off</option>
-                </select>
-              </label>
+              {voiceMode === "webrtc" && (
+                <label className={labelClass}>
+                  Barge-in
+                  <select
+                    className={inputClass}
+                    value={bargeIn ? "on" : "off"}
+                    onChange={(e) =>
+                      onPatch(
+                        device.id,
+                        { barge_in: e.target.value === "on" },
+                        `barge_in → ${e.target.value}`,
+                      )
+                    }
+                    disabled={saving}
+                  >
+                    <option value="on">on</option>
+                    <option value="off">off</option>
+                  </select>
+                </label>
+              )}
               <label className={labelClass}>
                 Sample rate
                 <select
@@ -466,6 +471,14 @@ function DeviceCard({
                 </select>
               </label>
             </div>
+            <p className="text-[11px] text-zinc-500">
+              {voiceMode === "websocket"
+                ? "WebSocket uses turn-based audio and does not support barge-in."
+                : voiceMode === "realtime"
+                  ? "Realtime uses gpt-live-1 for the speech pipeline and interruption handling."
+                  : "Standard uses the configured STT, agent, and TTS pipeline over WebRTC."}
+              {" Changes apply when the device reconnects."}
+            </p>
             <div className="space-y-2">
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
                 Action button

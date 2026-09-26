@@ -73,6 +73,19 @@ async def test_standard_transport_policy(env, monkeypatch, enabled, host, caps, 
     assert hello["realtime"]["transport"] == ("webrtc" if webrtc else "ws")
 
 
+async def test_websocket_device_policy_opts_out_of_available_webrtc(env, monkeypatch):
+    import vauxr.auth.owner as owner
+    _, ws, ctx = env
+    monkeypatch.setattr(registry, "get_config_for", lambda _: {"transport_mode": "websocket"})
+    monkeypatch.setattr(owner, "configured_origin", lambda: "https://vauxr.test")
+    monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
+        realtime=SimpleNamespace(enabled=True, host="vauxr.local", offer_path="/api/offer", stun_url="")))
+    await server._hello(ws, ctx, {"caps": ["webrtc"]})
+    hello = json.loads(ws.send_str.call_args.args[0])
+    assert hello["pipeline_mode"] == "standard"
+    assert hello["realtime"] == {"enabled": False, "transport": "ws"}
+
+
 async def test_standard_webrtc_requires_streaming_startup_id(env, monkeypatch):
     manager, ws, ctx = env
     monkeypatch.setattr(server, "current", lambda _: True)

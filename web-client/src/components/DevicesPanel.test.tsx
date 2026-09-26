@@ -25,6 +25,7 @@ interface FakeDevice {
   lastSeen: string;
   config: {
     name?: string;
+    voice_mode?: "websocket" | "webrtc" | "realtime";
     follow_up_mode?: "auto" | "always" | "never";
     output_sample_rate?: number;
     barge_in?: boolean;
@@ -600,16 +601,41 @@ describe("DevicesPanel", () => {
   });
 });
 
-it("defaults pipeline to Standard and saves explicit Realtime", async () => {
+it("defaults to WebRTC Standard and saves explicit Realtime mode", async () => {
   const user = userEvent.setup();
   renderPanel();
   await waitForDevices();
   await user.click(screen.getByRole("button", { name: /Living Room/ }));
-  const select = screen.getByRole("combobox", { name: "Pipeline" });
-  expect(select).toHaveValue("standard");
+  const select = screen.getByRole("combobox", { name: "Voice mode" });
+  expect(select).toHaveValue("webrtc");
   await user.selectOptions(select, "realtime");
   await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith(
     expect.stringContaining("/api/devices/d1"),
-    expect.objectContaining({ method: "PATCH", body: JSON.stringify({ pipeline_mode: "realtime" }) }),
+    expect.objectContaining({ method: "PATCH", body: JSON.stringify({ voice_mode: "realtime" }) }),
   ));
+});
+
+it("shows barge-in only for WebRTC Standard", async () => {
+  fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
+    if (init?.method === "PATCH") {
+      return Promise.resolve(jsonResponse({
+        ...DEVICES[0],
+        config: { ...DEVICES[0].config, voice_mode: "websocket" },
+      }));
+    }
+    if (String(url).includes("/api/webhooks")) return Promise.resolve(jsonResponse([]));
+    return Promise.resolve(jsonResponse(DEVICES));
+  });
+  const user = userEvent.setup();
+  renderPanel();
+  await waitForDevices();
+  await user.click(screen.getByRole("button", { name: /Living Room/ }));
+  expect(screen.getByRole("combobox", { name: "Barge-in" })).toBeInTheDocument();
+
+  const select = screen.getByRole("combobox", { name: "Voice mode" });
+  await user.selectOptions(select, "websocket");
+  await waitFor(() => {
+    expect(screen.queryByRole("combobox", { name: "Barge-in" })).not.toBeInTheDocument();
+    expect(screen.getByText(/does not support barge-in/i)).toBeInTheDocument();
+  });
 });

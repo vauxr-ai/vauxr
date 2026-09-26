@@ -23,7 +23,7 @@ from vauxr.auth.service import authenticate, current, get_store
 from vauxr.auth.policy import WS_OPERATIONS, Operation, Principal, allowed, audit_denial
 from vauxr.agents.server import AgentServer
 from vauxr.config import get_config
-from vauxr.devices.config import pipeline_mode
+from vauxr.devices.config import pipeline_mode, transport_mode
 from vauxr.devices.settings import realtime_policy_extras
 from vauxr.web.server import (
     attach_http_routes,
@@ -203,8 +203,14 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
     # REALTIME_HOST, ICE is unreliable, so fall back to ws rather than advertise
     # a broken policy.
     mode = pipeline_mode(registry.get_config_for(ctx.device_id or ""))
-    webrtc_ok = rt.enabled and "webrtc" in caps_list and bool(rt.host)
-    if rt.enabled and "webrtc" in caps_list and not rt.host:
+    selected_transport = transport_mode(registry.get_config_for(ctx.device_id or ""))
+    webrtc_ok = (
+        selected_transport == "webrtc"
+        and rt.enabled
+        and "webrtc" in caps_list
+        and bool(rt.host)
+    )
+    if selected_transport == "webrtc" and rt.enabled and "webrtc" in caps_list and not rt.host:
         log.warning(
             "realtime: %s is webrtc-capable but REALTIME_HOST is unset — falling back to ws",
             msg.get("device_id"),
