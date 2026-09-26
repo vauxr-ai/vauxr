@@ -188,6 +188,7 @@ class RealtimeSession:
         # resumes RTP on warm wake without a WS cue, so audio.end must never
         # latch it; quiet timeout diagnostics are managed separately below.
         self._mic_paused = False
+        self._device_wake = get_manager()._device_wakes.get(device_id)
         self._startup: Any = None
         self._control_ws = _device_ws(device_id)
         # VAD profile swapping: a snappy idle profile so quiet speech is heard,
@@ -939,10 +940,18 @@ class RealtimeSession:
                     follow_up = True
             await self._send_audio_end(follow_up)
 
+    @property
+    def is_physical_live(self) -> bool:
+        """Physical wake policy survives retirement of its one-shot PCM buffer."""
+        return self._device_wake is not None or self._startup is not None
+
     def _owns_control(self) -> bool:
         """Only the exact active peer may change shared device control state."""
         manager = get_manager()
         return (manager._sessions.get(self.device_id) is self
+                and (self._device_wake is None or (
+                    manager._device_wakes.get(self.device_id) is self._device_wake
+                    and _device_ws(self.device_id) is self._control_ws))
                 and (self._startup is None or (
                     manager._startups.get(self.device_id) is self._startup
                     and _device_ws(self.device_id) is self._control_ws)))
@@ -1062,6 +1071,7 @@ class RealtimeManager:
     def __init__(self) -> None:
         self._live_devices: set[str] = set()
         self._startups: dict[str, Any] = {}
+        self._device_wakes: dict[str, object] = {}
         self._agent_server: Any = None
         self._sessions: dict[str, RealtimeSession] = {}
         self._preroll: dict[str, bytearray] = {}
@@ -1277,6 +1287,7 @@ class RealtimeManager:
             return
         self._startups.pop(device_id, None)
         self._wake_generations.pop(device_id, None)
+        self._device_wakes.pop(device_id, None)
         self._live_devices.discard(device_id)
         self._preroll.pop(device_id, None)
         self._speech_preroll.pop(device_id, None)
@@ -1304,6 +1315,7 @@ class RealtimeManager:
         if previous is not None:
             previous.close()
         self._wake_generations[device_id] = object()
+        self._device_wakes[device_id] = self._wake_generations[device_id]
         self._startups[device_id] = startup
         self._live_devices.add(device_id)
 

@@ -31,7 +31,7 @@ from vauxr.realtime.session import RealtimeManager, RealtimeSession
 async def test_installed_live_config_leaves_barge_in_with_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     assert version("pipecat-ai") == "1.9.0"
     monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
-    live = LiveService(SimpleNamespace(_send_control=AsyncMock()), "selected", {
+    live = LiveService(SimpleNamespace(_send_control=AsyncMock(), is_physical_live=False), "selected", {
         "realtime_model": "gpt-live-1", "realtime_voice": "cedar",
     })
     live._context = LLMContext()

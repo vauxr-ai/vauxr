@@ -73,7 +73,7 @@ class LiveService(OpenAILiveLLMService):
         self.session = session
         from vauxr.realtime.device_activity import DeviceActivity
         self.startup = getattr(session, "_startup", None)
-        self.device_activity = DeviceActivity(session) if self.startup is not None else None
+        self.device_activity = DeviceActivity(session) if session.is_physical_live else None
         self.agent_id = agent_id
         self.session_id = secrets.token_hex(16)
         self.fragments: list[dict[str, object]] = []
@@ -304,7 +304,7 @@ async def start_live(session: Any, connection: Any) -> None:
     if active is None or active.type != "openclaw":
         raise ValueError("Realtime requires a selected OpenClaw integration Agent")
     session._connection = connection
-    if session._startup is not None:
+    if session.is_physical_live:
         if get_config().realtime.esp32_mode:
             from vauxr.realtime.transport import use_websocket_control
             use_websocket_control(connection)
@@ -319,7 +319,7 @@ async def start_live(session: Any, connection: Any) -> None:
     messages = bootstrap.get("messages", [])
     if not isinstance(instructions, str) or len(instructions) > 16000 or not isinstance(messages, list):
         raise ValueError("Invalid backend realtime context")
-    if session._startup is not None:
+    if session.is_physical_live:
         # Pipecat interprets trailing developer history as a request to speak.
         # Retain backend context as instructions without replaying completed work.
         messages = list(messages)
@@ -338,7 +338,7 @@ async def start_live(session: Any, connection: Any) -> None:
     rtp_probes = None
     if llm.audio_diagnostics:
         from vauxr.realtime.rtp_diagnostics import install
-        if session._startup is not None:
+        if session.is_physical_live:
             rtp_probes = install(connection)
             session._rtp_probes = rtp_probes
         llm.audio_diagnostics.bind_output(transport.output())
