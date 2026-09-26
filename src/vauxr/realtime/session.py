@@ -268,6 +268,9 @@ class RealtimeSession:
         from vauxr.realtime.transport import AudioConsumption
 
         consumption = AudioConsumption(transport.output())
+        from vauxr.realtime.output_buffer import OutputJitterBuffer
+
+        output_buffer = OutputJitterBuffer()
         stt = WyomingSTTService(selection=self._require_speech_selection)
         # Per-device segmentation: sentence mode lets pipecat's TTS aggregator cut
         # on sentence boundaries; otherwise TOKEN mode and the upstream
@@ -539,6 +542,7 @@ class RealtimeSession:
                 user_aggregator,
                 llm,
                 tts,
+                output_buffer,
                 transport.output(),
                 OutputDrainTap(consumption.drained),
                 assistant_aggregator,

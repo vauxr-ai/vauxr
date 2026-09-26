@@ -39,6 +39,7 @@ from pipecat.transports.smallwebrtc.transport import (
 from pipecat.workers.runner import WorkerRunner
 
 from vauxr.realtime.live import LiveService
+from vauxr.realtime.output_buffer import OutputJitterBuffer
 
 
 async def until(predicate: Callable[[], bool]) -> None:
@@ -109,7 +110,7 @@ async def output_probe(
             await self.push_frame(frame, direction)
 
     user, assistant = LLMContextAggregatorPair(LLMContext())
-    worker = PipelineWorker(Pipeline([user, live, output, Tap(), assistant]), enable_rtvi=False,
+    worker = PipelineWorker(Pipeline([user, live, OutputJitterBuffer(), output, Tap(), assistant]), enable_rtvi=False,
         params=PipelineParams(audio_in_sample_rate=24000, audio_out_sample_rate=24000))
 
     @worker.event_handler("on_pipeline_error")
@@ -246,3 +247,20 @@ async def test_stalled_rtp_consumer_reports_permanent_transport_error(monkeypatc
         assert len(p.writes) == 1
         assert p.writes[0][1].cancelled()
         assert p.consumed == []
+
+
+async def test_paced_provider_bursts_have_no_interior_track_silence(monkeypatch):
+    async with output_probe(monkeypatch) as p:
+        await start_rtp(p)
+        chunks = [tone(440, 100) for _ in range(8)]
+        for index, chunk in enumerate(chunks):
+            await audio(p, chunk)
+            await asyncio.sleep((.10, .12, .09, .09)[index % 4])
+        expected = b"".join(chunks)
+        await until(lambda: len(p.writes) == len(expected) // 1920 and p.writes[-1][1].done())
+        actual = b"".join(f.to_ndarray().tobytes() for f in p.consumed)
+        # Startup silence is expected; inside the reply every sample must match.
+        first = actual.find(expected[:480])
+        assert first >= 0
+        assert actual[first:first + len(expected)] == expected
+        assert not p.errors
