@@ -395,10 +395,9 @@ async def test_realtime_start_without_mode_field_routes_persisted_realtime_to_li
             {"type": "hello", "device_id": "dev1", "token": "ws-test-token", "caps": ["ws", "webrtc"]}
         )
         await _recv_json(ws)
-        await ws.send_json({"type": "realtime.start", "device_id": "dev1", "token": "ws-test-token"})
+        await ws.send_json({"type": "realtime.start", "device_id": "dev1", "token": "ws-test-token", "startup_id": 1})
         reply = await _recv_json(ws)
-        # Firmware expects ready, captures one Standard opening turn, then sends
-        # playback receipt -> handoff -> offer. GPT-Live is selected in parallel.
+        # Firmware starts streaming PCM immediately; ready admits the offer.
         assert reply == {"type": "ready"}
         manager = realtime_session.get_manager()
         assert "dev1" in manager._live_devices

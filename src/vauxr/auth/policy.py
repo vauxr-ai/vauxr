@@ -183,7 +183,6 @@ WS_OPERATIONS = {
     "voice.end": Operation.DEVICE_AUDIO,
     "abort": Operation.DEVICE_CONTROL,
     "realtime.start": Operation.DEVICE_AUDIO,
-    "audio.playback_complete": Operation.DEVICE_CONTROL,
     "realtime.media_ready": Operation.DEVICE_CONTROL,
     "realtime.pause": Operation.DEVICE_CONTROL,
     "realtime.resume": Operation.DEVICE_CONTROL,

@@ -57,12 +57,10 @@ class ConnectionCtx:
     audio_chunks: list[bytes] = field(default_factory=list)
     output_sample_rate: int | None = None
     speech_selection: Selection | None = None
-    # Only acknowledged Standard playback permits a device Live handoff.
     realtime: bool = False
     realtime_media: bool = False
     turn_id: int = 0
-    playback_pending: int | None = None
-    handoff_ready: bool = False
+    startup: Any = None
 
 
 @dataclass
@@ -108,12 +106,12 @@ async def handle_text(
         # would clobber the agent response listener and force registry state to
         # idle while WebRTC is still up. (A device using realtime won't send this;
         # this is a guard against a stale/confused client.)
-        if ctx.realtime_media:
+        if ctx.realtime:
             log.warning("ignoring voice.start during realtime session: %s", ctx.device_id)
         else:
             await _voice_start(state, ws, ctx, msg)
     elif msg_type == "voice.end":
-        if not ctx.realtime_media:
+        if not ctx.realtime:
             await _voice_end(state, ws, ctx)
     elif msg_type == "abort":
         # End both the Standard turn and any initializing or active peer.
@@ -124,19 +122,10 @@ async def handle_text(
     elif msg_type == "realtime.start":
         await _realtime_start(state, ws, ctx, msg)
     elif msg_type == "realtime.media_ready":
-        if ctx.handoff_ready and type(msg.get("turn_id")) is int and msg["turn_id"] == ctx.turn_id:
-            from vauxr.realtime.session import get_manager
-            ctx.realtime_media = get_manager().activate_handoff(ctx.device_id)
-            if ctx.realtime_media:
-                ctx.handoff_ready = False
-    elif msg_type == "audio.playback_complete":
-        if (type(msg.get("turn_id")) is int and msg["turn_id"] == ctx.playback_pending
-                and ctx.state == ConnectionState.IDLE and ctx.realtime):
-            from vauxr.realtime.session import get_manager
-            if get_manager().prepare_handoff(ctx.device_id):
-                ctx.handoff_ready = True
-                ctx.playback_pending = None
-                await send_json(ws, {"type": "realtime.handoff", "turn_id": ctx.turn_id})
+        if (ctx.startup is not None and type(msg.get("startup_id")) is int
+                and type(msg.get("next_seq")) is int):
+            if ctx.startup.finish_ws(msg["startup_id"], msg["next_seq"]):
+                ctx.realtime_media = True
     elif msg_type == "realtime.pause":
         _realtime_pause(ctx)
     elif msg_type == "realtime.resume":
@@ -248,7 +237,7 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
             "transport": "webrtc",
             "offer_url": offer_url,
             "stun": rt.stun_url,
-            "handoff": "standard_playback_v1",
+            "startup": "ws_pcm_v1",
             "voice_source": "live_voice_settings",
             **realtime_policy_extras(device_key),
         }
@@ -293,14 +282,8 @@ async def _voice_start(
     if ctx.device_id:
         registry.abort_active_turn(ctx.device_id)
 
-    from vauxr.realtime.session import get_manager
-    manager = get_manager()
-    if device_id in manager._handoff_devices:
-        await manager.stop(device_id)
     ctx.device_id = device_id
     ctx.turn_id += 1
-    ctx.playback_pending = None
-    ctx.handoff_ready = False
     ctx.audio_chunks = []
     try:
         ctx.speech_selection = resolve(device_id)
@@ -365,7 +348,6 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
     ctx.state = ConnectionState.PROCESSING
     registry.set_state(ctx.device_id, "processing")
     device_id = ctx.device_id
-    turn_id = ctx.turn_id
     selection = ctx.speech_selection
     chunks = ctx.audio_chunks
     total = sum(len(c) for c in chunks)
@@ -390,11 +372,6 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
                 ctx.output_sample_rate,
                 selection=selection,
             )
-            if (not abort.is_set() and ctx.turn_id == turn_id and ctx.realtime
-                    and output.completed and not output.failed and not output.closed):
-                ctx.state = ConnectionState.IDLE
-                ctx.playback_pending = turn_id
-                await send_json(ws, {"type": "audio.playback_pending", "turn_id": turn_id})
         except Exception:  # noqa: BLE001
             log.error("Pipeline error")
             if not abort.is_set():
@@ -415,8 +392,6 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
 
 def _voice_abort(ctx: ConnectionCtx) -> None:
     ctx.turn_id += 1
-    ctx.playback_pending = None
-    ctx.handoff_ready = False
     if ctx.device_id:
         registry.abort_active_turn(ctx.device_id)
         registry.set_state(ctx.device_id, "idle")
@@ -427,7 +402,7 @@ def _voice_abort(ctx: ConnectionCtx) -> None:
 async def _realtime_start(
     state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]
 ) -> None:
-    """Keep explicit Talk Live; devices start with one complete Standard turn."""
+    """Arm Live immediately; physical devices stream WS PCM while it connects."""
     device_id = ctx.device_id
     # Realtime must actually be reachable server-side before we arm pre-roll: the
     # /api/offer endpoint only exists when REALTIME_ENABLED=1 and REALTIME_HOST is
@@ -455,7 +430,6 @@ async def _realtime_start(
 
     ctx.device_id = device_id
     ctx.realtime = True
-    ctx.realtime_media = False
     registry.register(device_id, ws=ws, name=msg.get("name"))
     rate = registry.apply_output_sample_rate(device_id, msg)
     if rate is not None:
@@ -464,7 +438,11 @@ async def _realtime_start(
     from vauxr.realtime.session import get_manager
 
     manager = get_manager()
-    if manager.has_live_session(device_id) and device_id not in manager._handoff_devices:
+    if (ctx.startup is not None and not ctx.startup.closed
+            and type(msg.get("startup_id")) is int and msg["startup_id"] == ctx.startup.id):
+        await send_json(ws, {"type": "ready"})
+        return
+    if manager.has_live_session(device_id) and "startup_id" not in msg:
         ctx.realtime_media = True
         # Warm re-wake: peer + Pipecat session stay alive; Silero end-points the
         # turn on the WebRTC track — no WS pre-roll or device-VAD marker.
@@ -473,11 +451,6 @@ async def _realtime_start(
         log.info("realtime.start from %s — warm re-wake on live session", device_id)
         return
 
-    # Firmware never sends `mode` on realtime.start (see vauxr_client.cpp
-    # sendRealtimeStart) — it only exists as an explicit Talk Live trigger from
-    # non-firmware clients (web-client). A device persisted as pipeline_mode
-    # realtime must still route to GPT-Live on its own, or it silently falls
-    # through to the legacy Standard-then-AgentLLM WebRTC path below.
     persisted_live = pipeline_mode(registry.get_config_for(device_id)) == "realtime"
     explicit_live = msg.get("mode") == "live"
     if explicit_live or persisted_live:
@@ -488,24 +461,47 @@ async def _realtime_start(
             await send_json(ws, {"type": "error", "code": "REALTIME_UNAVAILABLE",
                                 "message": "Select Realtime in speech settings and configure the server OpenAI key"})
             return
+        ctx.startup = None  # Retire old failure callbacks before teardown yields.
         await manager.stop(device_id)
-        if not current(ctx.principal):
+        entry = registry.get(device_id)
+        if not current(ctx.principal) or entry is None or entry.ws is not ws:
             await ws.close()
             return
+        ctx.realtime = True
         manager._live_devices.add(device_id)
         if explicit_live:
-            # Browser Talk Live has no Standard opening turn; admit its offer now.
             ctx.realtime_media = True
             registry.set_state(device_id, "listening")
             await send_json(ws, {"type": "realtime.armed"})
             return
 
-    # Firmware omits `mode`: run one complete Standard opening turn while the
-    # GPT-Live selection is armed in _live_devices. The device sends playback
-    # receipt -> realtime.handoff -> offer, and start_live() then selects GPT-Live.
     ctx.realtime_media = False
-    if ctx.state == ConnectionState.IDLE:
-        await _voice_start(state, ws, ctx, msg)
+    startup_id = msg.get("startup_id")
+    if type(startup_id) is not int or not 0 < startup_id <= 0xffffffff:
+        await _realtime_stop(ctx)
+        await send_json(ws, {"type": "error", "code": "REALTIME_STARTUP_REQUIRED",
+                             "message": "Device requires the streaming startup protocol"})
+        return
+    from vauxr.realtime.startup import StartupAudio
+
+    async def failed(code: str) -> None:
+        if ctx.startup is not startup or manager._startups.get(device_id) is not startup:
+            return
+        entry = registry.get(device_id)
+        if entry is None or entry.ws is not ws:
+            return
+        await send_json(ws, {"type": "error", "code": code, "message": "Realtime startup failed"})
+        # Capture identity before sending/closing: old cleanup cannot stop a retry.
+        if ctx.startup is startup and manager._startups.get(device_id) is startup:
+            await _realtime_stop(ctx)
+
+    startup = StartupAudio(startup_id, failed)
+    ctx.startup = startup
+    manager.begin_startup(device_id, startup)
+    ctx.audio_chunks = []
+    ctx.state = ConnectionState.LISTENING
+    registry.set_state(device_id, "listening")
+    await send_json(ws, {"type": "ready"})
 
 
 def _realtime_pause(ctx: ConnectionCtx) -> None:
@@ -534,9 +530,10 @@ async def _realtime_stop(ctx: ConnectionCtx) -> None:
     from vauxr.realtime.session import get_manager
 
     _voice_abort(ctx)
-    await get_manager().stop(ctx.device_id)
     ctx.realtime = False
     ctx.realtime_media = False
+    ctx.startup = None
+    await get_manager().stop(ctx.device_id)
 
 
 def handle_binary(ctx: ConnectionCtx, data: bytes) -> None:
@@ -550,7 +547,9 @@ def handle_binary(ctx: ConnectionCtx, data: bytes) -> None:
     if msg_type != 0x01:
         return
     payload = bytes(data[3:])
-    if ctx.state == ConnectionState.LISTENING and not ctx.realtime_media:
+    if ctx.realtime and ctx.startup is not None:
+        ctx.startup.append_ws(int.from_bytes(data[1:3], "big"), payload)
+    elif ctx.state == ConnectionState.LISTENING and not ctx.realtime:
         ctx.audio_chunks.append(payload)
 
 

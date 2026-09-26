@@ -44,10 +44,12 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
 
     session = SimpleNamespace(_agent_server=SimpleNamespace(realtime_request=request), device_id="browser",
         _send_control=AsyncMock(return_value=True), _touch_activity=lambda: None, close=AsyncMock(),
-        _handoff_pending=physical, _closed=False, _ended_notified=False, _mic_paused=False,
+        is_physical_live=physical,
+        _startup=(SimpleNamespace(bind=lambda consume: None, append_rtp=lambda frame: False,
+                                  complete=True, provider_ready=True) if physical else None),
+        _closed=False, _ended_notified=False, _mic_paused=False,
         _owns_control=lambda: True)
     llm = LiveService(session, "selected", {"realtime_model": "gpt-live-1", "realtime_voice": "cedar"})
-    session._handoff_pending = False
     if physical:
         llm.device_activity.start()
 
@@ -243,7 +245,7 @@ async def test_record_retry_preserves_turn_ids_and_serializes_flushes(monkeypatc
         await release.wait()
         return {"recorded": len(payload["fragments"])}
 
-    session = SimpleNamespace(_agent_server=SimpleNamespace(realtime_request=request), device_id="browser")
+    session = SimpleNamespace(_agent_server=SimpleNamespace(realtime_request=request), device_id="browser", is_physical_live=False)
     llm = LiveService(session, "selected", {"realtime_model": "gpt-live-1", "realtime_voice": "cedar"})
     first = {"id": "user-turn", "role": "user", "text": "Turn on the lamp", "delivered": False}
     llm.fragments.append(first)
@@ -316,7 +318,8 @@ async def test_failed_bootstrap_releases_scope_through_real_offer_cleanup(monkey
         await asyncio.wait_for(remote.close(), 2)
 
 
-async def test_device_handoff_bootstraps_completed_action_without_speaking_again(monkeypatch):
+@pytest.mark.parametrize("retry", [False, True])
+async def test_device_startup_retains_history_without_unsolicited_opening(monkeypatch, retry):
     """Exercise the existing bootstrap contract and pinned session.start encoding."""
     import vauxr.agents.registry as agent_registry
     import vauxr.realtime.live as realtime_live
@@ -345,13 +348,34 @@ async def test_device_handoff_bootstraps_completed_action_without_speaking_again
     blocked = asyncio.Event()
     monkeypatch.setattr(realtime_live, "WorkerRunner", lambda **kwargs: SimpleNamespace(
         add_workers=AsyncMock(), run=blocked.wait))
+    from vauxr.realtime.startup import StartupAudio
+    from vauxr.config import get_config
+    from dataclasses import replace
+    cfg = get_config()
+    monkeypatch.setattr(realtime_live, "get_config", lambda: replace(cfg, realtime=replace(cfg.realtime, esp32_mode=True)))
+    import vauxr.devices.registry as registry
+    ws = SimpleNamespace(closed=False, send_str=AsyncMock())
+    registry.register("device", ws=ws)
+    startup = StartupAudio(1, AsyncMock())
+    manager.begin_startup("device", startup)
     session = realtime_session.RealtimeSession("device", SimpleNamespace(realtime_request=request))
-    manager.prepare_handoff("device")
-    session._handoff_pending = True
+    session._startup = startup
+    manager._sessions["device"] = session
+    if retry:
+        await session.close()
+        session = realtime_session.RealtimeSession("device", SimpleNamespace(realtime_request=request))
+        manager._sessions["device"] = session
+        assert session._startup is None
     connection = SmallWebRTCConnection(ice_servers=[])
     try:
         await session.start(connection)
         service = session._live_service
+        assert service.device_activity is not None
+        assert service.device_activity.owns()
+        connection._start_data_channel_timeout()
+        connection.send_app_message({"test": "unused SCTP"})
+        assert connection._data_channel_timeout_task is None
+        assert not connection._outgoing_messages_queue
         async def capture(event):
             wire.append(event.model_dump(exclude_none=True))
         service.send_client_event = capture
@@ -369,11 +393,26 @@ async def test_device_handoff_bootstraps_completed_action_without_speaking_again
         from pipecat.processors.frame_processor import FrameDirection
         frame = InputAudioRawFrame(bytes(960), 24000, 1)
         await service.process_frame(frame, FrameDirection.DOWNSTREAM)
-        parent_process.assert_not_awaited()
-        session._handoff_pending = False
-        await service.process_frame(frame, FrameDirection.DOWNSTREAM)
+        if not retry:
+            parent_process.assert_not_awaited()
+            session._startup.finish_ws(1, 0)
+            session._startup.ready()
+            await session._startup._drain_task
         parent_process.assert_awaited_once()
+        service.device_activity.ready = True
+        await service.device_activity.tick()
+        sent = [json.loads(c.args[0]) for c in ws.send_str.call_args_list]
+        assert {"type": "audio.end", "follow_up": True} in sent
+        if retry:
+            # A new wake must revoke even a bufferless retry peer immediately.
+            replacement = StartupAudio(2, AsyncMock())
+            manager.begin_startup("device", replacement)
+            assert not service.device_activity.owns()
+            replacement.close()
     finally:
+        registry.unregister("device")
+        if session._startup is not None:
+            session._startup.close()
         for task in (session._runner_task, session._backstop_task):
             if task:
                 task.cancel()
