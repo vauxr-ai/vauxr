@@ -40,7 +40,9 @@ class DeviceActivity:
                 not self.session._ended_notified and self.session._owns_control())
 
     def admitted(self):
-        return self.owns() and not self.session._handoff_pending and not self.session._mic_paused
+        startup = getattr(self.session, "_startup", None)
+        return (self.owns() and (startup is None or (startup.complete and startup.provider_ready))
+                and not self.session._mic_paused)
 
     def start(self):
         self.task = asyncio.create_task(self._run())

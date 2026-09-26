@@ -92,7 +92,7 @@ async def _offer_handler(request: web.Request) -> web.Response:
         audit_denial(True)
         return web.json_response({"error": "forbidden"}, status=403)
 
-    from vauxr.realtime.session import get_manager
+    from vauxr.realtime.session import RealtimeOfferConflict, get_manager
 
     manager = get_manager()
     # Identity is checked before consulting wake state or creating media resources.
@@ -107,13 +107,16 @@ async def _offer_handler(request: web.Request) -> web.Response:
                         if r.role == Role.INTEGRATION and r.subject == active.id and get_store().usable(r)]
         if not dependencies:
             return web.json_response({"error": "unauthorized"}, status=401)
+    wake = getattr(manager, "_wake_generations", {}).get(device_id)
     try:
         answer = await manager.handle_offer(device_id, body)
+    except RealtimeOfferConflict:
+        return web.json_response({"error": "Realtime wake superseded or already connected"}, status=409)
     except Exception:  # noqa: BLE001
         log.error("realtime offer failed")
         # End the wake the device armed on realtime.start; otherwise it can sit
         # in listening with no WebRTC path until disconnect or the next wake.
-        await manager.abort_wake(device_id)
+        await manager.abort_wake(device_id, expected_wake=wake)
         return web.json_response({"error": "realtime offer failed"}, status=500)
 
     if not current(principal) or (dependencies and not any(current(p) for p in dependencies)):
@@ -128,7 +131,7 @@ async def _offer_handler(request: web.Request) -> web.Response:
             return web.json_response({"error": "transport_teardown_unavailable"}, status=503)
         return web.json_response({"error": "unauthorized"}, status=401)
     if answer is None:
-        await manager.abort_wake(device_id)
+        await manager.abort_wake(device_id, expected_wake=wake)
         return web.json_response({"error": "No SDP answer"}, status=500)
     close_lock = asyncio.Lock()
 

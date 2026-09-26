@@ -44,10 +44,11 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
 
     session = SimpleNamespace(_agent_server=SimpleNamespace(realtime_request=request), device_id="browser",
         _send_control=AsyncMock(return_value=True), _touch_activity=lambda: None, close=AsyncMock(),
-        _handoff_pending=physical, _closed=False, _ended_notified=False, _mic_paused=False,
+        _startup=(SimpleNamespace(bind=lambda consume: None, append_rtp=lambda frame: False,
+                                  complete=True, provider_ready=True) if physical else None),
+        _closed=False, _ended_notified=False, _mic_paused=False,
         _owns_control=lambda: True)
     llm = LiveService(session, "selected", {"realtime_model": "gpt-live-1", "realtime_voice": "cedar"})
-    session._handoff_pending = False
     if physical:
         llm.device_activity.start()
 
@@ -316,7 +317,7 @@ async def test_failed_bootstrap_releases_scope_through_real_offer_cleanup(monkey
         await asyncio.wait_for(remote.close(), 2)
 
 
-async def test_device_handoff_bootstraps_completed_action_without_speaking_again(monkeypatch):
+async def test_device_startup_retains_history_without_unsolicited_opening(monkeypatch):
     """Exercise the existing bootstrap contract and pinned session.start encoding."""
     import vauxr.agents.registry as agent_registry
     import vauxr.realtime.live as realtime_live
@@ -346,8 +347,10 @@ async def test_device_handoff_bootstraps_completed_action_without_speaking_again
     monkeypatch.setattr(realtime_live, "WorkerRunner", lambda **kwargs: SimpleNamespace(
         add_workers=AsyncMock(), run=blocked.wait))
     session = realtime_session.RealtimeSession("device", SimpleNamespace(realtime_request=request))
-    manager.prepare_handoff("device")
-    session._handoff_pending = True
+    from vauxr.realtime.startup import StartupAudio
+    session._startup = StartupAudio(1, AsyncMock())
+    manager.begin_startup("device", session._startup)
+    manager._sessions["device"] = session
     connection = SmallWebRTCConnection(ice_servers=[])
     try:
         await session.start(connection)
@@ -370,10 +373,12 @@ async def test_device_handoff_bootstraps_completed_action_without_speaking_again
         frame = InputAudioRawFrame(bytes(960), 24000, 1)
         await service.process_frame(frame, FrameDirection.DOWNSTREAM)
         parent_process.assert_not_awaited()
-        session._handoff_pending = False
-        await service.process_frame(frame, FrameDirection.DOWNSTREAM)
+        session._startup.finish_ws(1, 0)
+        session._startup.ready()
+        await session._startup._drain_task
         parent_process.assert_awaited_once()
     finally:
+        session._startup.close()
         for task in (session._runner_task, session._backstop_task):
             if task:
                 task.cancel()
