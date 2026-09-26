@@ -547,3 +547,43 @@ async def test_speech_owner_transport_and_csrf_before_provider_io(store, monkeyp
         ready.reset_mock()
         assert (await client.get("/api/speech", headers=headers)).status == 401
         ready.assert_not_called()
+
+
+async def test_standard_webrtc_speech_start_uses_device_wire_contract(store, monkeypatch):
+    import pipecat.pipeline.pipeline as pipeline_module
+    from pipecat.frames.frames import UserStartedSpeakingFrame
+    from pipecat.processors.frame_processor import FrameDirection
+    from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+    import vauxr.devices.registry as registry
+    import vauxr.realtime.session as realtime_session
+
+    processors = []
+
+    class Captured(Exception):
+        pass
+
+    def capture(items):
+        processors.extend(items)
+        raise Captured
+
+    monkeypatch.setattr(pipeline_module, "Pipeline", capture)
+    manager = realtime_session.RealtimeManager()
+    monkeypatch.setattr(realtime_session, "_manager", manager)
+    ws = SimpleNamespace(closed=False, send_str=AsyncMock())
+    registry.register("a", ws=ws)
+    session = realtime_session.RealtimeSession("a", object())
+    manager._sessions["a"] = session
+    connection = SmallWebRTCConnection(ice_servers=[])
+    try:
+        with pytest.raises(Captured):
+            await session.start(connection)
+        tap = next(p for p in processors if type(p).__name__ == "_ControlTap")
+        tap.push_frame = AsyncMock()
+        await tap.process_frame(UserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        messages = [json.loads(call.args[0]) for call in ws.send_str.call_args_list]
+        assert {"type": "speech.start"} in messages
+        assert not any(m["type"] == "vauxr.speech.store.start" for m in messages)
+        assert session._turn_active
+    finally:
+        await connection._pc.close()
+        registry.unregister("a")

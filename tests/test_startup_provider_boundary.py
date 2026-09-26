@@ -89,7 +89,7 @@ async def wake(env, number):
         message = await env.ws.receive_json(timeout=2)
         if message["type"] == "ready":
             break
-        assert message["type"] in {"audio.end", "realtime.ready", "vauxr.speech.store.start"}
+        assert message["type"] in {"audio.end", "realtime.ready", "speech.start"}
     return env.manager._startups["startup-test"]
 
 
@@ -341,4 +341,41 @@ async def test_provider_rejection_discards_pre_ready_pcm_and_allows_retry(env, m
                 await session._live_service._delegation.backend.stop()
                 await session._runner.cancel()
                 await asyncio.wait_for(asyncio.shield(session._runner_task), 5)
+            await remote.close()
+
+
+async def test_closed_peer_allows_authenticated_offer_retry_on_same_wake(env, monkeypatch):
+    # Keep authenticated HTTP admission and real Pipecat SDP/peer handling;
+    # omit external provider services to isolate the reconnect lifecycle.
+    async def start(session, connection):
+        session._connection = connection
+
+    monkeypatch.setattr(realtime_session.RealtimeSession, "start", start)
+    startup = await wake(env, 1)
+    remotes = []
+    try:
+        for attempt in range(2):
+            remote = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+            remotes.append(remote)
+            remote.addTrack(AudioStreamTrack())
+            await remote.setLocalDescription(await remote.createOffer())
+            body = {"device_id": "startup-test", "token": "startup-device-test",
+                    "type": "offer", "sdp": remote.localDescription.sdp, "startup_id": 1}
+            response = await env.http.post("/api/offer", json=body)
+            assert response.status == 200, await response.text()
+            session = env.manager._sessions["startup-test"]
+            if attempt == 0:
+                assert (await env.http.post("/api/offer", json=body)).status == 409
+                await session.close()  # production disconnected callback's action
+                assert startup.closed and not startup._ws and not startup._rtp
+                assert "startup-test" not in env.manager._startups
+                assert env.manager.can_accept_offer("startup-test")
+            else:
+                assert session._startup is None  # never replay discarded startup PCM
+                await env.manager.stop("startup-test")
+                assert not env.manager.can_accept_offer("startup-test")
+                assert (await env.http.post("/api/offer", json=body)).status != 200
+    finally:
+        await env.manager.stop("startup-test")
+        for remote in remotes:
             await remote.close()

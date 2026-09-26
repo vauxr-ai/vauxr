@@ -153,3 +153,30 @@ async def test_old_session_loses_controls_as_soon_as_new_wake_or_socket_owns_dev
     newer_ws.send_str.assert_not_called()
     await manager.stop("race")
     registry.unregister("race")
+
+
+async def test_peer_close_preserves_new_startup_before_its_offer(monkeypatch):
+    manager = realtime_session.RealtimeManager()
+    monkeypatch.setattr(realtime_session, "_manager", manager)
+    old = StartupAudio(1, AsyncMock())
+    manager.begin_startup("race", old)
+    session = realtime_session.RealtimeSession("race", None)
+    session._startup = old
+    manager._sessions["race"] = session
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def disconnect():
+        entered.set()
+        await release.wait()
+
+    session._connection = SimpleNamespace(disconnect=disconnect)
+    closing = asyncio.create_task(session.close())
+    await entered.wait()
+    replacement = StartupAudio(2, AsyncMock())
+    manager.begin_startup("race", replacement)
+    release.set()
+    await closing
+    assert manager._startups["race"] is replacement
+    assert not replacement.closed
+    assert manager.can_accept_offer("race")
+    await manager.stop("race")

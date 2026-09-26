@@ -495,7 +495,7 @@ class RealtimeSession:
                         session._turn_generation += 1
                         session._turn_active = True
                         session._touch_activity()
-                        await session._send_control({"type": "vauxr.speech.store.start"})
+                        await session._send_control({"type": "speech.start"})
                 elif isinstance(frame, UserStoppedSpeakingFrame):
                     log.info("realtime[%s]: VAD speech STOP", session.device_id)
                 elif isinstance(frame, TranscriptionFrame) and frame.text and frame.text.strip():
@@ -1050,6 +1050,10 @@ class RealtimeSession:
         manager = get_manager()
         if manager._sessions.get(self.device_id) is self:
             manager.forget(self.device_id)
+        # Retire only this peer's consumed/closed buffer. Keep wake admission
+        # for a fresh SDP offer, but never reuse PCM or remove a newer wake.
+        if self._startup is not None and manager._startups.get(self.device_id) is self._startup:
+            manager._startups.pop(self.device_id)
 
 
 class RealtimeManager:
