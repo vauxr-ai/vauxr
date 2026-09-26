@@ -343,8 +343,11 @@ async def start_live(session: Any, connection: Any) -> None:
             session._rtp_probes = rtp_probes
         llm.audio_diagnostics.bind_output(transport.output())
     session._context = context
+    from vauxr.realtime.output_buffer import OutputJitterBuffer
+
+    output_buffer = OutputJitterBuffer()
     gain = OutputGain(get_config().realtime.output_gain_db)
-    session._task = PipelineWorker(Pipeline([transport.input(), user, llm, gain, transport.output(), assistant]),
+    session._task = PipelineWorker(Pipeline([transport.input(), user, llm, gain, output_buffer, transport.output(), assistant]),
         params=PipelineParams(audio_in_sample_rate=24000, audio_out_sample_rate=24000))
     session._runner = WorkerRunner(handle_sigint=False)
 
