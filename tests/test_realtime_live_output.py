@@ -59,7 +59,7 @@ async def output_probe(
     assert version("pipecat-ai") == "1.9.0"
     monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
     session = SimpleNamespace(
-        device_id="browser", _touch_activity=lambda: None, _send_control=AsyncMock(),
+        is_physical_live=False, device_id="browser", _touch_activity=lambda: None, _send_control=AsyncMock(),
         _agent_server=SimpleNamespace(realtime_request=AsyncMock(return_value={})),
     )
     live = LiveService(session, "selected", {"realtime_model": "gpt-live-1", "realtime_voice": "cedar"})

@@ -72,7 +72,8 @@ class LiveService(OpenAILiveLLMService):
     def __init__(self, session: Any, agent_id: str, settings: dict[str, str]) -> None:
         self.session = session
         from vauxr.realtime.device_activity import DeviceActivity
-        self.device_activity = DeviceActivity(session) if getattr(session, "_handoff_pending", False) else None
+        self.startup = getattr(session, "_startup", None)
+        self.device_activity = DeviceActivity(session) if session.is_physical_live else None
         self.agent_id = agent_id
         self.session_id = secrets.token_hex(16)
         self.fragments: list[dict[str, object]] = []
@@ -89,6 +90,12 @@ class LiveService(OpenAILiveLLMService):
         super().__init__(api_key=os.environ["OPENAI_API_KEY"],
                          settings=self.Settings(model=settings["realtime_model"], voice=settings["realtime_voice"]),
                          delegation=ClientDelegation(backend=BackendWorker(self), timeout_secs=300))
+        if self.startup is not None:
+            self.startup.bind(self._consume_startup_audio)
+
+    async def _consume_startup_audio(self, frame: InputAudioRawFrame) -> None:
+        if not self.session._closed and self.session._owns_control():
+            await self._process_live_frame(frame, FrameDirection.DOWNSTREAM)
 
     async def _handle_server_event(self, evt: live_events.ServerEvent) -> None:
         activity = self.device_activity
@@ -128,10 +135,12 @@ class LiveService(OpenAILiveLLMService):
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         if self.audio_diagnostics and isinstance(frame, InputAudioRawFrame):
             self.audio_diagnostics.count("input_frames_at_service")
-        if isinstance(frame, InputAudioRawFrame) and getattr(self.session, "_handoff_pending", False):
-            if self.audio_diagnostics:
-                self.audio_diagnostics.count("input_blocked_handoff")
+        if (isinstance(frame, InputAudioRawFrame) and self.startup is not None
+                and self.startup.append_rtp(frame)):
             return
+        await self._process_live_frame(frame, direction)
+
+    async def _process_live_frame(self, frame: Frame, direction: FrameDirection) -> None:
         if self.device_activity:
             if isinstance(frame, InputAudioRawFrame):
                 await self.device_activity.input_audio(frame)
@@ -229,6 +238,8 @@ class LiveService(OpenAILiveLLMService):
             asyncio.create_task(self.session.close())
 
     async def finish_transcript(self) -> None:
+        from vauxr.realtime.session import _device_ws, _send_json
+        ws = _device_ws(self.session.device_id)
         self.finishing = True
         if self.device_activity:
             self.device_activity.close()
@@ -243,9 +254,9 @@ class LiveService(OpenAILiveLLMService):
         except (Exception, asyncio.CancelledError):
             # A revoked/offline backend cannot acknowledge history. This must
             # not hold revoked media authority alive or prevent provider close.
-            from vauxr.realtime.session import _device_ws, _send_json
-            await _send_json(_device_ws(self.session.device_id), {"type": "error",
-                "code": "REALTIME_HISTORY_FAILED", "message": "Some voice history could not be saved to the backend."})
+            if self.session._owns_control() and _device_ws(self.session.device_id) is ws:
+                await _send_json(ws, {"type": "error",
+                    "code": "REALTIME_HISTORY_FAILED", "message": "Some voice history could not be saved to the backend."})
         finally:
             await self.transcript_relay.close(drain=True)
             if self.audio_diagnostics:
@@ -293,7 +304,7 @@ async def start_live(session: Any, connection: Any) -> None:
     if active is None or active.type != "openclaw":
         raise ValueError("Realtime requires a selected OpenClaw integration Agent")
     session._connection = connection
-    if getattr(session, "_handoff_pending", False):
+    if session.is_physical_live:
         if get_config().realtime.esp32_mode:
             from vauxr.realtime.transport import use_websocket_control
             use_websocket_control(connection)
@@ -302,11 +313,13 @@ async def start_live(session: Any, connection: Any) -> None:
     # Give session teardown ownership before the first remote request.
     session._live_service = llm
     bootstrap = await llm.request("bootstrap")
+    if session._closed or (session._startup is not None and session._startup.closed):
+        raise ValueError("Realtime startup cancelled during bootstrap")
     instructions = bootstrap.get("instructions", "")
     messages = bootstrap.get("messages", [])
     if not isinstance(instructions, str) or len(instructions) > 16000 or not isinstance(messages, list):
         raise ValueError("Invalid backend realtime context")
-    if getattr(session, "_handoff_pending", False):
+    if session.is_physical_live:
         # Pipecat interprets trailing developer history as a request to speak.
         # Retain backend context as instructions without replaying completed work.
         messages = list(messages)
@@ -325,7 +338,7 @@ async def start_live(session: Any, connection: Any) -> None:
     rtp_probes = None
     if llm.audio_diagnostics:
         from vauxr.realtime.rtp_diagnostics import install
-        if getattr(session, "_handoff_pending", False):
+        if session.is_physical_live:
             rtp_probes = install(connection)
             session._rtp_probes = rtp_probes
         llm.audio_diagnostics.bind_output(transport.output())
@@ -350,6 +363,8 @@ async def start_live(session: Any, connection: Any) -> None:
 
     @llm.event_handler("on_session_started")
     async def ready(_service: Any, _provider_session: Any) -> None:
+        if session._startup is not None:
+            session._startup.ready()
         await session._send_control({"type": "realtime.ready"})
 
     @session._task.event_handler("on_pipeline_error")

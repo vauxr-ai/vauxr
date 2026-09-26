@@ -154,7 +154,8 @@ async def test_interrupt_invalidates_pending_output_and_cancel_is_terminal():
 async def test_browser_pipeline_has_no_device_activity(monkeypatch):
     from vauxr.realtime.live import LiveService
     monkeypatch.setenv('OPENAI_API_KEY', 'local-test-only')
-    s = SimpleNamespace(_send_control=AsyncMock(), close=AsyncMock())
+    from vauxr.realtime.session import RealtimeSession
+    s = RealtimeSession("browser-policy", None)
     llm = LiveService(s, 'test', {'realtime_model':'gpt-live-1','realtime_voice':'cedar'})
     assert llm.device_activity is None
     await llm.cleanup()

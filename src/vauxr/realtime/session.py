@@ -5,11 +5,9 @@ A `RealtimeSession` owns one device's WebRTC media pipeline (STT -> agent LLM
 back over the device's existing WS connection so the firmware's LED state machine
 and follow_up handling work unchanged.
 
-Cold wake: the command spoken right after the wake word is streamed over the
-always-on WS while WebRTC connects. On the device-VAD ``voice.end`` marker the
-server transcribes that buffered PCM (batch STT) and either seeds it into
-Pipecat (when WebRTC is connected) or runs the WS turn pipeline (fallback).
-Live follow-up turns use WebRTC audio -> VAD -> STT as normal.
+Physical Live cold wake streams PCM over WS while WebRTC connects. A bounded
+startup buffer joins that finite segment to RTP at provider readiness. Legacy
+pre-roll/text-seed helpers remain available for the Standard pipeline.
 """
 
 from __future__ import annotations
@@ -59,6 +57,10 @@ _BOT_IDLE_DEBOUNCE_S = 1.0
 _SAFETY_BACKSTOP_S = 600.0
 # How often the backstop wakes to check the inactivity deadline.
 _SAFETY_BACKSTOP_POLL_S = 30.0
+
+
+class RealtimeOfferConflict(ValueError):
+    """An offer does not own a fresh wake; it must not terminate its replacement."""
 
 
 async def _send_json(ws: Any, obj: dict[str, Any]) -> bool:
@@ -186,7 +188,9 @@ class RealtimeSession:
         # resumes RTP on warm wake without a WS cue, so audio.end must never
         # latch it; quiet timeout diagnostics are managed separately below.
         self._mic_paused = False
-        self._handoff_pending = False
+        self._device_wake = get_manager()._device_wakes.get(device_id)
+        self._startup: Any = None
+        self._control_ws = _device_ws(device_id)
         # VAD profile swapping: a snappy idle profile so quiet speech is heard,
         # and a stricter barge-in profile applied while the bot speaks so the
         # device's residual echo doesn't self-interrupt the reply. Populated when
@@ -936,9 +940,21 @@ class RealtimeSession:
                     follow_up = True
             await self._send_audio_end(follow_up)
 
+    @property
+    def is_physical_live(self) -> bool:
+        """Physical wake policy survives retirement of its one-shot PCM buffer."""
+        return self._device_wake is not None or self._startup is not None
+
     def _owns_control(self) -> bool:
         """Only the exact active peer may change shared device control state."""
-        return get_manager()._sessions.get(self.device_id) is self
+        manager = get_manager()
+        return (manager._sessions.get(self.device_id) is self
+                and (self._device_wake is None or (
+                    manager._device_wakes.get(self.device_id) is self._device_wake
+                    and _device_ws(self.device_id) is self._control_ws))
+                and (self._startup is None or (
+                    manager._startups.get(self.device_id) is self._startup
+                    and _device_ws(self.device_id) is self._control_ws)))
 
     async def _send_control(self, message: dict[str, Any]) -> bool:
         if self._closed or self._ended_notified or not self._owns_control():
@@ -998,7 +1014,7 @@ class RealtimeSession:
 
     async def _notify_ended(self) -> None:
         """Relay a terminal audio.end{follow_up:false} for abnormal teardown."""
-        if self._ended_notified or self._handoff_pending:
+        if self._ended_notified:
             return
         self._ended_notified = True
         self._pending_ends.clear()
@@ -1014,6 +1030,8 @@ class RealtimeSession:
     async def close(self) -> None:
         if self._close_attempts is None:
             self._closed = True
+            if self._startup is not None:
+                self._startup.close()
             log.info("realtime[%s]: closing session", self.device_id)
             self._cancel_drain_timer()
             if self._backstop_task is not None:
@@ -1041,6 +1059,10 @@ class RealtimeSession:
         manager = get_manager()
         if manager._sessions.get(self.device_id) is self:
             manager.forget(self.device_id)
+        # Retire only this peer's consumed/closed buffer. Keep wake admission
+        # for a fresh SDP offer, but never reuse PCM or remove a newer wake.
+        if self._startup is not None and manager._startups.get(self.device_id) is self._startup:
+            manager._startups.pop(self.device_id)
 
 
 class RealtimeManager:
@@ -1048,7 +1070,8 @@ class RealtimeManager:
 
     def __init__(self) -> None:
         self._live_devices: set[str] = set()
-        self._handoff_devices: set[str] = set()
+        self._startups: dict[str, Any] = {}
+        self._device_wakes: dict[str, object] = {}
         self._agent_server: Any = None
         self._sessions: dict[str, RealtimeSession] = {}
         self._preroll: dict[str, bytearray] = {}
@@ -1244,29 +1267,35 @@ class RealtimeManager:
     def forget(self, device_id: str) -> None:
         self._sessions.pop(device_id, None)
 
-    async def abort_wake(self, device_id: str) -> None:
+    async def abort_wake(self, device_id: str, *, expected_wake: object = ...) -> None:
         """Clean up only the wake/peer captured before teardown yields."""
+        if expected_wake is not ... and self._wake_generations.get(device_id) is not expected_wake:
+            return
         await self._stop_wake(device_id, notify=True)
 
     async def _stop_wake(self, device_id: str, *, notify: bool) -> None:
         session = self._sessions.get(device_id)
         wake = self._wake_generations.get(device_id)
+        startup = self._startups.get(device_id)
+        if startup is not None:
+            startup.close()
         ws = _device_ws(device_id)
         if session is not None:
             await session.close()
         if (self._sessions.get(device_id) not in (None, session)
                 or self._wake_generations.get(device_id) is not wake or _device_ws(device_id) is not ws):
             return
-        pending_handoff = device_id in self._handoff_devices
-        self._handoff_devices.discard(device_id)
+        self._startups.pop(device_id, None)
+        self._wake_generations.pop(device_id, None)
+        self._device_wakes.pop(device_id, None)
         self._live_devices.discard(device_id)
         self._preroll.pop(device_id, None)
         self._speech_preroll.pop(device_id, None)
         self._cold_wait.discard(device_id)
-        if notify and not pending_handoff:
+        if notify:
             await _send_json(ws, {"type": "audio.end", "follow_up": False})
         if (self._sessions.get(device_id) in (None, session)
-                and self._wake_generations.get(device_id) is wake and _device_ws(device_id) is ws):
+                and device_id not in self._wake_generations and _device_ws(device_id) is ws):
             registry.set_state(device_id, "idle")
 
     async def stop_all(self) -> None:
@@ -1280,25 +1309,15 @@ class RealtimeManager:
     async def stop(self, device_id: str) -> None:
         await self._stop_wake(device_id, notify=False)
 
-    def prepare_handoff(self, device_id: str) -> bool:
-        """Admit a fresh Live bootstrap only after the Standard playback receipt."""
+    def begin_startup(self, device_id: str, startup: Any) -> None:
+        """Bind admission and PCM ownership to this exact cold wake."""
+        previous = self._startups.get(device_id)
+        if previous is not None:
+            previous.close()
         self._wake_generations[device_id] = object()
-        self._handoff_devices.add(device_id)
+        self._device_wakes[device_id] = self._wake_generations[device_id]
+        self._startups[device_id] = startup
         self._live_devices.add(device_id)
-        return True
-
-    def activate_handoff(self, device_id: str) -> bool:
-        session = self._sessions.get(device_id)
-        # This correlated device receipt authorizes input; it is not a provider
-        # readiness event. Accept it once even if provider startup is slower.
-        # The pinned Live service independently drops PCM until session.started.
-        # Requiring that event here loses the one-shot receipt permanently.
-        if (device_id not in self._handoff_devices or session is None
-                or not session.is_peer_live() or session._live_service is None):
-            return False
-        session._handoff_pending = False
-        self._handoff_devices.discard(device_id)
-        return True
 
     def can_accept_offer(self, device_id: str) -> bool:
         """Whether an /api/offer for this device_id is tied to a real wake."""
@@ -1326,38 +1345,74 @@ class RealtimeManager:
         """Build/refresh a session around an incoming SDP offer."""
         from pipecat.transports.smallwebrtc.request_handler import SmallWebRTCRequest
 
+        startup = self._startups.get(device_id)
+        if startup is not None and (startup.closed or type(body.get("startup_id")) is not int
+                                    or body["startup_id"] != startup.id):
+            raise RealtimeOfferConflict("Offer does not belong to this startup")
         handler = self._request_handler()
         req = SmallWebRTCRequest.from_dict(
             {k: body[k] for k in ("sdp", "type", "pc_id", "restart_pc") if k in body}
         )
 
         wake = self._wake_generations.get(device_id)
+        startup_error: Exception | None = None
 
         async def _on_connection(connection: Any) -> None:
+            nonlocal startup_error
             from vauxr.realtime.teardown import protect_handshake_teardown
 
             protect_handshake_teardown(connection)
+            if (self._wake_generations.get(device_id) is not wake
+                    or not self.can_accept_offer(device_id)):
+                await connection.disconnect()
+                raise RealtimeOfferConflict("Realtime wake superseded or already connected")
             existing = self._sessions.get(device_id)
             if existing is not None:
-                log.info("realtime[%s]: closing previous session before new offer", device_id)
+                if device_id in self._startups and existing._startup is self._startups[device_id]:
+                    await connection.disconnect()
+                    raise RealtimeOfferConflict("Realtime wake already connected")
                 await existing.close()
+                if self._wake_generations.get(device_id) is not wake:
+                    await connection.disconnect()
+                    raise RealtimeOfferConflict("Realtime wake superseded")
             session = RealtimeSession(device_id, self._agent_server)
-            session._handoff_pending = device_id in self._handoff_devices
+            session._startup = self._startups.get(device_id)
+            self._sessions[device_id] = session
             try:
                 await session.start(connection)
-            except Exception:
+            except Exception as exc:
+                startup_error = exc
                 log.exception("realtime[%s]: session start failed", device_id)
+                if session._startup is not None:
+                    session._startup.fail("REALTIME_STARTUP_FAILED")
                 await session.close()
                 raise
             if (self._wake_generations.get(device_id) is not wake
                     or not self.can_accept_offer(device_id)):
                 await session.close()
-                raise ValueError("Realtime wake superseded")
+                raise RealtimeOfferConflict("Realtime wake superseded")
             self._sessions[device_id] = session
 
         lock = self._offer_locks.setdefault(device_id, asyncio.Lock())
         async with lock:
-            return await handler.handle_web_request(req, _on_connection)
+            if (self._wake_generations.get(device_id) is not wake
+                    or not self.can_accept_offer(device_id)
+                    or (device_id in self._startups and device_id in self._sessions
+                        and self._sessions[device_id]._startup is self._startups[device_id])):
+                raise RealtimeOfferConflict("Realtime wake superseded or already connected")
+            answer = await handler.handle_web_request(req, _on_connection)
+            if startup is not None and (startup_error is not None or startup.closed
+                    or self._wake_generations.get(device_id) is not wake):
+                # Pinned Pipecat logs callback failures and still registers an
+                # SDP answer. Retire that exact failed peer, never a new wake.
+                if answer:
+                    peer = handler._pcs_map.pop(answer.get("pc_id"), None)
+                    if peer is not None:
+                        await peer.disconnect()
+                if startup_error is not None:
+                    raise startup_error
+                raise RealtimeOfferConflict("Realtime startup superseded")
+            return answer
 
 
 _manager: RealtimeManager | None = None
