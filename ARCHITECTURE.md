@@ -352,3 +352,34 @@ realtime path's duplicate transport clients. The boolean device `voice` flag
 retains its existing meaning. Realtime TTS still buffers an entire segment.
 See [speech settings](docs/speech-settings.md) for persistence, API, readiness
 limits, configuration examples and the #45/#49 owner/scoped auth integration seam.
+
+
+### Guided physical-device pairing
+
+The enrollment proof response can carry server-synthesized welcome and code
+announcements using the global default TTS provider/voice. The physical device
+plays the welcome, then a short Action-button release speaks the code. Further
+short presses repeat the same code until the existing five-minute window ends
+or enrollment finishes. Code/audio remain in RAM only; approved credentials
+still follow the existing signed redemption and durable-save flow.
+
+The portal's **Pairing and access → Edit pairing messages** stores `intro` and
+`code` text in `DATA_DIR/pairing-prompts.json`. Owner-session/CSRF-protected POSTs
+to `/api/enrollment/v1/prompts` and `/save-prompts` read/write these settings.
+The welcome is limited to 400 characters and must not contain `{code}`; the
+code announcement is limited to 200 characters and must contain `{code}` once.
+Codes contain exactly four digits. Each digit is expanded to a spoken word,
+including leading zeros. The five-attempt limit and five-minute expiry remain. The portal
+collects the matching code once and performs the existing initiate/approve
+requests on one explicit approval click; both server checks remain in place.
+
+Firmware opts in on the signed `/prove` request using
+`Accept: application/vnd.vauxr.pairing-audio`. The response is `VPA1`, a 32-bit
+little-endian JSON byte length, a 32-bit little-endian welcome PCM byte length,
+the usual UTF-8 proof JSON (plus `guided: true` and `intro_text`), welcome PCM,
+and code PCM. Both clips are 16 kHz mono S16LE, bounded to 40 and 20 seconds
+respectively. The JSON prefix is bounded to 4096 bytes. Synthesis uses at most
+two concurrent slots and a 35-second timeout; busy/unavailable speech returns
+JSON with the same guided flow and a local USB-console fallback. Audio has no
+public URL and is not persisted or logged. Legacy clients receive the unchanged
+JSON proof response. All responses retain `Cache-Control: no-store`.

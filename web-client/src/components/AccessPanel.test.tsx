@@ -8,6 +8,7 @@ vi.mock("../auth/api", async (importOriginal) => ({
   ownerFetch: vi.fn(),
 }));
 beforeEach(() => {
+  vi.clearAllMocks();
   const values = new Map<string, string>();
   vi.stubGlobal("sessionStorage", {
     getItem: (k: string) => values.get(k) ?? null,
@@ -83,6 +84,63 @@ it("shows expired pairing as terminal and never infers consent from its name", a
     screen.queryByText("Initiate matching speaker"),
   ).not.toBeInTheDocument();
   expect(
-    screen.queryByLabelText("Spoken eight-digit code"),
+    screen.queryByLabelText("Spoken four-digit code"),
   ).not.toBeInTheDocument();
+});
+
+it("accepts the code once and initiates then approves on one deliberate click", async () => {
+  const calls: string[] = [];
+  vi.mocked(ownerPost).mockImplementation(async (path, body = {}) => {
+    if (path.endsWith("/list")) return { requests: [{ request_id: "r", device_id: "d",
+      display_name: "Speaker", kind: "physical", status: calls.length ? "approved" : "ready",
+      expires_at: Date.now() / 1000 + 300 }] };
+    calls.push(path);
+    expect(body).toEqual({ request_id: "r", code: "0012" });
+    return {};
+  });
+  const user = userEvent.setup();
+  render(<AccessPanel />);
+  await user.type(await screen.findByLabelText("Spoken four-digit code"), "0012");
+  await user.click(screen.getByRole("checkbox"));
+  await user.click(screen.getByText("Approve matching speaker"));
+  await waitFor(() => expect(calls).toEqual([
+    "/api/enrollment/v1/initiate", "/api/enrollment/v1/approve",
+  ]));
+  await waitFor(() => expect(screen.queryByLabelText("Spoken four-digit code")).not.toBeInTheDocument());
+});
+
+it("does not approve after initiation fails or retain the entered code", async () => {
+  vi.mocked(ownerPost).mockImplementation(async (path) => {
+    if (path.endsWith("/list")) return { requests: [{ request_id: "r", device_id: "d",
+      display_name: "Speaker", kind: "physical", status: "ready", expires_at: Date.now() / 1000 + 300 }] };
+    throw new Error("Pairing request expired");
+  });
+  const user = userEvent.setup();
+  render(<AccessPanel />);
+  await user.type(await screen.findByLabelText("Spoken four-digit code"), "0012");
+  await user.click(screen.getByRole("checkbox"));
+  await user.click(screen.getByText("Approve matching speaker"));
+  await screen.findByText("Pairing request expired");
+  expect(screen.getByLabelText("Spoken four-digit code")).toHaveValue("");
+  expect(vi.mocked(ownerPost).mock.calls.filter(([path]) => path.endsWith("/approve"))).toHaveLength(0);
+});
+
+it("loads and saves configurable pairing messages", async () => {
+  vi.mocked(ownerPost).mockImplementation(async (path, body = {}) => {
+    if (path.endsWith("/list")) return { requests: [] };
+    if (path.endsWith("/prompts")) return { intro: "Welcome.", code: "Your code is {code}." };
+    if (path.endsWith("/save-prompts")) return body;
+    throw new Error("Unexpected endpoint");
+  });
+  const user = userEvent.setup();
+  render(<AccessPanel />);
+  await user.click(screen.getByText("Edit pairing messages"));
+  const intro = await screen.findByLabelText("Welcome message");
+  await user.clear(intro);
+  await user.type(intro, "Welcome to Vauxr! Press Action when ready.");
+  await user.click(screen.getByText("Save pairing messages"));
+  await screen.findByRole("status");
+  expect(ownerPost).toHaveBeenCalledWith("/api/enrollment/v1/save-prompts", {
+    intro: "Welcome to Vauxr! Press Action when ready.", code: "Your code is {code}.",
+  });
 });
