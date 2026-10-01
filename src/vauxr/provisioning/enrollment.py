@@ -195,7 +195,7 @@ class Enrollment:
             if action in ("prove", "redeem", "cancel"):
                 self._signature(state, row, action, body["signature"])
             if action == "prove" and status == "challenge":
-                code = f"{secrets.randbelow(100_000_000):08d}"
+                code = f"{secrets.randbelow(10_000):04d}"
                 row.update(state="ready", code_hash=code_digest(row, code))
                 self.store.save_enrollment(state)
                 log.info("enrollment key proved")
@@ -207,7 +207,7 @@ class Enrollment:
                 code = body["code"]
                 if (
                     not isinstance(code, str)
-                    or not re.fullmatch(r"[0-9]{8}", code)
+                    or not re.fullmatch(r"[0-9]{4}", code)
                     or not hmac.compare_digest(code_digest(row, code), row["code_hash"])
                 ):
                     self._failure(state, row)

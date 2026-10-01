@@ -166,15 +166,12 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
     .locator("div.border-t")
     .filter({ hasText: "Synthetic speaker" })
     .first();
-  await row.getByLabel("Spoken eight-digit code").fill(proof.code);
-  await expect(row.getByText("Initiate matching speaker")).toBeDisabled();
-  await row.getByRole("checkbox").check();
-  await row.getByText("Initiate matching speaker").click();
-  await expect(row.getByText("Approve matching speaker")).toBeVisible();
-  await row.getByLabel("Spoken eight-digit code").fill(proof.code);
+  await row.getByLabel("Spoken four-digit code").fill(proof.code);
+  expect(proof.code).toMatch(/^[0-9]{4}$/);
+  await expect(row.getByText("Approve matching speaker")).toBeDisabled();
   await row.getByRole("checkbox").check();
   await row.getByText("Approve matching speaker").click();
-  await expect(row.getByText("Deny request")).toBeVisible();
+  await expect(row.getByLabel("Spoken four-digit code")).toHaveCount(0);
   const physical = await post("/api/enrollment/v1/redeem", {
     request_id: challenge.request_id,
     signature: signed("redeem"),

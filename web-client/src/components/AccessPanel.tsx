@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { jsonResponse, ownerFetch, ownerPost, randomId } from "../auth/api";
+import PairingMessages from "./PairingMessages";
 interface Pair {
   request_id: string;
   device_id: string;
@@ -59,9 +60,13 @@ export default function AccessPanel() {
       setBusy(false);
     }
   }
-  async function refresh() {
+  async function refreshPairs(): Promise<Pair[]> {
     const p = await ownerPost("/api/enrollment/v1/list");
     setPairs(p.requests);
+    return p.requests;
+  }
+  async function refresh() {
+    await refreshPairs();
     const d = await jsonResponse(await ownerFetch("/api/devices"));
     setDevices(Array.isArray(d) ? d : d.devices);
     setAgents(await jsonResponse(await ownerFetch("/api/agents")));
@@ -114,11 +119,13 @@ export default function AccessPanel() {
     <div className="auth-panel card space-y-4 p-5">
       <h2>Pairing and access</h2>
       <p>
-        Add a speaker: deliberately open its physical pairing window and listen
-        to the eight digits spoken by that speaker. Refresh, identify its
-        request, and enter those digits. Names are untrusted and may repeat. No
+        Hold the speaker's Action button to enter pairing mode, then press it
+        briefly to hear the code. Press again whenever you need to hear it again.
+        Refresh, identify its request, and enter the code once to approve pairing.
+        Names are untrusted and may repeat. No
         hardware credentials are displayed here.
       </p>
+      <PairingMessages />
       <button disabled={busy} onClick={() => run(refresh)}>
         Refresh pairing and identities
       </button>
@@ -132,10 +139,29 @@ export default function AccessPanel() {
             busy={busy}
             act={(action, code) =>
               run(async () => {
-                await ownerPost(`/api/enrollment/v1/${action}`, {
-                  request_id: p.request_id,
-                  ...(code ? { code } : {}),
-                });
+                try {
+                  if (action === "approve") {
+                    // A previous request may have committed even if its response
+                    // was lost. Reconcile before deciding whether to initiate.
+                    const current = (await refreshPairs()).find(
+                      (pair) => pair.request_id === p.request_id,
+                    );
+                    if (current?.status === "ready") {
+                      await ownerPost("/api/enrollment/v1/initiate", {
+                        request_id: p.request_id, code,
+                      });
+                    }
+                  }
+                  await ownerPost(`/api/enrollment/v1/${action}`, {
+                    request_id: p.request_id,
+                    ...(code ? { code } : {}),
+                  });
+                } catch (error) {
+                  // Keep the original action error if the status refresh also
+                  // fails. The next click will fetch fresh status before acting.
+                  await refreshPairs().catch(() => {});
+                  throw error;
+                }
                 await refresh();
               })
             }
@@ -289,11 +315,11 @@ function PairRow({
       {!expired && ["ready", "initiated"].includes(p.status) && (
         <>
           <label className="block">
-            Spoken eight-digit code
+            Spoken four-digit code
             <input
               inputMode="numeric"
               autoComplete="off"
-              maxLength={8}
+              maxLength={4}
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
@@ -308,16 +334,14 @@ function PairRow({
             from it.
           </label>
           <button
-            disabled={busy || !physical || !/^[0-9]{8}$/.test(code)}
+            disabled={busy || !physical || !/^[0-9]{4}$/.test(code)}
             onClick={() => {
-              act(p.status === "ready" ? "initiate" : "approve", code);
+              act("approve", code);
               setCode("");
               setPhysical(false);
             }}
           >
-            {p.status === "ready"
-              ? "Initiate matching speaker"
-              : "Approve matching speaker"}
+            Approve matching speaker
           </button>
         </>
       )}

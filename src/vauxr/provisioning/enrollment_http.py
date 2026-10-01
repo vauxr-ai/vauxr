@@ -7,6 +7,7 @@ from aiohttp import web
 
 from vauxr.auth.policy import Principal, Role
 from vauxr.provisioning.enrollment import Enrollment, EnrollmentError
+from vauxr.provisioning.pairing_audio import AUDIO_SLOTS, load_prompts, proof_response, save_prompts
 from vauxr.web.owner import ORIGIN, OWNER, cookie_name, secure_request, session_principal
 
 ENROLLMENT = web.AppKey("enrollment", Enrollment)
@@ -57,7 +58,19 @@ async def enrollment_endpoint(request: web.Request) -> web.Response:
             principal = service.store.authenticate(header[7:] if header.startswith("Bearer ") else None)
             return principal if principal is not None and principal.role != Role.OWNER else None
 
-        response = web.json_response(service.execute(action, body, resolve))
+        if action in {"prompts", "save-prompts"}:
+            principal = resolve()
+            if principal is None or principal.role != Role.OWNER:
+                raise EnrollmentError("forbidden")
+            if action == "prompts" and body != {}:
+                raise EnrollmentError("invalid_request")
+            try:
+                result = load_prompts() if action == "prompts" else save_prompts(body)
+            except ValueError:
+                raise EnrollmentError("invalid_request") from None
+        else:
+            result = service.execute(action, body, resolve)
+        response = await proof_response(request, result) if action == "prove" else web.json_response(result)
     except EnrollmentError as exc:
         code = str(exc)
         status = {
@@ -85,6 +98,7 @@ enrollment_endpoint.authz_boundary = True  # type: ignore[attr-defined]
 
 def attach_enrollment(app: web.Application) -> None:
     app[ENROLLMENT] = Enrollment(app[OWNER].store, app[ORIGIN])
+    app[AUDIO_SLOTS] = asyncio.Semaphore(2)
 
     async def startup(application: web.Application) -> None:
         application[ENROLLMENT].initialize()

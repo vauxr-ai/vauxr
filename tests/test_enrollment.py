@@ -86,7 +86,7 @@ def test_complete_secret_projection_restart_and_scope(setup, actor, caplog):
     caplog.set_level(logging.INFO)
     resolve = owner_resolver(owner, cookie) if actor == "owner" else integration_resolver(service)
     key, row, code = ready(service)
-    assert len(code) == 8 and code.isdigit()
+    assert len(code) == 4 and code.isdigit()
     approve(service, row, code, resolve)
     listed = service.execute("list", {}, resolve)
     assert set(listed["requests"][0]) == {
@@ -170,7 +170,7 @@ def test_wrong_key_cross_request_and_action_replay(setup):
 def test_code_substitution_attempts_persist_and_exhaust(setup):
     service, _, _ = setup
     _, row, code = ready(service)
-    wrong = f"{(int(code) + 1) % 100_000_000:08d}"
+    wrong = f"{(int(code) + 1) % 10_000:04d}"
     resolve = integration_resolver(service)
     for _ in range(5):
         service = Enrollment(CredentialStore(service.store.path), ORIGIN)
@@ -569,7 +569,7 @@ async def test_http_storage_failure_is_redacted(client, monkeypatch, caplog):
 
 def test_cross_request_code_does_not_authorize_target(setup, monkeypatch):
     service, _, _ = setup
-    values = iter((12345678, 87654321))
+    values = iter((1234, 8765))
     monkeypatch.setattr(enrollment.secrets, "randbelow", lambda _: next(values))
     _, row, code = ready(service)
     _, other, other_code = ready(service)
@@ -859,3 +859,88 @@ def test_origin_a_b_a_cannot_revive_unexamined_approval(setup):
     with pytest.raises(EnrollmentError, match="unavailable"):
         restored.execute("redeem", signed(key, row, "redeem"))
     assert restored.execute("status", signed(key, row, "status"))["status"] == "stale"
+
+
+async def test_pairing_audio_guided_and_private(client, monkeypatch):
+    import struct
+    import vauxr.provisioning.pairing_audio as audio
+
+    texts = []
+    async def synthesize(text, *, target_rate):
+        assert target_rate == 16000
+        texts.append(text)
+        yield b"\x01\x00" * 100
+    monkeypatch.setattr(audio, "synthesize", synthesize)
+    monkeypatch.setattr(enrollment.secrets, "randbelow", lambda _: 12)
+    key = Ed25519PrivateKey.generate()
+    response = await post(client, "request", {
+        "kind": "physical", "display_name": "Speaker",
+        "public_key": key.public_key().public_bytes_raw().hex(),
+    })
+    row = await response.json()
+    response = await post(client, "prove", signed(key, row, "prove"),
+                          {**HEADERS, "Accept": audio.MEDIA_TYPE})
+    assert response.status == 200 and response.content_type == audio.MEDIA_TYPE
+    assert response.headers["Cache-Control"] == "no-store"
+    wire = await response.read()
+    assert wire[:4] == b"VPA1"
+    metadata_size, intro_size = struct.unpack_from("<II", wire, 4)
+    result = json.loads(wire[12:12 + metadata_size])
+    assert result["code"] == "0012" and result["guided"] is True
+    assert intro_size == 200 and len(wire) == 12 + metadata_size + 400
+    assert texts[0] == audio.DEFAULT_PROMPTS["intro"]
+    assert "zero, zero, one, two" in texts[1]
+    assert "hear the code again" in texts[1]
+    replay = await post(client, "prove", signed(key, row, "prove"),
+                        {**HEADERS, "Accept": audio.MEDIA_TYPE})
+    assert replay.status != 200 and len(texts) == 2
+    listed = await post(client, "list", {}, client.owner_headers)
+    assert "0012" not in await listed.text()
+    body = {"request_id": row["request_id"], "code": result["code"]}
+    assert (await post(client, "initiate", body, client.owner_headers)).status == 200
+    assert (await post(client, "approve", body, client.owner_headers)).status == 200
+    assert (await post(client, "redeem", signed(key, row, "redeem"))).status == 200
+
+
+@pytest.mark.parametrize("failure", ["provider", "empty", "odd", "oversize", "busy"])
+async def test_pairing_audio_falls_back_to_guided_console(client, monkeypatch, caplog, failure):
+    import vauxr.provisioning.pairing_audio as audio
+    async def synthesize(text, **kwargs):
+        if failure == "provider":
+            raise RuntimeError("private text must not be logged")
+        if failure == "odd":
+            yield b"x"
+        if failure == "oversize":
+            yield b"x" * (audio.MAX_INTRO_BYTES + 2)
+    monkeypatch.setattr(audio, "synthesize", synthesize)
+    if failure == "busy":
+        await client.app[audio.AUDIO_SLOTS].acquire()
+        await client.app[audio.AUDIO_SLOTS].acquire()
+    key = Ed25519PrivateKey.generate()
+    response = await post(client, "request", {
+        "kind": "physical", "display_name": "Speaker",
+        "public_key": key.public_key().public_bytes_raw().hex(),
+    })
+    row = await response.json()
+    response = await post(client, "prove", signed(key, row, "prove"),
+                          {**HEADERS, "Accept": audio.MEDIA_TYPE})
+    result = await response.json()
+    assert response.status == 200 and result["guided"] is True and len(result["code"]) == 4
+    assert "private text" not in caplog.text
+
+
+async def test_pairing_prompts_owner_only_and_persisted(client):
+    from vauxr.provisioning.pairing_audio import load_prompts
+    prompts = {"intro": "Welcome! Press Action when ready.",
+               "code": "Enter {code}. Press Action to repeat."}
+    for headers in (HEADERS, {**HEADERS, "Authorization": "Bearer synthetic-integration"}):
+        assert (await post(client, "save-prompts", prompts, headers)).status == 403
+    no_csrf = {k: v for k, v in client.owner_headers.items() if k != "X-CSRF-Token"}
+    assert (await post(client, "save-prompts", prompts, no_csrf)).status == 403
+    assert (await post(client, "save-prompts", prompts, client.owner_headers)).status == 200
+    assert load_prompts() == prompts
+    assert await (await post(client, "prompts", {}, client.owner_headers)).json() == prompts
+    for bad in ({**prompts, "code": "No code"}, {**prompts, "intro": "{code}"},
+                {**prompts, "code": "{code} {code}"}, {**prompts, "intro": "x" * 401}):
+        assert (await post(client, "save-prompts", bad, client.owner_headers)).status == 400
+    assert load_prompts() == prompts
