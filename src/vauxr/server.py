@@ -418,7 +418,13 @@ async def _realtime_start(
     rt = get_config().realtime
     selected_transport = transport_mode(registry.get_config_for(device_id))
     explicit_live = msg.get("mode") == "live"
-    if not (rt.enabled and rt.host and (selected_transport == "webrtc" or explicit_live)):
+    # The Live flag is client-controlled. Only a durable browser enrollment
+    # may use it to override the selected physical-device transport policy.
+    browser_live = (
+        explicit_live and selected_transport == "websocket"
+        and get_store().lifecycle.get("bindings", {}).get(device_id, {}).get("kind") == "browser"
+    )
+    if not (rt.enabled and rt.host and (selected_transport == "webrtc" or browser_live)):
         await send_json(
             ws,
             {

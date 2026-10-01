@@ -97,25 +97,41 @@ async def test_standard_webrtc_requires_streaming_startup_id(env, monkeypatch):
     assert json.loads(ws.send_str.call_args.args[0])["code"] == "REALTIME_STARTUP_REQUIRED"
 
 
-async def test_websocket_policy_rejects_device_realtime_start(env, monkeypatch):
+@pytest.mark.parametrize("kind, message", [
+    ("physical", {"startup_id": 1}),
+    ("physical", {"mode": "live"}),
+    (None, {"startup_id": 1}),
+    (None, {"mode": "live"}),
+    ("browser", {"startup_id": 1}),
+])
+async def test_websocket_policy_rejects_device_realtime_start(env, monkeypatch, kind, message):
     manager, ws, ctx = env
+    binding = {} if kind is None else {"dev": {"kind": kind}}
+    monkeypatch.setattr(server, "get_store", lambda: SimpleNamespace(lifecycle={"bindings": binding}))
     monkeypatch.setattr(server, "current", lambda _: True)
     monkeypatch.setattr(registry, "get_config_for", lambda _: {"transport_mode": "websocket"})
     monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
         realtime=SimpleNamespace(enabled=True, host="vauxr.local")))
-    await server._realtime_start(server.AppState(), ws, ctx, {"startup_id": 1})
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
+    from vauxr.speech import store as speech_store
+    monkeypatch.setattr(speech_store, "get_store", lambda: SimpleNamespace(
+        voice_settings=lambda _: {"mode": "realtime"}))
+    await server._realtime_start(server.AppState(), ws, ctx, message)
     assert json.loads(ws.send_str.call_args.args[0])["code"] == "REALTIME_UNAVAILABLE"
     assert not ctx.realtime and ctx.startup is None
     assert not manager.can_accept_offer("dev")
     assert registry.get("dev").state == "idle"
 
 
-async def test_explicit_browser_live_still_arms_without_a_startup_id(env, monkeypatch):
+@pytest.mark.parametrize("config", [{}, {"transport_mode": "websocket"}])
+async def test_explicit_browser_live_still_arms_without_a_startup_id(env, monkeypatch, config):
     from vauxr.speech import store as speech_store
 
     manager, ws, ctx = env
+    monkeypatch.setattr(server, "get_store", lambda: SimpleNamespace(
+        lifecycle={"bindings": {"dev": {"kind": "browser"}}}))
     monkeypatch.setattr(server, "current", lambda _: True)
-    monkeypatch.setattr(registry, "get_config_for", lambda _: {"transport_mode": "websocket"})
+    monkeypatch.setattr(registry, "get_config_for", lambda _: config)
     monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
         realtime=SimpleNamespace(enabled=True, host="vauxr.local")))
     monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
