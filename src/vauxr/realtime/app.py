@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 from typing import Any
 
 from aiohttp import web
@@ -22,6 +23,56 @@ from vauxr.web.server import transport_boundary
 
 log = logging.getLogger("vauxr.realtime")
 _media_authorities: dict[str, list[auth_connections.Connection]] = {}
+
+
+def restrict_aioice_host_candidates(host: str) -> bool:
+    """Gather ICE candidates only on the configured realtime interface.
+
+    Pipecat's ESP32 SDP cleanup removes candidates that do not match ``host``,
+    but aioice has already opened their UDP sockets by then. Those hidden
+    sockets still send connectivity checks, which esp_peer reports as unknown
+    remote ports. Restricting address discovery before peer construction keeps
+    the ICE agent and the SDP answer on the same single interface.
+    """
+    if not host:
+        return False
+
+    try:
+        import aioice.ice as aioice_ice
+    except ImportError:
+        log.warning("aioice not installed — skipping ICE host restriction")
+        return False
+
+    current = aioice_ice.get_host_addresses
+    original = getattr(current, "_vauxr_original", current)
+    try:
+        resolved = {
+            info[4][0]
+            for info in socket.getaddrinfo(host, None, family=socket.AF_INET, type=socket.SOCK_DGRAM)
+        }
+    except socket.gaierror as exc:
+        log.warning("Could not resolve REALTIME_HOST %r for ICE restriction: %s", host, exc)
+        return False
+
+    local_ipv4 = original(use_ipv4=True, use_ipv6=False)
+    selected = next((address for address in local_ipv4 if address in resolved), None)
+    if selected is None:
+        log.warning(
+            "REALTIME_HOST %r does not resolve to a local IPv4 address; "
+            "leaving aioice candidate gathering unchanged",
+            host,
+        )
+        return False
+
+    def _restricted(use_ipv4: bool, use_ipv6: bool) -> list[str]:
+        del use_ipv6
+        return [selected] if use_ipv4 else []
+
+    _restricted._vauxr_original = original  # type: ignore[attr-defined]
+    _restricted._vauxr_host = selected  # type: ignore[attr-defined]
+    aioice_ice.get_host_addresses = _restricted
+    log.info("Restricted aioice host candidates to %s", selected)
+    return True
 
 
 def broaden_aiortc_dtls_ciphers() -> None:
@@ -154,12 +205,13 @@ async def _offer_handler(request: web.Request) -> web.Response:
 
 
 def attach_realtime_routes(app: web.Application, agent_server: Any) -> None:
-    """Apply the cipher patch, configure the manager, and add the offer route."""
+    """Apply WebRTC compatibility patches, configure the manager, and add its route."""
     broaden_aiortc_dtls_ciphers()
     from vauxr.realtime.session import get_manager
 
-    get_manager().configure(agent_server)
     cfg = get_config().realtime
+    restrict_aioice_host_candidates(cfg.host)
+    get_manager().configure(agent_server)
     app.router.add_post(cfg.offer_path, _offer_handler)
     log.info(
         "Realtime WebRTC enabled: offer=%s esp32_mode=%s host=%r",
