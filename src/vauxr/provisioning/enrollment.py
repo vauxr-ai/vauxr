@@ -164,6 +164,12 @@ class Enrollment:
         if action not in fields or not isinstance(body, dict) or body.keys() != fields[action]:
             raise EnrollmentError("invalid_request")
         with self.store.transaction():
+            # Enrollment can run before background maintenance, or cross a
+            # recovery deadline between request and redemption. Finish old
+            # operations before either path reads the recovery association.
+            from vauxr.provisioning.lifecycle import Lifecycle
+
+            Lifecycle(self.store, self.origin).sweep()
             state = self._state()
             if action == "request":
                 if body["kind"] == "browser":
@@ -228,8 +234,6 @@ class Enrollment:
                 self._unowned(row)
                 token = "vx_dev_" + secrets.token_urlsafe(32)
                 credential = Credential(secrets.token_hex(16), Role.DEVICE, row["device_id"], verifier(token))
-                from vauxr.provisioning.lifecycle import Lifecycle
-
                 lifecycle = Lifecycle(self.store, self.origin)
                 records = lifecycle.replace_enrollment_credential(row, credential)
                 recovery = self.store.lifecycle["recovery"].get(row["device_id"])
