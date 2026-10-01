@@ -42,9 +42,34 @@ def load_device_display_name(data_dir: str, device_id: str) -> str | None:
 PipelineMode = Literal["standard", "realtime"]
 VALID_PIPELINE_MODES = frozenset({"standard", "realtime"})
 
+TransportMode = Literal["websocket", "webrtc"]
+
+VoiceMode = Literal["websocket", "webrtc", "realtime"]
+VALID_VOICE_MODES = frozenset({"websocket", "webrtc", "realtime"})
+
 
 def pipeline_mode(cfg: DeviceConfig | None) -> PipelineMode:
     return "realtime" if cfg and cfg.get("pipeline_mode") == "realtime" else "standard"
+
+
+def transport_mode(cfg: DeviceConfig | None) -> TransportMode:
+    # WebRTC remains the default so existing Standard devices keep the behavior
+    # introduced by the Standard WebRTC rollout until an owner opts them out.
+    return "websocket" if cfg and cfg.get("transport_mode") == "websocket" else "webrtc"
+
+
+def voice_mode(cfg: DeviceConfig | None) -> VoiceMode:
+    if transport_mode(cfg) == "websocket":
+        return "websocket"
+    return "realtime" if pipeline_mode(cfg) == "realtime" else "webrtc"
+
+
+def voice_mode_patch(mode: VoiceMode) -> DeviceConfig:
+    if mode == "websocket":
+        return {"transport_mode": "websocket", "pipeline_mode": "standard", "barge_in": False}
+    if mode == "realtime":
+        return {"transport_mode": "webrtc", "pipeline_mode": "realtime"}
+    return {"transport_mode": "webrtc", "pipeline_mode": "standard"}
 
 
 FollowUpMode = Literal["auto", "always", "never"]
@@ -57,7 +82,10 @@ VALID_ACTION_KINDS: frozenset[str] = frozenset(
 VALID_BUTTON_COMMANDS: frozenset[str] = frozenset({"set_volume", "mute", "unmute", "reboot"})
 
 KNOWN_FIELDS: frozenset[str] = frozenset(
-    {"pipeline_mode", "name", "voice", "follow_up_mode", "output_sample_rate", "barge_in", "button_actions"}
+    {
+        "pipeline_mode", "transport_mode", "name", "voice", "follow_up_mode",
+        "output_sample_rate", "barge_in", "button_actions",
+    }
 )
 
 
@@ -71,6 +99,7 @@ class ButtonAction(TypedDict, total=False):
 
 class DeviceConfig(TypedDict, total=False):
     pipeline_mode: PipelineMode
+    transport_mode: TransportMode
     name: str
     voice: bool
     follow_up_mode: FollowUpMode
@@ -162,6 +191,8 @@ def _sanitize_entry(device_id: str, raw: Any) -> DeviceConfig:
             continue
         if key == "pipeline_mode":
             cfg["pipeline_mode"] = "realtime" if value == "realtime" else "standard"
+        elif key == "transport_mode":
+            cfg["transport_mode"] = "websocket" if value == "websocket" else "webrtc"
         elif key == "name" and isinstance(value, str):
             cfg["name"] = value
         elif key == "voice" and isinstance(value, bool):

@@ -23,7 +23,15 @@ import vauxr.web.webhooks as webhooks
 from vauxr.auth.service import authenticate
 from vauxr.auth.policy import HTTP_OPERATIONS, UNSHIPPED, Operation, Principal, Role, allowed, audit_denial
 from vauxr.config import get_config
-from vauxr.devices.config import VALID_PIPELINE_MODES, pipeline_mode, VALID_FOLLOW_UP_MODES, parse_button_actions
+from vauxr.devices.config import (
+    VALID_FOLLOW_UP_MODES,
+    VALID_PIPELINE_MODES,
+    VALID_VOICE_MODES,
+    parse_button_actions,
+    pipeline_mode,
+    voice_mode,
+    voice_mode_patch,
+)
 from vauxr.provisioning.enrollment_http import attach_enrollment
 from vauxr.provisioning.integration_http import attach_integration
 from vauxr.provisioning.lifecycle_http import attach_lifecycle
@@ -126,7 +134,8 @@ def _device_dict(d) -> dict[str, Any]:
         "name": d.name,
         "state": d.state,
         "lastSeen": d.last_seen.isoformat().replace("+00:00", "Z"),
-        "config": {"pipeline_mode": pipeline_mode(d.config), **{k: v for k, v in d.config.items()
+        "config": {"pipeline_mode": pipeline_mode(d.config), "voice_mode": voice_mode(d.config),
+                   **{k: v for k, v in d.config.items()
                    if k in {"name", "voice", "follow_up_mode", "barge_in", "output_sample_rate",
                             "button_actions"}}},
     }
@@ -162,6 +171,12 @@ async def update_device(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
 
     patch: dict[str, Any] = {}
+    if "voice_mode" in body:
+        mode = body["voice_mode"]
+        if not isinstance(mode, str) or mode not in VALID_VOICE_MODES:
+            return web.json_response(
+                {"error": "voice_mode must be websocket | webrtc | realtime"}, status=400
+            )
     if "pipeline_mode" in body:
         mode = body["pipeline_mode"]
         if not isinstance(mode, str) or mode not in VALID_PIPELINE_MODES:
@@ -191,6 +206,11 @@ async def update_device(request: web.Request) -> web.Response:
         if err:
             return web.json_response({"error": err}, status=400)
         patch["button_actions"] = actions
+
+    if "voice_mode" in body:
+        # The combined selector owns its policy fields; legacy fields in the
+        # same request must not undo its transport/pipeline/barge-in invariants.
+        patch.update(voice_mode_patch(body["voice_mode"]))
 
     nxt = registry.update_config(device_id, patch)  # type: ignore[arg-type]
     if nxt.get("name"):

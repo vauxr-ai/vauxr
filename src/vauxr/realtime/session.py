@@ -5,9 +5,9 @@ A `RealtimeSession` owns one device's WebRTC media pipeline (STT -> agent LLM
 back over the device's existing WS connection so the firmware's LED state machine
 and follow_up handling work unchanged.
 
-Physical Live cold wake streams PCM over WS while WebRTC connects. A bounded
-startup buffer joins that finite segment to RTP at provider readiness. Legacy
-pre-roll/text-seed helpers remain available for the Standard pipeline.
+Physical cold wake streams PCM over WS while WebRTC connects. A bounded
+startup buffer joins that finite segment to RTP at the selected pipeline input
+rate. Standard uses STT/LLM/TTS; Live uses the provider-owned speech pipeline.
 """
 
 from __future__ import annotations
@@ -247,6 +247,7 @@ class RealtimeSession:
         from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
         from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
+        from vauxr.realtime.startup_input import StartupInput
         from vauxr.devices.settings import get_segmentation
         from vauxr.realtime.llm import AgentLLMService, OutputDrainTap
         from vauxr.realtime.turn import (
@@ -535,6 +536,7 @@ class RealtimeSession:
         pipeline = Pipeline(
             [
                 transport.input(),
+                StartupInput(self._startup),
                 _MicGate(),
                 _AudioMeter(),
                 stt,
@@ -551,13 +553,14 @@ class RealtimeSession:
 
         self._task = PipelineTask(
             pipeline,
-            params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
+            params=PipelineParams(enable_metrics=True, enable_usage_metrics=True, audio_in_sample_rate=16000),
         )
 
         @transport.event_handler("on_client_connected")
         async def _on_connected(_t, _c) -> None:
             log.info("realtime[%s]: WebRTC client connected", self.device_id)
             self._pipeline_ready.set()
+            await self._send_control({"type": "realtime.ready"})
 
         @transport.event_handler("on_client_disconnected")
         async def _on_disconnected(_t, _c) -> None:
@@ -1304,16 +1307,20 @@ class RealtimeManager:
 
     async def stop_all(self) -> None:
         """Retire media and armed wakes when their active integration is revoked."""
-        results = await asyncio.gather(*(self.stop(device_id)
-                                         for device_id in set(self._sessions) | set(self._preroll) | self._live_devices),
-                                       return_exceptions=True)
+        device_ids = (
+            set(self._sessions) | set(self._preroll)
+            | self._live_devices | set(self._device_wakes)
+        )
+        results = await asyncio.gather(
+            *(self.stop(device_id) for device_id in device_ids), return_exceptions=True,
+        )
         if any(isinstance(result, BaseException) for result in results):
             raise RuntimeError("transport_teardown_unavailable")
 
     async def stop(self, device_id: str) -> None:
         await self._stop_wake(device_id, notify=False)
 
-    def begin_startup(self, device_id: str, startup: Any) -> None:
+    def begin_startup(self, device_id: str, startup: Any, *, live: bool = True) -> None:
         """Bind admission and PCM ownership to this exact cold wake."""
         previous = self._startups.get(device_id)
         if previous is not None:
@@ -1321,11 +1328,15 @@ class RealtimeManager:
         self._wake_generations[device_id] = object()
         self._device_wakes[device_id] = self._wake_generations[device_id]
         self._startups[device_id] = startup
-        self._live_devices.add(device_id)
+        if live:
+            self._live_devices.add(device_id)
+        else:
+            self._live_devices.discard(device_id)
 
     def can_accept_offer(self, device_id: str) -> bool:
         """Whether an /api/offer for this device_id is tied to a real wake."""
-        return device_id in self._preroll or device_id in self._sessions or device_id in self._live_devices
+        return (device_id in self._preroll or device_id in self._sessions
+                or device_id in self._live_devices or device_id in self._device_wakes)
 
     def _request_handler(self) -> Any:
         if self._handler is None:

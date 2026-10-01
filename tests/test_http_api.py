@@ -77,7 +77,7 @@ async def test_devices_lists_registered(client: TestClient) -> None:
             "name": "Kitchen",
             "state": "listening",
             "lastSeen": "2026-05-17T12:00:00Z",
-            "config": {"pipeline_mode": "standard"},
+            "config": {"pipeline_mode": "standard", "voice_mode": "webrtc"},
         }
     ]
 
@@ -119,3 +119,62 @@ async def test_pipeline_mode_patch_persists(client):
     assert (await response.json())["config"]["pipeline_mode"] == "realtime"
     registry.load_configs()
     assert registry.get_config_for("mode-test")["pipeline_mode"] == "realtime"
+
+
+@pytest.mark.parametrize("value", [None, True, 1, [], {}, "standard", "WebRTC", "unknown"])
+async def test_voice_mode_strict_validation(client, value):
+    registry.register("mode-test", ws=None)
+    response = await client.patch(
+        "/api/devices/mode-test", json={"voice_mode": value}, headers=owner_headers(client)
+    )
+    assert response.status == 400
+    assert registry.get_config_for("mode-test") == {}
+
+
+@pytest.mark.parametrize(
+    "mode, expected",
+    [
+        ("websocket", {"transport_mode": "websocket", "pipeline_mode": "standard", "barge_in": False}),
+        ("webrtc", {"transport_mode": "webrtc", "pipeline_mode": "standard"}),
+        ("realtime", {"transport_mode": "webrtc", "pipeline_mode": "realtime"}),
+    ],
+)
+async def test_voice_mode_patch_persists_atomic_device_policy(client, mode, expected):
+    registry.register("mode-test", ws=None)
+    response = await client.patch(
+        "/api/devices/mode-test", json={"voice_mode": mode}, headers=owner_headers(client)
+    )
+    assert response.status == 200
+    assert (await response.json())["config"]["voice_mode"] == mode
+    registry.load_configs()
+    assert registry.get_config_for("mode-test") == expected
+
+
+@pytest.mark.parametrize(
+    "mode, legacy_pipeline, expected_pipeline, expected_barge_in",
+    [
+        ("websocket", "realtime", "standard", False),
+        ("webrtc", "realtime", "standard", True),
+        ("realtime", "standard", "realtime", True),
+    ],
+)
+async def test_voice_mode_takes_precedence_over_overlapping_fields(
+    client, mode, legacy_pipeline, expected_pipeline, expected_barge_in,
+):
+    registry.register("mode-test", ws=None)
+    response = await client.patch(
+        "/api/devices/mode-test",
+        json={"voice_mode": mode, "pipeline_mode": legacy_pipeline, "barge_in": True},
+        headers=owner_headers(client),
+    )
+    assert response.status == 200
+    config = (await response.json())["config"]
+    assert config["voice_mode"] == mode
+    assert config["pipeline_mode"] == expected_pipeline
+    assert config["barge_in"] is expected_barge_in
+    registry.load_configs()
+    assert registry.get_config_for("mode-test") == {
+        "transport_mode": "websocket" if mode == "websocket" else "webrtc",
+        "pipeline_mode": expected_pipeline,
+        "barge_in": expected_barge_in,
+    }

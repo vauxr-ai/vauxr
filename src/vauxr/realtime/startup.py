@@ -10,7 +10,11 @@ class StartupAudio:
     MAX_AUDIO_SECONDS = 15
     TIMEOUT_SECONDS = 20.0
 
-    def __init__(self, startup_id: int, fail: Callable[[str], Awaitable[None]]) -> None:
+    def __init__(self, startup_id: int, fail: Callable[[str], Awaitable[None]],
+                 *, input_rate: int = 24000) -> None:
+        if input_rate not in (16000, 24000):
+            raise ValueError("Unsupported startup input rate")
+        self.input_rate = input_rate
         self.id = startup_id
         self.closed = False
         self.complete = False
@@ -98,15 +102,18 @@ class StartupAudio:
         try:
             # Flush the entire finite WS segment through a batch resampler. A
             # streaming resampler would retain its tail when input switches to
-            # RTP's already-resampled 24 kHz frames.
-            pcm = await SOXRAudioResampler().resample(bytes(self._ws), 16000, 24000) if self._ws else b""
+            # RTP's already-resampled pipeline-rate frames.
+            pcm = bytes(self._ws)
+            if pcm and self.input_rate != 16000:
+                pcm = await SOXRAudioResampler().resample(pcm, 16000, self.input_rate)
             self._ws.clear()
-            for offset in range(0, len(pcm), 960):
+            chunk_bytes = self.input_rate * 2 * 20 // 1000
+            for offset in range(0, len(pcm), chunk_bytes):
                 if self.closed:
                     return
                 await self._consume(InputAudioRawFrame(
-                    audio=pcm[offset:offset + 960], sample_rate=24000, num_channels=1))
-            self._bytes_24k -= len(pcm)
+                    audio=pcm[offset:offset + chunk_bytes], sample_rate=self.input_rate, num_channels=1))
+            self._bytes_24k -= len(pcm) * 24000 // self.input_rate
             while self._rtp and not self.closed:
                 frame = self._rtp.popleft()
                 await self._consume(frame)

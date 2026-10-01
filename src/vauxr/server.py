@@ -23,7 +23,7 @@ from vauxr.auth.service import authenticate, current, get_store
 from vauxr.auth.policy import WS_OPERATIONS, Operation, Principal, allowed, audit_denial
 from vauxr.agents.server import AgentServer
 from vauxr.config import get_config
-from vauxr.devices.config import pipeline_mode
+from vauxr.devices.config import pipeline_mode, transport_mode
 from vauxr.devices.settings import realtime_policy_extras
 from vauxr.web.server import (
     attach_http_routes,
@@ -203,8 +203,14 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
     # REALTIME_HOST, ICE is unreliable, so fall back to ws rather than advertise
     # a broken policy.
     mode = pipeline_mode(registry.get_config_for(ctx.device_id or ""))
-    webrtc_ok = mode == "realtime" and rt.enabled and "webrtc" in caps_list and bool(rt.host)
-    if rt.enabled and "webrtc" in caps_list and not rt.host:
+    selected_transport = transport_mode(registry.get_config_for(ctx.device_id or ""))
+    webrtc_ok = (
+        selected_transport == "webrtc"
+        and rt.enabled
+        and "webrtc" in caps_list
+        and bool(rt.host)
+    )
+    if selected_transport == "webrtc" and rt.enabled and "webrtc" in caps_list and not rt.host:
         log.warning(
             "realtime: %s is webrtc-capable but REALTIME_HOST is unset — falling back to ws",
             msg.get("device_id"),
@@ -238,7 +244,7 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
             "offer_url": offer_url,
             "stun": rt.stun_url,
             "startup": "ws_pcm_v1",
-            "voice_source": "live_voice_settings",
+            "voice_source": "live_voice_settings" if mode == "realtime" else "speech_settings",
             **realtime_policy_extras(device_key),
         }
 
@@ -402,7 +408,7 @@ def _voice_abort(ctx: ConnectionCtx) -> None:
 async def _realtime_start(
     state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]
 ) -> None:
-    """Arm Live immediately; physical devices stream WS PCM while it connects."""
+    """Arm the selected pipeline; buffer physical WS PCM while WebRTC connects."""
     device_id = ctx.device_id
     # Realtime must actually be reachable server-side before we arm pre-roll: the
     # /api/offer endpoint only exists when REALTIME_ENABLED=1 and REALTIME_HOST is
@@ -410,21 +416,29 @@ async def _realtime_start(
     # would strand the device in "listening" with no WebRTC path — the first
     # utterance gets buffered and never processed until it disconnects.
     rt = get_config().realtime
-    if not (rt.enabled and rt.host and (msg.get("mode") == "live"
-            or pipeline_mode(registry.get_config_for(device_id)) == "realtime")):
+    selected_transport = transport_mode(registry.get_config_for(device_id))
+    explicit_live = msg.get("mode") == "live"
+    # The Live flag is client-controlled. Only a durable browser enrollment
+    # may use it to override the selected physical-device transport policy.
+    browser_live = (
+        explicit_live and selected_transport == "websocket"
+        and get_store().lifecycle.get("bindings", {}).get(device_id, {}).get("kind") == "browser"
+    )
+    if not (rt.enabled and rt.host and (selected_transport == "webrtc" or browser_live)):
         await send_json(
             ws,
             {
                 "type": "error",
                 "code": "REALTIME_UNAVAILABLE",
-                "message": "Realtime transport is not enabled",
+                "message": "Realtime transport is not enabled for this device",
             },
         )
         log.warning(
-            "realtime.start from %s rejected — realtime unavailable (enabled=%s host=%r)",
+            "realtime.start from %s rejected — realtime unavailable (enabled=%s host=%r transport=%s)",
             device_id,
             rt.enabled,
             bool(rt.host),
+            selected_transport,
         )
         return
 
@@ -452,7 +466,6 @@ async def _realtime_start(
         return
 
     persisted_live = pipeline_mode(registry.get_config_for(device_id)) == "realtime"
-    explicit_live = msg.get("mode") == "live"
     if explicit_live or persisted_live:
         import os
         from vauxr.speech.store import get_store as speech_store
@@ -461,19 +474,19 @@ async def _realtime_start(
             await send_json(ws, {"type": "error", "code": "REALTIME_UNAVAILABLE",
                                 "message": "Select Realtime in speech settings and configure the server OpenAI key"})
             return
-        ctx.startup = None  # Retire old failure callbacks before teardown yields.
-        await manager.stop(device_id)
-        entry = registry.get(device_id)
-        if not current(ctx.principal) or entry is None or entry.ws is not ws:
-            await ws.close()
-            return
-        ctx.realtime = True
+    ctx.startup = None  # Retire old failure callbacks before teardown yields.
+    await manager.stop(device_id)
+    entry = registry.get(device_id)
+    if not current(ctx.principal) or entry is None or entry.ws is not ws:
+        await ws.close()
+        return
+    ctx.realtime = True
+    if explicit_live:
         manager._live_devices.add(device_id)
-        if explicit_live:
-            ctx.realtime_media = True
-            registry.set_state(device_id, "listening")
-            await send_json(ws, {"type": "realtime.armed"})
-            return
+        ctx.realtime_media = True
+        registry.set_state(device_id, "listening")
+        await send_json(ws, {"type": "realtime.armed"})
+        return
 
     ctx.realtime_media = False
     startup_id = msg.get("startup_id")
@@ -495,9 +508,9 @@ async def _realtime_start(
         if ctx.startup is startup and manager._startups.get(device_id) is startup:
             await _realtime_stop(ctx)
 
-    startup = StartupAudio(startup_id, failed)
+    startup = StartupAudio(startup_id, failed, input_rate=24000 if persisted_live else 16000)
     ctx.startup = startup
-    manager.begin_startup(device_id, startup)
+    manager.begin_startup(device_id, startup, live=persisted_live)
     ctx.audio_chunks = []
     ctx.state = ConnectionState.LISTENING
     registry.set_state(device_id, "listening")

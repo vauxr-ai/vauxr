@@ -54,23 +54,94 @@ async def test_interrupted_standard_cleanup_does_not_reset_new_capture(env, monk
     assert ctx.state == server.ConnectionState.LISTENING
 
 
-async def test_hello_standard_default_even_when_server_supports_realtime(env, monkeypatch):
+@pytest.mark.parametrize("enabled,host,caps,webrtc", [
+    (True, "vauxr.local", ["webrtc"], True),
+    (False, "vauxr.local", ["webrtc"], False),
+    (True, "", ["webrtc"], False),
+    (True, "vauxr.local", ["ws"], False),
+])
+async def test_standard_transport_policy(env, monkeypatch, enabled, host, caps, webrtc):
+    import vauxr.auth.owner as owner
     _, ws, ctx = env
+    monkeypatch.setattr(owner, "configured_origin", lambda: "https://vauxr.test")
     monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
-        realtime=SimpleNamespace(enabled=True, host="vauxr.local")))
+        realtime=SimpleNamespace(enabled=enabled, host=host, offer_path="/api/offer", stun_url="")))
+    await server._hello(ws, ctx, {"caps": caps})
+    hello = json.loads(ws.send_str.call_args.args[0])
+    assert hello["pipeline_mode"] == "standard"
+    assert hello["realtime"]["enabled"] is webrtc
+    assert hello["realtime"]["transport"] == ("webrtc" if webrtc else "ws")
+
+
+async def test_websocket_device_policy_opts_out_of_available_webrtc(env, monkeypatch):
+    import vauxr.auth.owner as owner
+    _, ws, ctx = env
+    monkeypatch.setattr(registry, "get_config_for", lambda _: {"transport_mode": "websocket"})
+    monkeypatch.setattr(owner, "configured_origin", lambda: "https://vauxr.test")
+    monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
+        realtime=SimpleNamespace(enabled=True, host="vauxr.local", offer_path="/api/offer", stun_url="")))
     await server._hello(ws, ctx, {"caps": ["webrtc"]})
     hello = json.loads(ws.send_str.call_args.args[0])
     assert hello["pipeline_mode"] == "standard"
     assert hello["realtime"] == {"enabled": False, "transport": "ws"}
 
 
-async def test_standard_mode_cannot_arm_realtime(env, monkeypatch):
+async def test_standard_webrtc_requires_streaming_startup_id(env, monkeypatch):
     manager, ws, ctx = env
+    monkeypatch.setattr(server, "current", lambda _: True)
     monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
         realtime=SimpleNamespace(enabled=True, host="vauxr.local")))
     await server._realtime_start(server.AppState(), ws, ctx, {})
     assert not ctx.realtime
     assert not manager.can_accept_offer("dev")
+    assert json.loads(ws.send_str.call_args.args[0])["code"] == "REALTIME_STARTUP_REQUIRED"
+
+
+@pytest.mark.parametrize("kind, message", [
+    ("physical", {"startup_id": 1}),
+    ("physical", {"mode": "live"}),
+    (None, {"startup_id": 1}),
+    (None, {"mode": "live"}),
+    ("browser", {"startup_id": 1}),
+])
+async def test_websocket_policy_rejects_device_realtime_start(env, monkeypatch, kind, message):
+    manager, ws, ctx = env
+    binding = {} if kind is None else {"dev": {"kind": kind}}
+    monkeypatch.setattr(server, "get_store", lambda: SimpleNamespace(lifecycle={"bindings": binding}))
+    monkeypatch.setattr(server, "current", lambda _: True)
+    monkeypatch.setattr(registry, "get_config_for", lambda _: {"transport_mode": "websocket"})
+    monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
+        realtime=SimpleNamespace(enabled=True, host="vauxr.local")))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
+    from vauxr.speech import store as speech_store
+    monkeypatch.setattr(speech_store, "get_store", lambda: SimpleNamespace(
+        voice_settings=lambda _: {"mode": "realtime"}))
+    await server._realtime_start(server.AppState(), ws, ctx, message)
+    assert json.loads(ws.send_str.call_args.args[0])["code"] == "REALTIME_UNAVAILABLE"
+    assert not ctx.realtime and ctx.startup is None
+    assert not manager.can_accept_offer("dev")
+    assert registry.get("dev").state == "idle"
+
+
+@pytest.mark.parametrize("config", [{}, {"transport_mode": "websocket"}])
+async def test_explicit_browser_live_still_arms_without_a_startup_id(env, monkeypatch, config):
+    from vauxr.speech import store as speech_store
+
+    manager, ws, ctx = env
+    monkeypatch.setattr(server, "get_store", lambda: SimpleNamespace(
+        lifecycle={"bindings": {"dev": {"kind": "browser"}}}))
+    monkeypatch.setattr(server, "current", lambda _: True)
+    monkeypatch.setattr(registry, "get_config_for", lambda _: config)
+    monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
+        realtime=SimpleNamespace(enabled=True, host="vauxr.local")))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(speech_store, "get_store", lambda: SimpleNamespace(
+        voice_settings=lambda _: {"mode": "realtime"}))
+    await server._realtime_start(server.AppState(), ws, ctx, {"mode": "live"})
+    assert json.loads(ws.send_str.call_args.args[0]) == {"type": "realtime.armed"}
+    assert ctx.realtime and ctx.realtime_media and ctx.startup is None
+    assert manager.can_accept_offer("dev") and "dev" in manager._live_devices
+    await manager.stop_all()
 
 
 async def test_dropped_active_peer_allows_next_standard_speech(env):

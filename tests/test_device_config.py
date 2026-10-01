@@ -10,6 +10,8 @@ from vauxr.devices.config import (
     device_config_path,
     load_device_configs,
     save_device_configs,
+    voice_mode,
+    voice_mode_patch,
 )
 
 
@@ -33,6 +35,7 @@ def test_round_trip_preserves_known_fields(tmp_path: Path) -> None:
             "name": "Kitchen",
             "voice": True,
             "follow_up_mode": "always",
+            "transport_mode": "websocket",
             "output_sample_rate": 24000,
             "barge_in": False,
             "button_actions": {
@@ -79,6 +82,29 @@ def test_barge_in_enabled_defaults_true() -> None:
     assert barge_in_enabled({}) is True
     assert barge_in_enabled({"barge_in": True}) is True
     assert barge_in_enabled({"barge_in": False}) is False
+
+
+def test_voice_mode_derives_the_three_supported_device_modes() -> None:
+    assert voice_mode(None) == "webrtc"
+    assert voice_mode({"transport_mode": "websocket", "pipeline_mode": "realtime"}) == "websocket"
+    assert voice_mode({"transport_mode": "webrtc", "pipeline_mode": "standard"}) == "webrtc"
+    assert voice_mode({"transport_mode": "webrtc", "pipeline_mode": "realtime"}) == "realtime"
+
+
+def test_voice_mode_patch_is_atomic_and_websocket_disables_barge_in() -> None:
+    assert voice_mode_patch("websocket") == {
+        "transport_mode": "websocket",
+        "pipeline_mode": "standard",
+        "barge_in": False,
+    }
+    assert voice_mode_patch("webrtc") == {
+        "transport_mode": "webrtc",
+        "pipeline_mode": "standard",
+    }
+    assert voice_mode_patch("realtime") == {
+        "transport_mode": "webrtc",
+        "pipeline_mode": "realtime",
+    }
 
 
 def test_invalid_output_sample_rate_dropped(tmp_path: Path) -> None:
