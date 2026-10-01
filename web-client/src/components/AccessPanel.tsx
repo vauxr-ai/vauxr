@@ -60,9 +60,13 @@ export default function AccessPanel() {
       setBusy(false);
     }
   }
-  async function refresh() {
+  async function refreshPairs(): Promise<Pair[]> {
     const p = await ownerPost("/api/enrollment/v1/list");
     setPairs(p.requests);
+    return p.requests;
+  }
+  async function refresh() {
+    await refreshPairs();
     const d = await jsonResponse(await ownerFetch("/api/devices"));
     setDevices(Array.isArray(d) ? d : d.devices);
     setAgents(await jsonResponse(await ownerFetch("/api/agents")));
@@ -135,15 +139,29 @@ export default function AccessPanel() {
             busy={busy}
             act={(action, code) =>
               run(async () => {
-                if (action === "approve" && p.status === "ready") {
-                  await ownerPost("/api/enrollment/v1/initiate", {
-                    request_id: p.request_id, code,
+                try {
+                  if (action === "approve") {
+                    // A previous request may have committed even if its response
+                    // was lost. Reconcile before deciding whether to initiate.
+                    const current = (await refreshPairs()).find(
+                      (pair) => pair.request_id === p.request_id,
+                    );
+                    if (current?.status === "ready") {
+                      await ownerPost("/api/enrollment/v1/initiate", {
+                        request_id: p.request_id, code,
+                      });
+                    }
+                  }
+                  await ownerPost(`/api/enrollment/v1/${action}`, {
+                    request_id: p.request_id,
+                    ...(code ? { code } : {}),
                   });
+                } catch (error) {
+                  // Keep the original action error if the status refresh also
+                  // fails. The next click will fetch fresh status before acting.
+                  await refreshPairs().catch(() => {});
+                  throw error;
                 }
-                await ownerPost(`/api/enrollment/v1/${action}`, {
-                  request_id: p.request_id,
-                  ...(code ? { code } : {}),
-                });
                 await refresh();
               })
             }

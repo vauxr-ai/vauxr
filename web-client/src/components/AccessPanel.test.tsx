@@ -125,6 +125,59 @@ it("does not approve after initiation fails or retain the entered code", async (
   expect(vi.mocked(ownerPost).mock.calls.filter(([path]) => path.endsWith("/approve"))).toHaveLength(0);
 });
 
+it.each(["approval", "initiation response", "approval and refresh"])(
+  "reconciles pairing status and retries after a failed %s",
+  async (failure) => {
+    let status = "ready";
+    let failed = false;
+    let refreshFailed = false;
+    const calls: string[] = [];
+    vi.mocked(ownerPost).mockImplementation(async (path, body = {}) => {
+      if (path.endsWith("/list")) {
+        if (failure === "approval and refresh" && failed && !refreshFailed) {
+          refreshFailed = true;
+          throw new Error("Status unavailable");
+        }
+        return { requests: [{ request_id: "r", device_id: "d",
+          display_name: "Speaker", kind: "physical", status,
+          expires_at: Date.now() / 1000 + 300 }] };
+      }
+      calls.push(path);
+      expect(body).toEqual({ request_id: "r", code: "0012" });
+      if (path.endsWith("/initiate")) {
+        if (status !== "ready") throw new Error("Already initiated");
+        status = "initiated";
+        if (failure === "initiation response" && !failed) {
+          failed = true;
+          throw new Error("Pairing temporarily unavailable");
+        }
+      } else if (path.endsWith("/approve")) {
+        if (!failed) {
+          failed = true;
+          throw new Error("Pairing temporarily unavailable");
+        }
+        status = "approved";
+      } else throw new Error("Unexpected endpoint");
+      return {};
+    });
+    const user = userEvent.setup();
+    render(<AccessPanel />);
+    async function approve() {
+      await user.type(await screen.findByLabelText("Spoken four-digit code"), "0012");
+      await user.click(screen.getByRole("checkbox"));
+      await user.click(screen.getByText("Approve matching speaker"));
+    }
+    await approve();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Pairing temporarily unavailable");
+    expect(screen.getByLabelText("Spoken four-digit code")).toHaveValue("");
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    await approve();
+    await waitFor(() => expect(screen.queryByLabelText("Spoken four-digit code")).not.toBeInTheDocument());
+    expect(calls.filter((path) => path.endsWith("/initiate"))).toHaveLength(1);
+    expect(status).toBe("approved");
+  },
+);
+
 it("loads and saves configurable pairing messages", async () => {
   vi.mocked(ownerPost).mockImplementation(async (path, body = {}) => {
     if (path.endsWith("/list")) return { requests: [] };
