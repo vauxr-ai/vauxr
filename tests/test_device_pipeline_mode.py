@@ -97,14 +97,13 @@ async def test_standard_webrtc_requires_streaming_startup_id(env, monkeypatch):
     assert json.loads(ws.send_str.call_args.args[0])["code"] == "REALTIME_STARTUP_REQUIRED"
 
 
-@pytest.mark.parametrize("message", [{"startup_id": 1}, {"mode": "live"}])
-async def test_websocket_policy_rejects_realtime_start(env, monkeypatch, message):
+async def test_websocket_policy_rejects_device_realtime_start(env, monkeypatch):
     manager, ws, ctx = env
     monkeypatch.setattr(server, "current", lambda _: True)
     monkeypatch.setattr(registry, "get_config_for", lambda _: {"transport_mode": "websocket"})
     monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
         realtime=SimpleNamespace(enabled=True, host="vauxr.local")))
-    await server._realtime_start(server.AppState(), ws, ctx, message)
+    await server._realtime_start(server.AppState(), ws, ctx, {"startup_id": 1})
     assert json.loads(ws.send_str.call_args.args[0])["code"] == "REALTIME_UNAVAILABLE"
     assert not ctx.realtime and ctx.startup is None
     assert not manager.can_accept_offer("dev")
@@ -116,6 +115,7 @@ async def test_explicit_browser_live_still_arms_without_a_startup_id(env, monkey
 
     manager, ws, ctx = env
     monkeypatch.setattr(server, "current", lambda _: True)
+    monkeypatch.setattr(registry, "get_config_for", lambda _: {"transport_mode": "websocket"})
     monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
         realtime=SimpleNamespace(enabled=True, host="vauxr.local")))
     monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")

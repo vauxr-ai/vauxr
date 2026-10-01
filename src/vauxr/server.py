@@ -417,7 +417,8 @@ async def _realtime_start(
     # utterance gets buffered and never processed until it disconnects.
     rt = get_config().realtime
     selected_transport = transport_mode(registry.get_config_for(device_id))
-    if not (rt.enabled and rt.host and selected_transport == "webrtc"):
+    explicit_live = msg.get("mode") == "live"
+    if not (rt.enabled and rt.host and (selected_transport == "webrtc" or explicit_live)):
         await send_json(
             ws,
             {
@@ -459,7 +460,6 @@ async def _realtime_start(
         return
 
     persisted_live = pipeline_mode(registry.get_config_for(device_id)) == "realtime"
-    explicit_live = msg.get("mode") == "live"
     if explicit_live or persisted_live:
         import os
         from vauxr.speech.store import get_store as speech_store
