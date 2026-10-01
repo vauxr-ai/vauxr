@@ -1307,9 +1307,13 @@ class RealtimeManager:
 
     async def stop_all(self) -> None:
         """Retire media and armed wakes when their active integration is revoked."""
-        results = await asyncio.gather(*(self.stop(device_id)
-                                         for device_id in set(self._sessions) | set(self._preroll) | self._live_devices | set(self._device_wakes)),
-                                       return_exceptions=True)
+        device_ids = (
+            set(self._sessions) | set(self._preroll)
+            | self._live_devices | set(self._device_wakes)
+        )
+        results = await asyncio.gather(
+            *(self.stop(device_id) for device_id in device_ids), return_exceptions=True,
+        )
         if any(isinstance(result, BaseException) for result in results):
             raise RuntimeError("transport_teardown_unavailable")
 

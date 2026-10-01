@@ -82,7 +82,10 @@ VALID_ACTION_KINDS: frozenset[str] = frozenset(
 VALID_BUTTON_COMMANDS: frozenset[str] = frozenset({"set_volume", "mute", "unmute", "reboot"})
 
 KNOWN_FIELDS: frozenset[str] = frozenset(
-    {"pipeline_mode", "transport_mode", "name", "voice", "follow_up_mode", "output_sample_rate", "barge_in", "button_actions"}
+    {
+        "pipeline_mode", "transport_mode", "name", "voice", "follow_up_mode",
+        "output_sample_rate", "barge_in", "button_actions",
+    }
 )
 
 

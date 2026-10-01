@@ -416,20 +416,22 @@ async def _realtime_start(
     # would strand the device in "listening" with no WebRTC path — the first
     # utterance gets buffered and never processed until it disconnects.
     rt = get_config().realtime
-    if not (rt.enabled and rt.host):
+    selected_transport = transport_mode(registry.get_config_for(device_id))
+    if not (rt.enabled and rt.host and selected_transport == "webrtc"):
         await send_json(
             ws,
             {
                 "type": "error",
                 "code": "REALTIME_UNAVAILABLE",
-                "message": "Realtime transport is not enabled",
+                "message": "Realtime transport is not enabled for this device",
             },
         )
         log.warning(
-            "realtime.start from %s rejected — realtime unavailable (enabled=%s host=%r)",
+            "realtime.start from %s rejected — realtime unavailable (enabled=%s host=%r transport=%s)",
             device_id,
             rt.enabled,
             bool(rt.host),
+            selected_transport,
         )
         return
 

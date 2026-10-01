@@ -177,7 +177,6 @@ async def update_device(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "voice_mode must be websocket | webrtc | realtime"}, status=400
             )
-        patch.update(voice_mode_patch(mode))
     if "pipeline_mode" in body:
         mode = body["pipeline_mode"]
         if not isinstance(mode, str) or mode not in VALID_PIPELINE_MODES:
@@ -207,6 +206,11 @@ async def update_device(request: web.Request) -> web.Response:
         if err:
             return web.json_response({"error": err}, status=400)
         patch["button_actions"] = actions
+
+    if "voice_mode" in body:
+        # The combined selector owns its policy fields; legacy fields in the
+        # same request must not undo its transport/pipeline/barge-in invariants.
+        patch.update(voice_mode_patch(body["voice_mode"]))
 
     nxt = registry.update_config(device_id, patch)  # type: ignore[arg-type]
     if nxt.get("name"):
