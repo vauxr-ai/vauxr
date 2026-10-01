@@ -80,6 +80,14 @@ class Lifecycle:
                     records = self._retire(state, ids, records)
                     row["state"] = "expired"
                     changed = True
+            # Retain operation history for idempotent status/ACK retries, but
+            # never let later enrollment revive a finished recovery operation.
+            # Also repair terminal pointers persisted by older server versions.
+            for subject, recovery in list(state["recovery"].items()):
+                operation = state["operations"][recovery["operation_id"]]
+                if operation["state"] in TERMINAL:
+                    del state["recovery"][subject]
+                    changed = True
             if changed:
                 self._save(state, records, self._invalidate_approvals(retired))
 

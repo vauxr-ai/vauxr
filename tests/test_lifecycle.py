@@ -963,3 +963,79 @@ async def test_live_start_rechecks_authority_after_teardown(env, monkeypatch, tm
         await manager.stop("speaker")
         device_registry.reset()
         config.reset_config()
+
+
+
+@pytest.mark.parametrize("phase", ["queued", "pending", "delivered", "completed"])
+@pytest.mark.parametrize("swept", [False, True])
+def test_repair_after_interrupted_or_completed_recovery(env, monkeypatch, phase, swept):
+    service, enrollment, owner = env
+    now = [lifecycle.time.time()]
+    monkeypatch.setattr(lifecycle.time, "time", lambda: now[0])
+    key, row, code = ready(enrollment)
+    approve(enrollment, row, code, owner)
+    original = enrollment.execute("redeem", signed(key, row, "redeem"))
+    recovery = control(service, owner, action="recover", subject=row["device_id"])
+    lost = None
+    if phase != "queued":
+        _, interrupted = request(enrollment, owner, key=key)
+        code = enrollment.execute("prove", signed(key, interrupted, "prove"))["code"]
+        if phase != "pending":
+            approve(enrollment, interrupted, code, owner)
+            lost = enrollment.execute("redeem", signed(key, interrupted, "redeem"))
+            if phase == "completed":
+                service.execute("ack", {"operation_id": recovery["operation_id"], "saved": True},
+                                client(service, token=lost["device_token"]))
+                service.sweep()
+    now[0] += 301
+    if swept:
+        service.sweep()
+        # Model a snapshot written by the old server: terminal history still
+        # has a recovery pointer. Upgrade must clean this without erasing history.
+        with service.store.transaction():
+            service.store.lifecycle["recovery"][row["device_id"]] = {
+                "operation_id": recovery["operation_id"], "request_id": "",
+            }
+            service.store.replace(service.store.records)
+    service.store.load()  # A power interruption/server restart cannot renew recovery.
+    _, fresh = request(enrollment, owner, key=key)
+    code = enrollment.execute("prove", signed(key, fresh, "prove"))["code"]
+    approve(enrollment, fresh, code, owner)
+    result = enrollment.execute("redeem", signed(key, fresh, "redeem"))
+    assert "operation_id" not in result
+    assert "save_required" not in result
+    service.sweep()
+    service.store.load()
+    assert result["device_id"] == original["device_id"]
+    assert service.store.authenticate(result["device_token"])
+    assert not service.store.authenticate(original["device_token"])
+    if lost:
+        assert not service.store.authenticate(lost["device_token"])
+    assert service.execute("poll", {}, client(service, token=result["device_token"])) == {
+        "version": 1, "state": "idle",
+    }
+    assert row["device_id"] not in service.store.lifecycle["recovery"]
+    assert service.store.lifecycle["operations"][recovery["operation_id"]]["state"] == (
+        "completed" if phase == "completed" else "expired"
+    )
+
+
+def test_recovery_expires_during_fresh_pairing_approval(env, monkeypatch):
+    service, enrollment, owner = env
+    now = [lifecycle.time.time()]
+    monkeypatch.setattr(lifecycle.time, "time", lambda: now[0])
+    key, row, code = ready(enrollment)
+    approve(enrollment, row, code, owner)
+    enrollment.execute("redeem", signed(key, row, "redeem"))
+    recovery = control(service, owner, action="recover", subject=row["device_id"])
+    now[0] += 200
+    _, fresh = request(enrollment, owner, key=key)
+    code = enrollment.execute("prove", signed(key, fresh, "prove"))["code"]
+    approve(enrollment, fresh, code, owner)
+    now[0] += 101  # Recovery expired, but fresh physical/code approval is valid.
+    result = enrollment.execute("redeem", signed(key, fresh, "redeem"))
+    assert "operation_id" not in result
+    service.sweep()
+    service.store.load()
+    assert service.store.authenticate(result["device_token"])
+    assert service.store.lifecycle["operations"][recovery["operation_id"]]["state"] == "expired"
