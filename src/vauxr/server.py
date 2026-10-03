@@ -16,15 +16,21 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
-import vauxr.auth.connections as auth_connections
 import vauxr.agents.registry as agent_registry
+import vauxr.auth.connections as auth_connections
 import vauxr.devices.registry as registry
-from vauxr.auth.service import authenticate, current, get_store
-from vauxr.auth.policy import WS_OPERATIONS, Operation, Principal, allowed, audit_denial
+from vauxr.agents.openclaw import OpenClawClient
 from vauxr.agents.server import AgentServer
+from vauxr.auth.policy import WS_OPERATIONS, Operation, Principal, allowed, audit_denial
+from vauxr.auth.service import authenticate, current, get_store
 from vauxr.config import get_config
 from vauxr.devices.config import pipeline_mode, transport_mode
 from vauxr.devices.settings import realtime_policy_extras
+from vauxr.pipeline import run_voice_turn
+from vauxr.protocol import encode_text_message, parse_text_message
+from vauxr.speech.store import Selection, resolve
+from vauxr.speech.store import get_store as get_speech_store
+from vauxr.web.owner import owner_middleware
 from vauxr.web.server import (
     attach_http_routes,
     cors_middleware,
@@ -32,12 +38,6 @@ from vauxr.web.server import (
     serve_static,
     transport_boundary,
 )
-from vauxr.agents.openclaw import OpenClawClient
-from vauxr.web.owner import owner_middleware
-from vauxr.pipeline import run_voice_turn
-from vauxr.protocol import encode_text_message, parse_text_message
-from vauxr.speech.store import Selection, resolve
-from vauxr.speech.store import get_store as get_speech_store
 
 log = logging.getLogger("vauxr.server")
 
@@ -468,6 +468,7 @@ async def _realtime_start(
     persisted_live = pipeline_mode(registry.get_config_for(device_id)) == "realtime"
     if explicit_live or persisted_live:
         import os
+
         from vauxr.speech.store import get_store as speech_store
         if speech_store().voice_settings(device_id)["mode"] != "realtime" or not os.environ.get("OPENAI_API_KEY"):
             ctx.realtime = False
@@ -641,10 +642,22 @@ def make_app() -> web.Application:
 async def _startup(app: web.Application) -> None:
     state: AppState = app[APP_STATE]
     cfg = get_config()
+    from vauxr.config import initialize_config
+    from vauxr.provisioning.pairing_audio import load_prompts
+
+    initialize_config()
+    load_prompts()
     get_store().load()
     get_speech_store()  # Validate the speech registry before accepting turns.
     # Load agent registry.
     agent_registry.load()
+    agent_registry.validate_authority()
+    registry.load_configs(strict=True)
+    from pathlib import Path
+
+    from vauxr.config_files import remove_obsolete_files
+
+    remove_obsolete_files(Path(cfg.data_dir))
     log.info("agent registry loaded")
     import vauxr.web.webhooks as webhooks
 
@@ -682,6 +695,7 @@ def main() -> None:
 
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO").upper())
     cfg = get_config()
+    logging.getLogger().setLevel(cfg.log_level.upper())
     log.info("Starting Vauxr WS+HTTP server on ws=%d http=%d", cfg.ws.port, cfg.http.port)
 
     app = make_app()

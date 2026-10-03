@@ -16,7 +16,7 @@ def display_name(value: object) -> bool:
 
 
 def empty_state() -> dict:
-    return {"version": 1, "requests": {}, "active_agent": ""}
+    return {"version": 1, "requests": {}}
 
 
 def validate_integration(state: object) -> None:
@@ -41,10 +41,5 @@ def validate_integration(state: object) -> None:
                     or not (row["credential_id"] == "" or hex_string(row["credential_id"], 32))
                     or (row["state"] in ("delivered", "completed") and not row["credential_id"])):
                 raise ValueError
-        active = state["active_agent"]
-        if not isinstance(active, str) or (active and not any(
-            r["agent_id"] == active and r["credential_id"] for r in state["requests"].values()
-        )):
-            raise ValueError
     except (KeyError, TypeError, ValueError, AttributeError):
         raise ValueError("Invalid integration state") from None

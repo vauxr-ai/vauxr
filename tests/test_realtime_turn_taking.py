@@ -236,7 +236,6 @@ async def test_ws_pipeline_records_turn_into_log(monkeypatch: pytest.MonkeyPatch
         id="ch-1",
         name="My Agent",
         type="openclaw",
-        tokenHash="hash",
         active=True,
         createdAt="2026-05-17T00:00:00Z",
     )
@@ -309,8 +308,8 @@ def _env(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setenv("REALTIME_ENABLED", "1")
     monkeypatch.setenv("REALTIME_HOST", "192.168.1.50")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    from vauxr.auth.policy import Role
     from tests.auth_helpers import seed
+    from vauxr.auth.policy import Role
     seed("ws-test-token", Role.DEVICE, "dev1")
     yield
     cfg_mod.reset_config()

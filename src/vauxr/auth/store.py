@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from vauxr.auth.policy import Principal, Role
+from vauxr.config_files import unique_object
 from vauxr.provisioning.enrollment_schema import validate_enrollment
 from vauxr.provisioning.integration_schema import validate_integration
 from vauxr.provisioning.lifecycle_schema import has_capacity, validate_lifecycle
@@ -175,10 +176,11 @@ class CredentialStore:
         self.records = ()  # A failed reload never leaves stale access active.
         if not self.path.exists():
             return
+        section = "$"
         try:
             with self.path.open(encoding="utf-8") as stream:
                 os.fchmod(stream.fileno(), 0o600)
-                data = json.load(stream)
+                data = json.load(stream, object_pairs_hook=unique_object)
             if (
                 not isinstance(data, dict)
                 or set(data) != ({1: {"version", "credentials"},
@@ -191,11 +193,16 @@ class CredentialStore:
                 or data["version"] not in (1, 2, 3, 4, 5)
             ):
                 raise ValueError
+            section = "credentials"
             records = tuple(Credential(**{**row, "role": Role(row["role"])}) for row in data["credentials"])
             self._validate(records)
+            section = "owner"
             validate_owner_state(data.get("owner", {}))
+            section = "enrollment"
             validate_enrollment(data.get("enrollment", {}))
+            section = "lifecycle"
             validate_lifecycle(data.get("lifecycle", {}))
+            section = "integration"
             validate_integration(data.get("integration", {}))
             if data["version"] == 5 and not data["integration"]:
                 raise ValueError("Invalid integration state")
@@ -206,8 +213,10 @@ class CredentialStore:
                 raise ValueError("Invalid lifecycle state")
             if data["version"] == 3 and not data["enrollment"]:
                 raise ValueError("Invalid enrollment state")
-        except (ValueError, TypeError, KeyError):
-            raise ValueError("Invalid credential store") from None
+        except (ValueError, TypeError, KeyError, UnicodeError, OSError):
+            from vauxr.config_files import invalid
+
+            raise invalid(self.path, section, "Invalid credential store; validate credentials, owner and enrollment/lifecycle/integration schemas") from None
         owner = data.get("owner", {})
         if not isinstance(owner, dict):
             raise ValueError("Invalid credential store")  # noqa: TRY004
@@ -283,13 +292,6 @@ class CredentialStore:
             from vauxr.provisioning.enrollment import EnrollmentError
 
             raise EnrollmentError("capacity")
-        # Selection and credential retirement must share the same atomic snapshot.
-        if self.integration.get("active_agent") and not any(
-            row["agent_id"] == self.integration["active_agent"]
-            and self.integration_agent_valid(row, records)
-            for row in self.integration["requests"].values()
-        ):
-            self.integration = {**self.integration, "active_agent": ""}
         payload = {"version": 2, "credentials": [asdict(r) for r in records], "owner": self.owner}
         if self.enrollment:
             payload.update(version=3, enrollment=self.enrollment)
@@ -304,8 +306,22 @@ class CredentialStore:
             # A directory fsync can fail after rename. Never retain a different
             # authorization snapshot from the file that is now visible.
             self.load()
+            from vauxr.agents.registry import retire_invalid
+
+            try:
+                retire_invalid(self)
+            except OSError:
+                import logging
+
+                logging.getLogger("vauxr.config").error(
+                    "agents.json: failed to persist retired routing after an authz.json write failure; "
+                    "restore writable storage and restart Vauxr; unusable credentials remain rejected"
+                )
             raise
         self.records = records
+        from vauxr.agents.registry import retire_invalid
+
+        retire_invalid(self)
 
     def integration_agent_valid(self, row: dict, records: tuple[Credential, ...] | None = None) -> bool:
         """Completed enrollment with current authority, including rotated replacements."""

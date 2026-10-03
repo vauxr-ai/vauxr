@@ -15,8 +15,8 @@ import vauxr.agents.registry as agent_registry
 import vauxr.config as cfg_mod
 import vauxr.devices.registry as registry
 import vauxr.speech.wyoming_tts as wyoming_tts
+from tests.auth_helpers import create_agent, owner_headers
 from vauxr.web.server import make_http_app
-from tests.auth_helpers import owner_headers
 
 
 class FakeWs:
@@ -39,8 +39,8 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("OWNER_TRUSTED_PROXIES", "127.0.0.1/32")
     monkeypatch.setenv("DEVICE_TOKEN", "tok-X")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    from vauxr.auth.policy import Role
     from tests.auth_helpers import seed
+    from vauxr.auth.policy import Role
     seed("tok-X", Role.OWNER, "owner")
     monkeypatch.setenv("OPENCLAW_URL", "")
     registry.reset()
@@ -371,6 +371,6 @@ async def test_agent_lifecycle_is_explicitly_unshipped(client, method, path):
 
 
 async def test_activate_agent(client):
-    created, _ = await agent_registry.create("X")
+    created, _ = await create_agent("X")
     res = await client.post(f"/api/agents/{created.id}/activate", headers=_auth(client))
     assert res.status == 200

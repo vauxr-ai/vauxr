@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import pytest
 
 import vauxr.agents.registry as cr
 import vauxr.config as cfg_mod
+from tests.auth_helpers import create_agent
 
 
 @pytest.fixture(autouse=True)
@@ -26,8 +28,8 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_create_returns_token_and_stores_hash() -> None:
-    agent, token = await cr.create("Test Agent", "openclaw")
+async def test_register_persists_metadata_without_credentials() -> None:
+    agent, token = await create_agent("Test Agent", "openclaw")
     assert agent.name == "Test Agent"
     assert agent.type == "openclaw"
     assert agent.active is False
@@ -35,21 +37,25 @@ async def test_create_returns_token_and_stores_hash() -> None:
     assert agent.createdAt
     # Public agent doesn't expose tokenHash.
     assert not hasattr(agent, "tokenHash")
-    # Stored agent has it.
+    # Neither the in-memory record nor persistent routing metadata has credentials.
     full = cr.get_by_id(agent.id)
     assert full is not None
-    assert full.tokenHash and full.tokenHash != token
+    assert not hasattr(full, "tokenHash")
+    data = json.loads((Path(cfg_mod.get_config().data_dir) / "agents.json").read_text())
+    assert data["agents"][0]["id"] == agent.id
+    assert token not in json.dumps(data)
+    assert "tokenHash" not in json.dumps(data)
 
 
 @pytest.mark.asyncio
 async def test_token_format() -> None:
-    _, token = await cr.create("Test", "openclaw")
+    _, token = await create_agent("Test", "openclaw")
     assert re.match(r"^vx_ag_[0-9a-f]{64}$", token)
 
 
 @pytest.mark.asyncio
 async def test_list_omits_token_hash() -> None:
-    await cr.create("Agent A", "openclaw")
+    await create_agent("Agent A", "openclaw")
     listed = cr.get_all()
     assert len(listed) == 1
     assert listed[0].name == "Agent A"
@@ -75,8 +81,8 @@ def test_list_omits_openclaw_direct_when_url_not_set() -> None:
 
 @pytest.mark.asyncio
 async def test_activate_deactivates_previous() -> None:
-    a, _ = await cr.create("A", "openclaw")
-    b, _ = await cr.create("B", "openclaw")
+    a, _ = await create_agent("A", "openclaw")
+    b, _ = await create_agent("B", "openclaw")
 
     cr.activate(a.id)
     assert cr.get_by_id(a.id).active is True  # type: ignore[union-attr]
@@ -107,7 +113,7 @@ async def test_activating_agent_deactivates_openclaw_direct(monkeypatch: pytest.
     cr.activate("openclaw-direct")
     assert cr.get_active().id == "openclaw-direct"  # type: ignore[union-attr]
 
-    ch, _ = await cr.create("My Agent", "openclaw")
+    ch, _ = await create_agent("My Agent", "openclaw")
     cr.activate(ch.id)
     assert cr.get_active().id == ch.id  # type: ignore[union-attr]
     direct = cr.get_by_id("openclaw-direct")
@@ -116,7 +122,7 @@ async def test_activating_agent_deactivates_openclaw_direct(monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_delete() -> None:
-    ch, _ = await cr.create("Doomed", "openclaw")
+    ch, _ = await create_agent("Doomed", "openclaw")
     assert len(cr.get_all()) == 1
     assert cr.remove(ch.id) is True
     assert cr.get_all() == []
@@ -137,8 +143,8 @@ def test_delete_builtin_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_load_save_roundtrip() -> None:
-    ch, _ = await cr.create("Persistent", "openclaw")
-    stored_hash = cr.get_by_id(ch.id).tokenHash
+    ch, _ = await create_agent("Persistent", "openclaw")
+    metadata = cr.get_by_id(ch.id)
     cr.activate(ch.id)
 
     cr._reset_for_tests()
@@ -149,4 +155,5 @@ async def test_load_save_roundtrip() -> None:
     assert listed[0].active is True
 
     restored = cr.get_by_id(ch.id)
-    assert restored is not None and restored.tokenHash == stored_hash
+    assert restored is not None and restored.id == metadata.id
+    assert not hasattr(restored, "tokenHash")
