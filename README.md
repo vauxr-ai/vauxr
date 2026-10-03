@@ -13,7 +13,7 @@ This repo comes pre-configured as a Docker stack that ships with [Wyoming](https
 Speech selection also supports operator-configured Wyoming STT/TTS deployments
 with opaque model and voice IDs. Use `STT_URL`, `TTS_URL`, and `TTS_VOICE` for
 server defaults (legacy environment names remain supported), or configure a
-catalog for global/device selections. See [speech settings](docs/speech-settings.md)
+catalog for global/device selections. See [speech settings](docs/configuration.md)
 for precedence, examples, and protocol limitations.
 
 ## How it works
@@ -115,11 +115,14 @@ independent. Client UI and real plugin persistence acceptance are separate work.
 ## Persistent data
 
 Vauxr bind-mounts `./data` beside this Compose file into `/data`. This directory
-holds the private authorization snapshot (`authz.json`, schema 5 after integration
-enrollment), device settings (`devices.json`), webhooks (`webhooks.json`), channels
-(`channels.json`), routing (`config.json`), and the direct-connection identity
-(`vauxr-identity.json`) when those features are used. It is ignored by Git;
-back it up securely because it can contain credentials and private keys.
+holds server settings and pairing prompts (`config.json`), the speech registry and
+selections (`speech.json`), agent/integration routing and active selection
+(`agents.json`), private authorization and enrollment proofs (`authz.json`), and
+device records (`devices.json`). Webhooks (`webhooks.json`) and the private Direct
+signing identity (`vauxr-identity.json`) have separate feature-specific stores.
+See [configuration schemas and validation](docs/configuration.md). Legacy
+configuration is not migrated. This directory is ignored by Git and can contain
+credentials and private keys.
 Recordings and firmware retain their separate `./recordings` and `./firmware`
 mounts. Whisper and Piper bind-mount `./data/whisper` and `./data/piper`,
 respectively, into their own `/data` directories for model caches.

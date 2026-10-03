@@ -157,12 +157,13 @@ export async function browserIdentity(
     public_key: identity.publicKey,
     display_name: name,
   });
+  const validId = typeof c.device_id === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(c.device_id);
   if (
     c.version !== 1 ||
     c.origin !== identity.origin ||
     c.kind !== "browser" ||
     c.public_key !== identity.publicKey ||
-    c.device_id !== identity.deviceId ||
+    (identity.enrolled ? c.device_id !== identity.deviceId : !validId) ||
     c.display_name !== name ||
     !/^[a-f0-9]{32}$/.test(c.server_id) ||
     !/^[a-f0-9]{32}$/.test(c.request_id) ||
@@ -173,6 +174,7 @@ export async function browserIdentity(
     (identity.serverId && identity.serverId !== c.server_id)
   )
     throw new Error("Enrollment binding mismatch. No proof sent.");
+  identity.deviceId = c.device_id;
   identity.serverId = c.server_id;
   await saveIdentity(identity);
   const sign = async (action: string) =>

@@ -17,8 +17,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 import vauxr.agents.registry as agent_registry
 import vauxr.config as cfg_mod
+from tests.auth_helpers import create_agent
 from vauxr.web.server import make_http_app
-
 
 DEVICE_TOKEN = "tok-auth"
 
@@ -88,7 +88,7 @@ async def test_oversize_bearer_token_on_rotate_returns_401_not_500(
     client: TestClient, tmp_path: Path
 ) -> None:
     """Oversized legacy agent tokens are rejected before the retired rotate handler."""
-    agent, _ = await agent_registry.create("victim", "openclaw")
+    agent, _ = await create_agent("victim", "openclaw")
 
     oversize = "vx_ag_" + ("a" * 80)  # 86 bytes
     res = await client.post(
@@ -107,12 +107,11 @@ async def test_malformed_stored_hash_does_not_500_other_requests(
         id="broken",
         name="Broken",
         type="openclaw",
-        tokenHash="not-a-real-bcrypt-hash",
         active=False,
         createdAt="2025-01-01T00:00:00.000Z",
     )
     agent_registry._agents.append(broken)
-    good, good_token = await agent_registry.create("Good", "openclaw")
+    good, good_token = await create_agent("Good", "openclaw")
 
     res = await client.get("/api/agents", headers=_bearer(good_token))
     assert res.status == 401, await res.text()
@@ -131,8 +130,9 @@ async def test_node_migrated_agent_requires_reenrollment(
     _write_node_style_agents(tmp_path, raw_token, agent_id="node-ch")
     # Re-load now that agents.json is on disk.
     agent_registry._reset_for_tests()
-    agent_registry.load()
-    assert len(agent_registry._agents) == 1
+    with pytest.raises(ValueError, match="recreate legacy configuration"):
+        agent_registry.load()
+    assert agent_registry._agents == []
 
     res = await client.get("/api/agents", headers=_bearer(raw_token))
     assert res.status == 401, await res.text()
@@ -146,7 +146,8 @@ async def test_legacy_device_token_cannot_rotate(
     raw_token = "vx_ag_" + "fedcba9876543210" * 4
     _write_node_style_agents(tmp_path, raw_token, agent_id="node-ch")
     agent_registry._reset_for_tests()
-    agent_registry.load()
+    with pytest.raises(ValueError, match="recreate legacy configuration"):
+        agent_registry.load()
 
     res = await client.post(
         "/api/agents/node-ch/rotate", headers=_bearer(DEVICE_TOKEN)

@@ -373,7 +373,7 @@ async def start_live(session: Any, connection: Any) -> None:
     @session._task.event_handler("on_pipeline_error")
     async def failed(_worker: Any, _frame: Any) -> None:
         await session._send_control({"type": "error", "code": "REALTIME_PROVIDER_ERROR",
-            "message": "Realtime failed. Check the server OpenAI key, gpt-live-1 access and Agent connection. "
+            "message": "Realtime failed. Check the server OpenAI key, selected realtime model access and Agent connection. "
                        "Backend actions may continue; check their status before retrying."})
         asyncio.create_task(session.close())
 

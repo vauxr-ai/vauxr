@@ -408,7 +408,7 @@ function DeviceCard({
                     { voice_mode: e.target.value as "websocket" | "webrtc" | "realtime" }, `Voice mode → ${e.target.value}`)}>
                   <option value="websocket">WebSocket only · no barge-in</option>
                   <option value="webrtc">WebRTC Standard · optional barge-in</option>
-                  <option value="realtime">WebRTC Realtime · gpt-live-1</option>
+                  <option value="realtime">WebRTC Realtime</option>
                 </select>
               </label>
               <label className={labelClass}>
@@ -475,7 +475,7 @@ function DeviceCard({
               {voiceMode === "websocket"
                 ? "WebSocket uses turn-based audio and does not support barge-in."
                 : voiceMode === "realtime"
-                  ? "Realtime uses gpt-live-1 for the speech pipeline and interruption handling."
+                  ? "Realtime uses the selected speech provider for the speech pipeline and interruption handling."
                   : "Standard uses the configured STT, agent, and TTS pipeline over WebRTC."}
               {" Changes apply when the device reconnects."}
             </p>

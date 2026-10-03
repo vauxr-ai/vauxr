@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from vauxr.config import get_config
@@ -33,7 +33,7 @@ class DeviceEntry:
     name: str
     ws: Any  # opaque — aiohttp.web.WebSocketResponse in production
     state: ConnectionState = "idle"
-    last_seen: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_seen: datetime = field(default_factory=lambda: datetime.now(UTC))
     seq: int = 0
     abort_event: asyncio.Event | None = None
     config: DeviceConfig = field(default_factory=dict)
@@ -55,32 +55,58 @@ def _ensure_configs_loaded() -> None:
     _configs_loaded = True
 
 
-def load_configs() -> None:
+def load_configs(*, strict: bool = False) -> None:
     global _configs, _configs_loaded
-    _configs = load_device_configs(get_config().data_dir)
+    _configs = load_device_configs(get_config().data_dir, strict=strict)
     _configs_loaded = True
 
 
 def get_config_for(device_id: str) -> DeviceConfig:
     _ensure_configs_loaded()
-    return _configs.get(device_id, {})
+    from vauxr.speech.store import get_store
+
+    cfg = _configs.get(device_id, {})
+    speech = get_store()
+    mode = speech.voice_settings(device_id)["mode"]
+    if mode == "realtime" or "mode" in speech.devices.get(device_id, {}):
+        return {**cfg, "pipeline_mode": mode}
+    return cfg
 
 
 def update_config(device_id: str, patch: DeviceConfig) -> DeviceConfig:
     _ensure_configs_loaded()
-    merged: DeviceConfig = {**_configs.get(device_id, {}), **patch}
+    from vauxr.speech.store import get_store
+
+    speech = get_store()
+    previous_mode = speech.devices.get(device_id, {}).get("mode")
+    if "pipeline_mode" in patch:
+        speech.update({"mode": patch["pipeline_mode"]}, device_id)
+    merged: DeviceConfig = {**_configs.get(device_id, {}), **{k: v for k, v in patch.items() if k != "pipeline_mode"}}
+    updated = {**_configs, device_id: merged}
+    try:
+        save_device_configs(get_config().data_dir, updated)
+    except OSError:
+        committed = load_device_configs(get_config().data_dir)
+        if committed == updated:
+            _configs[device_id] = merged
+        elif "pipeline_mode" in patch:
+            speech.update({"mode": previous_mode}, device_id)
+        entry = _devices.get(device_id)
+        if entry is not None:
+            entry.config = get_config_for(device_id)
+        raise
     _configs[device_id] = merged
-    save_device_configs(get_config().data_dir, _configs)
+    result = get_config_for(device_id)
     entry = _devices.get(device_id)
     if entry is not None:
-        entry.config = merged
-    return merged
+        entry.config = result
+    return result
 
 
 def register(device_id: str, ws: Any, name: str | None = None) -> DeviceEntry:
     abort_active_turn(device_id)
     _ensure_configs_loaded()
-    cfg = _configs.get(device_id, {})
+    cfg = get_config_for(device_id)
     prev = _devices.get(device_id)
     entry = DeviceEntry(
         id=device_id,
@@ -174,7 +200,7 @@ def set_state(device_id: str, state: ConnectionState) -> None:
     if entry is None:
         return
     entry.state = state
-    entry.last_seen = datetime.now(timezone.utc)
+    entry.last_seen = datetime.now(UTC)
 
 
 def abort_active_turn(device_id: str) -> None:

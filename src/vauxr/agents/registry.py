@@ -1,30 +1,21 @@
-"""Routing-agent registry.
+"""Authoritative routing metadata and selection in agents.json.
 
-Port of `src/agent-registry.ts`. Agents are stored in `agents.json`
-with bcrypt-hashed tokens. The virtual `openclaw-direct` agent exists
-when `OPENCLAW_URL` is configured. The active selection persists in
-`config.json` so it survives restarts.
+Credential and enrollment authority is checked separately in authz.json.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-import os
-import secrets
-import uuid
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
-from typing import Literal
-
-import bcrypt
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 from vauxr.config import get_config
+from vauxr.config_files import invalid, read_json, update_json
 
-BCRYPT_COST = 10
-TOKEN_PREFIX = "vx_ag_"
-TOKEN_HEX_LEN = 64
-
+if TYPE_CHECKING:
+    from vauxr.auth.store import CredentialStore
 
 AgentType = Literal["openclaw", "openclaw-direct"]
 
@@ -34,291 +25,265 @@ class Agent:
     id: str
     name: str
     type: AgentType
-    tokenHash: str
     active: bool
     createdAt: str
     builtin: bool | None = None
+    integration: bool = False
 
 
-@dataclass(frozen=True)
-class AgentPublic:
-    id: str
-    name: str
-    type: AgentType
-    active: bool
-    createdAt: str
-    builtin: bool | None = None
-
-
+AgentPublic = Agent
 _agents: list[Agent] = []
-_openclaw_direct_active = False
+_active_agent = ""
 _loaded = False
+_directory: Path | None = None
 
 
-def _agents_path() -> str:
-    return os.path.join(get_config().data_dir, "agents.json")
+def _path() -> Path:
+    return Path(get_config().data_dir) / "agents.json"
 
 
-def _config_path() -> str:
-    return os.path.join(get_config().data_dir, "config.json")
+def _decode(data: object, path: Path) -> tuple[list[Agent], str]:
+    if (
+        not isinstance(data, dict)
+        or set(data) != {"version", "agents", "active_agent"}
+        or type(data["version"]) is not int
+        or data["version"] != 1
+    ):
+        raise invalid(
+            path, "$", "expected version 1, agents array and active_agent; recreate legacy configuration"
+        )
+    if not isinstance(data["agents"], list) or not isinstance(data["active_agent"], str):
+        raise invalid(path, "agents/active_agent", "expected an array and a string")
+    agents = []
+    for index, row in enumerate(data["agents"]):
+        field = f"agents[{index}]"
+        if (
+            not isinstance(row, dict)
+            or not {"id", "name", "type", "createdAt"} <= row.keys()
+            or row.keys() - {"id", "name", "type", "createdAt", "builtin", "integration"}
+        ):
+            raise invalid(
+                path,
+                field,
+                "expected id, name, type, createdAt and optional builtin/integration; credentials belong in authz.json",
+            )
+        if (
+            not all(isinstance(row[key], str) and row[key] for key in ("id", "name", "createdAt"))
+            or row["type"] not in ("openclaw", "openclaw-direct")
+            or type(row.get("integration", False)) is not bool
+            or ("builtin" in row and type(row["builtin"]) is not bool)
+        ):
+            raise invalid(path, field, "expected nonempty strings, a supported agent type and boolean flags")
+        if (row["type"] == "openclaw-direct") != (row["id"] == "openclaw-direct") or (
+            row["type"] == "openclaw-direct" and (not row.get("builtin") or row.get("integration"))
+        ):
+            raise invalid(path, field, "OpenClaw Direct must use its builtin ID and type")
+        agents.append(Agent(**row, active=row["id"] == data["active_agent"]))
+    ids = {a.id for a in agents}
+    if len(ids) != len(agents) or (data["active_agent"] and data["active_agent"] not in ids):
+        raise invalid(
+            path, "active_agent/agents", "IDs must be unique and selection must reference an existing agent"
+        )
+    return agents, data["active_agent"]
 
 
-def _ensure_data_dir() -> None:
-    os.makedirs(get_config().data_dir, exist_ok=True)
+def _encode(agents: list[Agent], active: str) -> dict:
+    return {
+        "version": 1,
+        "agents": [
+            {key: value for key, value in asdict(a).items() if key != "active" and value is not None}
+            for a in agents
+        ],
+        "active_agent": active,
+    }
 
 
-def _save_agents() -> None:
-    _ensure_data_dir()
-    serialized = [
-        {
-            "id": c.id,
-            "name": c.name,
-            "type": c.type,
-            "tokenHash": c.tokenHash,
-            "active": c.active,
-            "createdAt": c.createdAt,
-            **({"builtin": c.builtin} if c.builtin is not None else {}),
-        }
-        for c in _agents
-    ]
-    with open(_agents_path(), "w", encoding="utf-8") as f:
-        json.dump(serialized, f, indent=2)
-
-
-def _save_config() -> None:
-    _ensure_data_dir()
-    with open(_config_path(), "w", encoding="utf-8") as f:
-        json.dump({"openclawDirectActive": _openclaw_direct_active}, f, indent=2)
+def _publish(data: dict) -> None:
+    global _agents, _active_agent, _loaded, _directory
+    _agents, _active_agent = _decode(data, _path())
+    _loaded, _directory = True, _path().parent
 
 
 def load() -> None:
-    """(Re)load agents.json + config.json from disk."""
-    global _agents, _openclaw_direct_active, _loaded
-    _ensure_data_dir()
-
-    p = _agents_path()
-    if os.path.exists(p):
-        with open(p, encoding="utf-8") as f:
-            raw = json.load(f)
-        _agents = [
-            Agent(
-                id=str(c.get("id")),
-                name=str(c.get("name")),
-                type=c.get("type"),
-                tokenHash=str(c.get("tokenHash", "")),
-                active=bool(c.get("active", False)),
-                createdAt=str(c.get("createdAt", "")),
-                builtin=c.get("builtin"),
+    global _loaded, _agents, _active_agent
+    _loaded, _agents, _active_agent = False, [], ""
+    path = _path()
+    if path.exists():
+        data = read_json(path)
+        agents, active = _decode(data, path)
+        if get_config().openclaw.url and not any(a.id == "openclaw-direct" for a in agents):
+            direct = Agent(
+                "openclaw-direct",
+                "OpenClaw Direct",
+                "openclaw-direct",
+                False,
+                datetime.fromtimestamp(0, tz=UTC).isoformat(),
+                True,
             )
-            for c in raw
-        ]
+            data = update_json(
+                path,
+                lambda current: _encode(
+                    [*_decode(current, path)[0], direct], active or (direct.id if not agents else "")
+                ),
+            )
     else:
-        _agents = []
-
-    cp = _config_path()
-    if os.path.exists(cp):
-        with open(cp, encoding="utf-8") as f:
-            cfg = json.load(f)
-        _openclaw_direct_active = bool(cfg.get("openclawDirectActive", False))
-    elif get_config().openclaw.url and not _agents:
-        # First-run default: openclaw-direct active when URL configured.
-        _openclaw_direct_active = True
-        _save_config()
-    else:
-        _openclaw_direct_active = False
-
-    _loaded = True
+        direct = Agent(
+            "openclaw-direct",
+            "OpenClaw Direct",
+            "openclaw-direct",
+            True,
+            datetime.fromtimestamp(0, tz=UTC).isoformat(),
+            True,
+        )
+        data = _encode(
+            [direct] if get_config().openclaw.url else [], direct.id if get_config().openclaw.url else ""
+        )
+        data = update_json(path, lambda existing: existing or data)
+    _publish(data)
 
 
-def _generate_token() -> str:
-    return TOKEN_PREFIX + secrets.token_hex(TOKEN_HEX_LEN // 2)
+def validate_authority() -> None:
+    """Report missing routing metadata; never rebuild it from enrollment proofs."""
+    from vauxr.auth.service import get_store
+
+    store = get_store()
+    expected = {
+        row["agent_id"]
+        for row in store.integration.get("requests", {}).values()
+        if store.integration_agent_valid(row)
+    }
+    recorded = {a.id for a in _agents if a.integration}
+    if expected - recorded:
+        raise invalid(
+            _path(),
+            "agents",
+            "missing enrolled integration metadata; explicitly reconfigure or reenroll the integration",
+        )
+    if _active_agent and get_active() is None:
+        raise invalid(
+            _path(),
+            "active_agent",
+            "selected agent is unavailable; configure its connection or select an available agent",
+        )
 
 
-def _openclaw_direct_agent() -> Agent | None:
-    if not get_config().openclaw.url:
-        return None
-    return Agent(
-        id="openclaw-direct",
-        name="OpenClaw Direct",
-        type="openclaw-direct",
-        tokenHash="",
-        active=_openclaw_direct_active,
-        createdAt=datetime.fromtimestamp(0, tz=UTC).isoformat().replace("+00:00", "Z").replace("Z", ".000Z"),
-        builtin=True,
-    )
+def _ensure_loaded() -> None:
+    if not _loaded or _directory != _path().parent:
+        load()
 
 
-def _public(c: Agent) -> AgentPublic:
-    return AgentPublic(
-        id=c.id, name=c.name, type=c.type, active=c.active, createdAt=c.createdAt, builtin=c.builtin
+def _valid(agent: Agent) -> bool:
+    if agent.type == "openclaw-direct":
+        return bool(get_config().openclaw.url)
+    if not agent.integration:
+        return True
+    from vauxr.auth.service import get_store
+
+    store = get_store()
+    return any(
+        row["agent_id"] == agent.id and store.integration_agent_valid(row)
+        for row in store.integration.get("requests", {}).values()
     )
 
 
 def get_all() -> list[AgentPublic]:
-    out: list[AgentPublic] = []
-    direct = _openclaw_direct_agent()
-    if direct is not None:
-        out.append(_public(direct))
-    for c in _agents:
-        out.append(_public(c))
-    integrations = _integration_agents()
-    if any(c.active for c in integrations):
-        from dataclasses import replace
-
-        out = [replace(c, active=False) for c in out]
-    out.extend(_public(c) for c in integrations)
-    return out
+    _ensure_loaded()
+    return [replace(a, active=a.id == _active_agent) for a in _agents if _valid(a)]
 
 
 def get_by_id(agent_id: str) -> Agent | None:
-    enrolled = next((c for c in _integration_agents() if c.id == agent_id), None)
-    if enrolled is not None:
-        return enrolled
-    if agent_id == "openclaw-direct":
-        return _openclaw_direct_agent()
-    for c in _agents:
-        if c.id == agent_id:
-            return c
-    return None
+    return next((a for a in get_all() if a.id == agent_id), None)
 
 
 def get_active() -> Agent | None:
-    enrolled = next((c for c in _integration_agents() if c.active), None)
-    if enrolled is not None:
-        return enrolled
-    direct = _openclaw_direct_agent()
-    if direct is not None and direct.active:
-        return direct
-    for c in _agents:
-        if c.active:
-            return c
-    return None
+    return next((a for a in get_all() if a.active), None)
 
 
-async def create(name: str, type_: str = "openclaw") -> tuple[AgentPublic, str]:
-    if type_ != "openclaw":
-        raise ValueError("invalid type, must be 'openclaw'")
-    token = _generate_token()
-    token_hash = await asyncio.to_thread(
-        bcrypt.hashpw, token.encode("utf-8"), bcrypt.gensalt(BCRYPT_COST)
-    )
-    agent = Agent(
-        id=str(uuid.uuid4()),
-        name=name,
-        type="openclaw",
-        tokenHash=token_hash.decode("utf-8"),
-        active=False,
-        createdAt=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-    )
-    _agents.append(agent)
-    _save_agents()
-    return _public(agent), token
+def _commit(change: Callable[[dict], dict]) -> None:
+    try:
+        data = update_json(_path(), change)
+    except OSError:
+        # Rename may have committed before directory fsync failed.
+        _publish(read_json(_path()))
+        raise
+    _publish(data)
 
 
-def remove(agent_id: str) -> bool:
-    global _agents
-    if agent_id == "openclaw-direct":
-        return False
-    before = len(_agents)
-    _agents = [c for c in _agents if c.id != agent_id]
-    if len(_agents) == before:
-        return False
-    _save_agents()
-    return True
+def register(agent: Agent) -> None:
+    """Persist routing metadata after durable enrollment; never accept credentials."""
+    _ensure_loaded()
+
+    def change(data: dict) -> dict:
+        agents, active = _decode(data, _path())
+        existing = next((a for a in agents if a.id == agent.id), None)
+        if existing:
+            return data  # Enrollment ACK retries must not reset selection/name.
+        return _encode([*agents, replace(agent, active=False)], active)
+
+    _commit(change)
 
 
 def activate(agent_id: str) -> bool:
-    global _openclaw_direct_active
     if get_by_id(agent_id) is None:
         return False
-    if _activate_integration(agent_id):
-        return True
-    if agent_id == "openclaw-direct":
-        direct = _openclaw_direct_agent()
-        if direct is None:
-            return False
-        for c in _agents:
-            c.active = False
-        _save_agents()
-        _openclaw_direct_active = True
-        _save_config()
-        return True
 
-    target = next((c for c in _agents if c.id == agent_id), None)
-    if target is None:
+    def change(data: dict) -> dict:
+        agents, _ = _decode(data, _path())
+        target = next((a for a in agents if a.id == agent_id), None)
+        if target is None or not _valid(target):
+            return data
+        return _encode(agents, agent_id)
+
+    _commit(change)
+    return _active_agent == agent_id
+
+
+def remove(agent_id: str) -> bool:
+    """Remove ordinary routing metadata; builtin agents cannot be deleted."""
+    agent = get_by_id(agent_id)
+    if agent is None or agent.builtin:
         return False
-    for c in _agents:
-        c.active = False
-    _openclaw_direct_active = False
-    _save_config()
-    target.active = True
-    _save_agents()
+
+    def change(data: dict) -> dict:
+        agents, active = _decode(data, _path())
+        return _encode([a for a in agents if a.id != agent_id], "" if active == agent_id else active)
+
+    _commit(change)
     return True
 
 
-# --- Test helpers ---
+def retire_invalid(store: CredentialStore) -> None:
+    """Credential retirement gates routing immediately, then clears stale selection."""
+    path = store.path.parent / "agents.json"
+    if not path.exists():
+        return
+
+    def change(data: dict) -> dict:
+        agents, active = _decode(data, path)
+        valid = {
+            row["agent_id"]
+            for row in store.integration.get("requests", {}).values()
+            if store.integration_agent_valid(row)
+        }
+        retained = [a for a in agents if not a.integration or a.id in valid]
+        return _encode(retained, active if any(a.id == active for a in retained) else "")
+
+    data = update_json(path, change)
+    if path == _path():
+        _publish(data)
 
 
 def _reset_for_tests() -> None:
-    global _agents, _openclaw_direct_active, _loaded
-    _agents = []
-    _openclaw_direct_active = False
-    _loaded = False
+    global _agents, _active_agent, _loaded, _directory
+    _agents, _active_agent, _loaded, _directory = [], "", False, None
 
 
 def _set_active_for_tests(agent: Agent | None) -> None:
-    """Used in pipeline tests where we don't want disk I/O."""
-    global _openclaw_direct_active
-    if agent is None:
-        for c in _agents:
-            c.active = False
-        _openclaw_direct_active = False
-        return
-    if agent.id == "openclaw-direct":
-        for c in _agents:
-            c.active = False
-        _openclaw_direct_active = True
-        return
-    # Insert if missing so get_active() finds it.
-    if not any(c.id == agent.id for c in _agents):
-        _agents.append(agent)
-    for c in _agents:
-        c.active = c.id == agent.id
-    _openclaw_direct_active = False
-
-
-def _integration_agents() -> list[Agent]:
-    """Project atomically enrolled routing metadata; never copy credentials to agents.json."""
-    from vauxr.auth.service import get_store
-
-    store = get_store()
-    state = store.integration
-    return [Agent(id=row["agent_id"], name=row["display_name"], type="openclaw", tokenHash="",
-                    active=state.get("active_agent") == row["agent_id"],
-                    createdAt=datetime.fromtimestamp(row["created_at"], tz=UTC).isoformat())
-            for row in state.get("requests", {}).values() if store.integration_agent_valid(row)]
-
-
-def _activate_integration(agent_id: str) -> bool:
-    import copy
-
-    from vauxr.auth.service import get_store
-
-    store = get_store()
-    with store.transaction():
-        state = copy.deepcopy(store.integration)
-        if not state:
-            return False
-        found = any(r["agent_id"] == agent_id and store.integration_agent_valid(r)
-                    for r in state["requests"].values())
-        # A row may have been retired since activate() looked it up.
-        if not found and any(r["agent_id"] == agent_id for r in state["requests"].values()):
-            return False
-        state["active_agent"] = agent_id if found else ""
-        store.integration = state
-        try:
-            store.replace(store.records)
-        except BaseException:
-            store.load()
-            raise
-        return found
+    _ensure_loaded()
+    if agent:
+        if not agent.createdAt:
+            agent = replace(agent, createdAt=datetime.now(UTC).isoformat())
+        register(agent)
+        activate(agent.id)
+    else:
+        _publish(update_json(_path(), lambda data: {**data, "active_agent": ""}))

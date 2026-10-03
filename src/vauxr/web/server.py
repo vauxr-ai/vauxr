@@ -20,8 +20,8 @@ import vauxr.agents.registry as agent_registry
 import vauxr.devices.firmware as firmware_delivery
 import vauxr.devices.registry as registry
 import vauxr.web.webhooks as webhooks
-from vauxr.auth.service import authenticate
 from vauxr.auth.policy import HTTP_OPERATIONS, UNSHIPPED, Operation, Principal, Role, allowed, audit_denial
+from vauxr.auth.service import authenticate
 from vauxr.config import get_config
 from vauxr.devices.config import (
     VALID_FOLLOW_UP_MODES,
@@ -32,11 +32,18 @@ from vauxr.devices.config import (
     voice_mode,
     voice_mode_patch,
 )
+from vauxr.protocol import encode_text_message
 from vauxr.provisioning.enrollment_http import attach_enrollment
 from vauxr.provisioning.integration_http import attach_integration
 from vauxr.provisioning.lifecycle_http import attach_lifecycle
-from vauxr.web.owner import ORIGIN, attach_owner, cookie_name, owner_middleware, secure_request, session_principal
-from vauxr.protocol import encode_text_message
+from vauxr.web.owner import (
+    ORIGIN,
+    attach_owner,
+    cookie_name,
+    owner_middleware,
+    secure_request,
+    session_principal,
+)
 
 if TYPE_CHECKING:
     from vauxr.agents.server import AgentServer
@@ -134,7 +141,7 @@ def _device_dict(d) -> dict[str, Any]:
         "name": d.name,
         "state": d.state,
         "lastSeen": d.last_seen.isoformat().replace("+00:00", "Z"),
-        "config": {"pipeline_mode": pipeline_mode(d.config), "voice_mode": voice_mode(d.config),
+        "config": {"pipeline_mode": pipeline_mode(registry.get_config_for(d.id)), "voice_mode": voice_mode(registry.get_config_for(d.id)),
                    **{k: v for k, v in d.config.items()
                    if k in {"name", "voice", "follow_up_mode", "barge_in", "output_sample_rate",
                             "button_actions"}}},
@@ -212,7 +219,10 @@ async def update_device(request: web.Request) -> web.Response:
         # same request must not undo its transport/pipeline/barge-in invariants.
         patch.update(voice_mode_patch(body["voice_mode"]))
 
-    nxt = registry.update_config(device_id, patch)  # type: ignore[arg-type]
+    try:
+        nxt = registry.update_config(device_id, patch)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return web.json_response({"error": "Invalid device speech selection"}, status=400)
     if nxt.get("name"):
         device.name = nxt["name"]
     log.info("200 device updated: %s", device_id)

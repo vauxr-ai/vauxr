@@ -1,11 +1,25 @@
 """Explicit schema fixtures; never infer enrollment from DEVICE_TOKEN."""
 
-from vauxr.auth.service import get_store
 from vauxr.auth.policy import Role
+from vauxr.auth.service import get_store
 from vauxr.auth.store import Credential, verifier
 
 TRANSPORT_HEADERS = {"Host": "owner.example", "Origin": "https://owner.example",
                      "X-Forwarded-Proto": "https"}
+
+
+async def create_agent(name: str, type_: str = "openclaw"):
+    """Routing fixture; transport tests seed credential authority explicitly."""
+    import secrets
+    from datetime import UTC, datetime
+
+    from vauxr.agents.registry import Agent, register
+
+    if type_ != "openclaw":
+        raise ValueError("invalid type")
+    agent = Agent(secrets.token_hex(16), name, "openclaw", False, datetime.now(UTC).isoformat())
+    register(agent)
+    return agent, "vx_ag_" + secrets.token_hex(32)
 
 
 def seed(token: str, role: Role, subject: str) -> None:
