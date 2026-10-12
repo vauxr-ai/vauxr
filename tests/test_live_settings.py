@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 
 from vauxr.config import get_config
-from vauxr.speech.store import SpeechStore
 from vauxr.speech.catalog import load_backends
+from vauxr.speech.store import SpeechStore
 
 
 def test_modes_preserve_independent_selections_and_restart(tmp_path: Path) -> None:
@@ -15,7 +15,7 @@ def test_modes_preserve_independent_selections_and_restart(tmp_path: Path) -> No
     store.update({"mode": "standard"}, "browser")
     assert store.resolve("browser") == standard
     store = SpeechStore(tmp_path, load_backends(get_config()))
-    assert store.voice_settings("browser") == {"mode": "standard", "realtime_model": "gpt-live-1", "realtime_voice": "cedar"}
+    assert store.voice_settings("browser") == {"mode": "standard", "realtime_backend": "openai-live", "realtime_model": "gpt-live-1", "realtime_voice": "cedar"}
     store.update({"mode": "realtime"}, "browser")
     assert store.voice_settings("browser")["realtime_voice"] == "cedar"
     assert store.voice_settings("other")["mode"] == "standard"

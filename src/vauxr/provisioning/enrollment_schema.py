@@ -1,6 +1,5 @@
 """Strict persisted enrollment v1 schema, shared with the credential snapshot."""
 
-import hashlib
 import math
 import re
 
@@ -65,9 +64,7 @@ def validate_enrollment(state: object) -> None:
                 raise ValueError("Invalid enrollment state")
             if not (hex_string(row["public_key"], 64) and hex_string(row["nonce"], 64)):
                 raise ValueError("Invalid enrollment state")
-            if not (isinstance(row["device_id"], str) and re.fullmatch("dev_[0-9a-f]{64}", row["device_id"])):
-                raise ValueError("Invalid enrollment state")
-            if row["device_id"] != "dev_" + hashlib.sha256(bytes.fromhex(row["public_key"])).hexdigest():
+            if not (isinstance(row["device_id"], str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", row["device_id"])):
                 raise ValueError("Invalid enrollment state")
             if not (timestamp(row["expires_at"]) and type(row["expires_at"]) is int):
                 raise ValueError("Invalid enrollment state")

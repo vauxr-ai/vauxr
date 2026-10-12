@@ -9,11 +9,11 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-import vauxr.config as config
 import vauxr.auth.service as auth
-from vauxr.auth.policy import Role
-from tests.auth_helpers import owner_headers, seed
+import vauxr.config as config
 import vauxr.speech.store as speech
+from tests.auth_helpers import owner_headers, seed
+from vauxr.auth.policy import Role
 from vauxr.speech.store import Backend, SpeechStore
 
 
@@ -77,21 +77,22 @@ def test_dynamic_inheritance_model_voices_restart_and_reset(store):
 )
 def test_invalid_updates_are_atomic(store, patch):
     before = store.resolve()
+    persisted = store.path.read_bytes()
     with pytest.raises(ValueError):
         store.update(patch)
     assert store.resolve() == before
-    assert not store.path.exists()
+    assert store.path.read_bytes() == persisted
 
 
 def test_removed_provider_is_explicit_not_fallback(store):
     store.update({"tts_backend": "kokoro"}, "a")
-    restored = SpeechStore(store.path.parent, tuple(b for b in store.backends.values() if b.id != "kokoro"))
-    assert restored.view("a")["effective"] is None
-    assert restored.view("a")["error"]
-    with pytest.raises(KeyError):
-        restored.resolve("a")
-    restored.update({"tts_backend": None}, "a")
-    assert restored.resolve("a").tts.id == "piper"
+    data = json.loads(store.path.read_text())
+    data["providers"] = [b for b in data["providers"] if b["id"] != "kokoro"]
+    data["defaults"]["voices"].pop("kokoro")
+    store.path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="devices.*.tts_backend"):
+        SpeechStore(store.path.parent, tuple(store.backends.values()))
+    assert json.loads(store.path.read_text()) == data
 
 
 async def test_http_management_auth_validation_and_isolation(store, monkeypatch):
@@ -256,9 +257,9 @@ async def test_wyoming_adapter_wire_voice_and_readiness(store, generic):
             # restart path, not just directly constructed client arguments.
             from vauxr.speech.catalog import load_backends
 
-            (store.path.parent / "speech-providers.json").write_text(
-                json.dumps([asdict(stt), asdict(tts)])
-            )
+            data = json.loads(store.path.read_text())
+            data["providers"].extend([asdict(stt), asdict(tts)])
+            store.path.write_text(json.dumps(data))
             configured = SpeechStore(store.path.parent, load_backends(config.get_config()))
             assert configured.resolve().stt.id == "whisper"
             assert configured.resolve().tts.id == "piper"
@@ -370,7 +371,11 @@ def test_legacy_environment_and_operator_registry_restart(tmp_path, monkeypatch)
     config.reset_config()
     try:
         extra = Backend("extra", "tts", "kokoro", "model", "127.0.0.1", 12003, ("af",))
-        (tmp_path / "speech-providers.json").write_text(json.dumps([asdict(extra)]))
+        initialized = speech.get_store()
+        data = json.loads(initialized.path.read_text())
+        data["providers"].append(asdict(extra))
+        initialized.path.write_text(json.dumps(data))
+        speech._store = None
         initial = speech.resolve()
         assert initial.stt.port == 12001
         assert initial.tts.port == 12002 and initial.voice_id == "legacy-voice"
@@ -483,8 +488,8 @@ async def test_realtime_rejected_turn_cannot_retry_resolution(store, monkeypatch
 @pytest.mark.parametrize("path", ["/api/speech", "/api/devices/a/speech"])
 async def test_speech_owner_mutations_require_csrf_and_live_session(store, monkeypatch, path):
     import vauxr.web.speech as speech_http
-    from vauxr.web.server import make_http_app
     from vauxr.web.owner import OWNER
+    from vauxr.web.server import make_http_app
 
     monkeypatch.setattr(speech_http, "readiness", AsyncMock(return_value="ready"))
     async with TestClient(TestServer(make_http_app())) as client:
@@ -505,8 +510,8 @@ async def test_speech_owner_mutations_require_csrf_and_live_session(store, monke
 @pytest.mark.parametrize("tls", [False, True])
 async def test_speech_owner_transport_and_csrf_before_provider_io(store, monkeypatch, tls):
     import vauxr.web.speech as speech_http
-    from vauxr.web.server import make_http_app
     from vauxr.web.owner import COOKIE, LAN_COOKIE, OWNER
+    from vauxr.web.server import make_http_app
 
     origin = "https://owner.example" if tls else "http://192.168.10.20:8080"
     monkeypatch.delenv("OWNER_HTTPS_ORIGIN", raising=False)
@@ -554,6 +559,7 @@ async def test_standard_webrtc_speech_start_uses_device_wire_contract(store, mon
     from pipecat.frames.frames import UserStartedSpeakingFrame
     from pipecat.processors.frame_processor import FrameDirection
     from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+
     import vauxr.devices.registry as registry
     import vauxr.realtime.session as realtime_session
 

@@ -13,13 +13,14 @@ from aiohttp.test_utils import TestClient, TestServer
 
 import vauxr.agents.registry as cr
 import vauxr.config as cfg_mod
+from tests.auth_helpers import create_agent
 from vauxr.agents.server import AgentServer
 
 
 async def create_integration(name, type_):
     from tests.auth_helpers import seed
     from vauxr.auth.policy import Role
-    agent, token = await cr.create(name, type_)
+    agent, token = await create_agent(name, type_)
     seed(token, Role.INTEGRATION, agent.id)
     return agent, token
 

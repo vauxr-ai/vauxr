@@ -13,20 +13,20 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+import vauxr.agents.registry as agent_registry
 import vauxr.auth.service as auth
 import vauxr.auth.store as auth_store
-import vauxr.agents.registry as agent_registry
 import vauxr.config as config
 import vauxr.provisioning.integration as integration
+from tests.test_enrollment import ORIGIN, owner_resolver, setup
 from vauxr.auth.policy import Operation, Role, allowed
 from vauxr.auth.store import CredentialStore
 from vauxr.provisioning.enrollment import EnrollmentError
-from vauxr.web.server import make_http_app
 from vauxr.provisioning.integration import Integration
 from vauxr.provisioning.integration_http import INTEGRATION
 from vauxr.provisioning.lifecycle import Lifecycle
 from vauxr.web.owner import COOKIE, LAN_COOKIE, OWNER
-from tests.test_enrollment import ORIGIN, owner_resolver, setup
+from vauxr.web.server import make_http_app
 
 assert setup
 
@@ -34,6 +34,9 @@ assert setup
 @pytest.fixture
 def env(setup, monkeypatch):
     enrollment, owner, cookie = setup
+    monkeypatch.setenv("DATA_DIR", str(enrollment.store.path.parent))
+    config.reset_config()
+    agent_registry._reset_for_tests()
     service = Integration(enrollment.store, ORIGIN)
     monkeypatch.setattr(auth, "get_store", lambda: service.store)
     principal = owner_resolver(owner, cookie)()
@@ -279,7 +282,10 @@ def test_rotation_and_routing_metadata_survive_independently(env):
     body, _, result = deliver(env)
     service.execute("ack", ack_body(body, result))
     agent = agent_registry.get_by_id(result["agent_id"])
-    assert agent and not agent.active and agent.tokenHash == ""
+    assert agent and not agent.active and not hasattr(agent, "tokenHash")
+    registry_data = json.loads((service.store.path.parent / "agents.json").read_text())
+    assert any(a["id"] == result["agent_id"] for a in registry_data["agents"])
+    assert "active_agent" not in service.store.integration
     assert agent_registry.activate(agent.id)
     assert agent_registry.get_active().id == agent.id
     service.store = CredentialStore(service.store.path)
@@ -401,6 +407,8 @@ async def test_retiring_agent_connected_before_activation_tears_down_dependents(
                               lambda: service.store.authenticate(replacement["credential"]))
             assert service.store.authenticate(replacement["credential"])
         if action == "revoke":
+            assert agent_registry.get_active() is None
+            assert agent_registry.activate(alternate_agent.id)
             assert agent_registry.get_active().id == alternate_agent.id
             server.add_response_listener("alternate-speaker", {"on_error": lambda *args: errors.append(args)})
             monkeypatch.setattr(device_registry, "get_all", lambda: [
@@ -419,7 +427,7 @@ def alternate_agent(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     config.reset_config()
     agent_registry._reset_for_tests()
-    agent = agent_registry.Agent("alternate", "Alternate", "openclaw", "", True, "")
+    agent = agent_registry.Agent("alternate", "Alternate", "openclaw", True, "2026-10-03T00:00:00Z")
     agent_registry._set_active_for_tests(agent)
     yield agent
     agent_registry._reset_for_tests()
@@ -427,14 +435,17 @@ def alternate_agent(monkeypatch, tmp_path):
 
 
 def assert_retired_routing(service, agent_id, alternate):
-    assert service.store.integration["active_agent"] == ""
-    assert CredentialStore(service.store.path).integration["active_agent"] == ""
+    assert "active_agent" not in service.store.integration
+    assert "active_agent" not in CredentialStore(service.store.path).integration
+    persisted = json.loads((service.store.path.parent / "agents.json").read_text())
+    assert persisted["active_agent"] == ""
+    assert agent_id not in {row["id"] for row in persisted["agents"]}
     assert agent_registry.get_by_id(agent_id) is None
     assert agent_id not in {c.id for c in agent_registry.get_all()}
-    assert agent_registry.get_active().id == alternate.id
-    assert next(c for c in agent_registry.get_all() if c.id == alternate.id).active
+    assert agent_registry.get_active() is None
+    assert not next(c for c in agent_registry.get_all() if c.id == alternate.id).active
     assert not agent_registry.activate(agent_id)
-    assert agent_registry.get_active().id == alternate.id
+    assert agent_registry.get_active() is None
 
 
 def test_owner_revoke_clears_selection_before_sweep_and_restart(env, alternate_agent):
@@ -455,12 +466,11 @@ def test_owner_revoke_clears_selection_before_sweep_and_restart(env, alternate_a
 
 @pytest.mark.parametrize("cause", ["expiry", "origin", "owner", "revoked"])
 @pytest.mark.parametrize("after", [False, True])
-def test_retirement_and_selection_clear_are_one_atomic_write(env, alternate_agent, monkeypatch, cause, after):
+def test_unfinished_credential_retirement_is_atomic(env, alternate_agent, monkeypatch, cause, after):
     service, _ = env
     body, _, result = deliver(env)
-    # Reproduce the old version's selected, credential-bearing unfinished row.
+    # An unfinished credential must remain unusable across durable-write failures.
     payload = json.loads(service.store.path.read_text())
-    payload["integration"]["active_agent"] = result["agent_id"]
     auth_store.atomic_private_json(service.store.path, payload)
     service.store.load()
     if cause == "expiry":
@@ -492,7 +502,7 @@ def test_retirement_and_selection_clear_are_one_atomic_write(env, alternate_agen
     if not after:
         assert service.store.path.read_text() == before
     else:
-        assert disk.integration["active_agent"] == ""
+        assert "active_agent" not in disk.integration
         assert not disk.authenticate(result["credential"])
         assert disk.integration["requests"][body["request_id"]]["state"] in {"expired", "stale", "revoked"}
     monkeypatch.setattr(auth_store, "atomic_private_json", save)
@@ -500,7 +510,8 @@ def test_retirement_and_selection_clear_are_one_atomic_write(env, alternate_agen
     expected = {"expiry": "expired", "origin": "stale", "owner": "stale", "revoked": "revoked"}[cause]
     assert service.store.integration["requests"][body["request_id"]]["state"] == expected
     assert not service.store.authenticate(result["credential"])
-    assert_retired_routing(service, result["agent_id"], alternate_agent)
+    assert agent_registry.get_by_id(result["agent_id"]) is None
+    assert agent_registry.get_active().id == alternate_agent.id
 
 
 @pytest.mark.parametrize("state", sorted(integration.TERMINAL - {"completed"}) + ["pending", "approved", "delivered"])
@@ -517,7 +528,8 @@ def test_invalid_credential_bearing_rows_cannot_displace_valid_selection(env, st
     before = service.store.path.read_text()
     assert agent_registry.get_by_id(invalid["agent_id"]) is None
     assert not agent_registry.activate(invalid["agent_id"])
-    assert not agent_registry._activate_integration(invalid["agent_id"])
+    registry_data = json.loads((service.store.path.parent / "agents.json").read_text())
+    assert registry_data["active_agent"] == good["agent_id"]
     assert service.store.path.read_text() == before
     assert agent_registry.get_active().id == good["agent_id"]
 
@@ -540,7 +552,7 @@ def test_completed_row_requires_current_authority(env, alternate_agent, invalidi
 
 
 @pytest.mark.parametrize("after_rename", [False, True])
-def test_owner_revoke_fsync_failure_keeps_routing_and_authority_atomic(
+def test_owner_revoke_fsync_failure_keeps_routing_fail_closed(
     env, alternate_agent, monkeypatch, after_rename
 ):
     service, owner = env
@@ -593,7 +605,8 @@ def test_rotation_preserves_valid_routing_and_retires_only_unusable_agent(
     def assert_selected():
         service.sweep()
         assert service.store.integration["requests"][body["request_id"]]["state"] == "completed"
-        assert CredentialStore(service.store.path).integration["active_agent"] == agent_id
+        assert "active_agent" not in CredentialStore(service.store.path).integration
+        assert json.loads((service.store.path.parent / "agents.json").read_text())["active_agent"] == agent_id
         assert agent_registry.get_active().id == agent_id
         assert agent_registry.activate(agent_id)
 
@@ -612,7 +625,7 @@ def test_rotation_preserves_valid_routing_and_retires_only_unusable_agent(
     if finish == "overlap_expiry":
         monkeypatch.setattr(integration.time, "time", lambda: rotated["overlap_until"])
         # Read-time filtering protects routing before maintenance persists expiry.
-        assert agent_registry.get_active().id == alternate_agent.id
+        assert agent_registry.get_active() is None
         assert not agent_registry.activate(agent_id)
         life.sweep()
         assert_retired_routing(service, agent_id, alternate_agent)
@@ -643,8 +656,8 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
     import vauxr.auth.connections as auth_connections
     import vauxr.devices.registry as device_registry
     import vauxr.pipeline as pipeline
-    from vauxr.agents.server import AgentServer, _Connection
     from tests.test_pipeline import FakeWs
+    from vauxr.agents.server import AgentServer, _Connection
 
     service, owner = env
     body, _, issued = deliver(env)
@@ -766,7 +779,7 @@ async def test_revoke_after_response_end_aborts_only_originating_media(
         device_registry.reset()
 
 
-async def test_fallback_b_cannot_dispatch_to_a_listener_while_a_teardown_held(env, alternate_agent):
+async def test_switch_to_b_cannot_dispatch_to_a_listener_while_a_teardown_held(env, alternate_agent):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
@@ -783,7 +796,7 @@ async def test_fallback_b_cannot_dispatch_to_a_listener_while_a_teardown_held(en
         await server._handle_auth(conn, issued["credential"])
         connections.append(conn)
     a, b = connections
-    # B is the configured fallback; A is selected in the integration snapshot.
+    # Select A, then explicitly switch to B after retiring A.
     agent_registry._set_active_for_tests(b.agent)
     assert agent_registry.activate(a.agent.id)
     listener = {"on_delta": Mock(), "on_end": Mock(), "on_error": Mock()}
@@ -799,6 +812,8 @@ async def test_fallback_b_cannot_dispatch_to_a_listener_while_a_teardown_held(en
     a.authority.close = held_close
     Lifecycle(service.store, ORIGIN).execute(
         "revoke", {"operation_id": "f" * 32, "role": "integration", "subject": a.agent.id}, owner)
+    assert agent_registry.get_active() is None
+    assert agent_registry.activate(b.agent.id)
     teardown = asyncio.create_task(auth_connections.disconnect_stale(service.store))
     try:
         await asyncio.wait_for(entered.wait(), 1)

@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from vauxr.auth.policy import Operation, PairApprovalResult, Principal, Role, allowed
 from vauxr.auth.store import Credential, CredentialStore, verifier
+from vauxr.config import get_config
 from vauxr.provisioning.enrollment_schema import BINDING, MAX_REQUESTS, TTL, hex_string
 
 log = logging.getLogger("vauxr.enrollment")
@@ -290,6 +291,20 @@ class Enrollment:
         if any(record.subject == row["device_id"] for record in self.store.records):
             raise EnrollmentError("already_owned")
 
+    def _device_id(self, body: dict) -> str:
+        binding = {"public_key": body["public_key"], "kind": body["kind"]}
+        existing = [subject for subject, row in self.store.lifecycle.get("bindings", {}).items() if row == binding]
+        if len(existing) > 1:
+            raise EnrollmentError("conflict")
+        if existing:
+            return existing[0]  # Includes old IDs of any length; length changes never rename identities.
+        pending = [row["device_id"] for row in self.store.enrollment.get("requests", {}).values()
+                   if row["public_key"] == body["public_key"] and row["kind"] == body["kind"]]
+        if pending:
+            return pending[0]
+        suffix = hashlib.sha256(bytes.fromhex(body["public_key"])).hexdigest()[:get_config().device_id_length]
+        return "dev_" + suffix
+
     def _request(self, state: dict, body: dict) -> dict:
         if (
             body["kind"] not in ("physical", "browser")
@@ -324,7 +339,7 @@ class Enrollment:
             "code_hash": "",
             "initiator": None,
             "approver": None,
-            "device_id": "dev_" + hashlib.sha256(bytes.fromhex(body["public_key"])).hexdigest(),
+            "device_id": self._device_id(body),
         }
         self._unowned(row)
         if any(

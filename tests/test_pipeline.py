@@ -19,7 +19,6 @@ import vauxr.speech.wyoming_tts as wyoming_tts
 from vauxr.agents.server import AgentServer
 from vauxr.pipeline import resolve_follow_up, run_text_turn, run_voice_turn
 
-
 # --- Test doubles ---
 
 
@@ -88,7 +87,7 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path):
 
 def _set_direct_active():
     # Reach into the registry to flip openclaw-direct on without disk I/O.
-    agent_registry._openclaw_direct_active = True  # type: ignore[attr-defined]
+    agent_registry.activate("openclaw-direct")
 
 
 def _set_agent_active():
@@ -96,7 +95,6 @@ def _set_agent_active():
         id="ch-1",
         name="My Agent",
         type="openclaw",
-        tokenHash="hash",
         active=True,
         createdAt="2026-05-17T00:00:00Z",
     )

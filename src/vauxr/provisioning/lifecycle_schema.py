@@ -1,6 +1,5 @@
 """Validated bounded lifecycle namespace; tombstones are never evicted."""
 
-import hashlib
 import re
 
 from vauxr.provisioning.enrollment_schema import hex_string, timestamp
@@ -56,7 +55,7 @@ def validate_lifecycle(state: object) -> None:
             if (not isinstance(subject, str) or row.keys() != {"public_key", "kind"}
                     or not hex_string(row["public_key"], 64) or row["kind"] not in ("physical", "browser")):
                 raise ValueError
-            if subject != "dev_" + hashlib.sha256(bytes.fromhex(row["public_key"])).hexdigest():
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", subject):
                 raise ValueError
         for subject, row in state["recovery"].items():
             if (subject not in state["bindings"] or row.keys() != {"operation_id", "request_id"}

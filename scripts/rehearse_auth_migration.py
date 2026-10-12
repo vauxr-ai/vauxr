@@ -34,14 +34,15 @@ def rehearse() -> None:
 
     sys.addaudithook(offline_only)
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from vauxr.auth.owner import OwnerAuth, OwnerError, generate_token
     from vauxr.auth.policy import Principal
     from vauxr.auth.store import CredentialStore, atomic_private_json
+    from vauxr.config import reset_config
     from vauxr.provisioning.enrollment import Enrollment
     from vauxr.provisioning.integration import Integration
     from vauxr.provisioning.integration_schema import empty_state as integration_state
     from vauxr.provisioning.lifecycle import Lifecycle
     from vauxr.provisioning.lifecycle_schema import empty_state as lifecycle_state
-    from vauxr.auth.owner import OwnerAuth, OwnerError, generate_token
 
     origin = "http://localhost:8080"
     os.umask(0o077)
@@ -72,6 +73,7 @@ def rehearse() -> None:
         # Re-open from disk for each simulated process restart. These are the
         # auth startup services, without binding listeners or starting providers.
         os.environ["DATA_DIR"] = str(directory)
+        reset_config()
         store = CredentialStore(directory / "authz.json")
         owner = OwnerAuth(store, override, origin=origin)
         owner.initialize()
@@ -103,12 +105,15 @@ def rehearse() -> None:
             data.mkdir()
             settings = {
                 "devices.json": {"legacy-kitchen": {"name": "Kitchen", "voice": True}},
-                "speech-settings.json": {"defaults": {"stt_backend": "whisper", "tts_backend": "piper",
-                                                     "voices": {"piper": "en_US-libritts_r-medium"}},
-                                         "devices": {"legacy-kitchen": {"stt_backend": "whisper"}}},
-                "speech-providers.json": [],
-                "config.json": {"openclawDirectActive": False},
-                "channels.json": [],
+                "speech.json": {"version": 1, "providers": [
+                    {"id": "whisper", "kind": "stt", "adapter": "whisper", "model": "small",
+                     "host": "whisper", "port": 10300},
+                    {"id": "piper", "kind": "tts", "adapter": "piper", "model": "fixture",
+                     "host": "piper", "port": 10200, "voices": ["en_US-libritts_r-medium"]}],
+                    "defaults": {"mode": "standard", "stt_backend": "whisper", "tts_backend": "piper",
+                                 "voices": {"piper": "en_US-libritts_r-medium"}},
+                    "devices": {"legacy-kitchen": {"stt_backend": "whisper"}}},
+                "config.json": {},
                 "webhooks.json": [],
             }
             for name, value in settings.items():

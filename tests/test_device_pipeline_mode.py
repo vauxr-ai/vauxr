@@ -6,18 +6,29 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-import vauxr.devices.registry as registry
 import vauxr.realtime.session as realtime_session
-import vauxr.server as server
-from vauxr.devices.config import load_device_configs, pipeline_mode, save_device_configs
+from vauxr import server
+from vauxr.devices import registry
+from vauxr.devices.config import load_device_configs, pipeline_mode
 
 
 def test_mode_persistence_and_default(tmp_path):
-    save_device_configs(str(tmp_path), {"a": {"pipeline_mode": "realtime"},
-                                        "b": {"pipeline_mode": []}})
+    from vauxr.speech.store import SpeechStore, get_store
+
+    registry.reset()
+    registry.update_config("a", {"pipeline_mode": "realtime"})
     loaded = load_device_configs(str(tmp_path))
-    assert pipeline_mode(loaded["a"]) == "realtime"
-    assert pipeline_mode(loaded["b"]) == pipeline_mode(None) == "standard"
+    assert "pipeline_mode" not in loaded["a"]
+    store = get_store()
+    restored = SpeechStore(tmp_path, tuple(store.backends.values()))
+    assert restored.voice_settings("a")["mode"] == "realtime"
+    assert pipeline_mode(registry.get_config_for("a")) == "realtime"
+    assert pipeline_mode(registry.get_config_for("b")) == pipeline_mode(None) == "standard"
+    before = store.path.read_bytes()
+    with pytest.raises(ValueError, match="mode"):
+        registry.update_config("b", {"pipeline_mode": []})
+    assert store.path.read_bytes() == before
+    registry.reset()
 
 
 @pytest.fixture
@@ -61,7 +72,7 @@ async def test_interrupted_standard_cleanup_does_not_reset_new_capture(env, monk
     (True, "vauxr.local", ["ws"], False),
 ])
 async def test_standard_transport_policy(env, monkeypatch, enabled, host, caps, webrtc):
-    import vauxr.auth.owner as owner
+    from vauxr.auth import owner
     _, ws, ctx = env
     monkeypatch.setattr(owner, "configured_origin", lambda: "https://vauxr.test")
     monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
@@ -74,7 +85,7 @@ async def test_standard_transport_policy(env, monkeypatch, enabled, host, caps, 
 
 
 async def test_websocket_device_policy_opts_out_of_available_webrtc(env, monkeypatch):
-    import vauxr.auth.owner as owner
+    from vauxr.auth import owner
     _, ws, ctx = env
     monkeypatch.setattr(registry, "get_config_for", lambda _: {"transport_mode": "websocket"})
     monkeypatch.setattr(owner, "configured_origin", lambda: "https://vauxr.test")

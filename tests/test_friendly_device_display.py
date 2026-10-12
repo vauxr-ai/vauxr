@@ -11,14 +11,14 @@ import pytest
 from aiohttp import ClientWebSocketResponse
 from aiohttp.test_utils import TestClient, TestServer
 
-import vauxr.auth.service as auth
 import vauxr.agents.registry as agents
+import vauxr.auth.service as auth
 import vauxr.config as config
 import vauxr.devices.registry as devices
 import vauxr.pipeline as pipeline
+from tests.auth_helpers import create_agent, seed
 from vauxr.auth.policy import Role
 from vauxr.server import APP_STATE, make_app
-from tests.auth_helpers import seed
 
 A = "dev_" + "a" * 64
 B = "dev_" + "b" * 64
@@ -36,7 +36,7 @@ async def wire(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncIterator
     monkeypatch.setattr(pipeline, "transcribe", AsyncMock(return_value="hello"))
     for device_id in (A, B):
         seed(device_id + "-secret", Role.DEVICE, device_id)
-    agent, _ = await agents.create("Raw agent label", "openclaw")
+    agent, _ = await create_agent("Raw agent label", "openclaw")
     seed("integration-secret", Role.INTEGRATION, agent.id)
     agents.activate(agent.id)
     async with TestClient(TestServer(make_app())) as client:
@@ -187,7 +187,9 @@ async def test_failed_save_and_corrupt_store_never_use_cached_name(
     monkeypatch.setattr(devices, "save_device_configs", fail_save)
     with pytest.raises(OSError, match="simulated failed save"):
         devices.update_config(A, {"name": "Uncommitted"})
-    assert devices.get_config_for(A)["name"] == "Uncommitted"
+    # Failed persistence must not publish uncommitted device metadata.
+    assert devices.get_config_for(A)["name"] == "Committed"
+    assert json.loads((tmp_path / "devices.json").read_text())[A]["name"] == "Committed"
     assert cs.send_transcript(A, "hello")
     assert await agent.receive_json(timeout=3) == expected(A, "Committed")
     path = tmp_path / "devices.json"

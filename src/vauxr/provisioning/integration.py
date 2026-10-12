@@ -45,13 +45,18 @@ class Integration:
             if previous.get(key, {}).get("state") != row["state"]:
                 log.info("integration enrollment %s", row["state"])
 
+    def _register_agent(self, row: dict) -> None:
+        from datetime import UTC, datetime
+
+        from vauxr.agents.registry import Agent, register
+
+        register(Agent(row["agent_id"], row["display_name"], "openclaw", False,
+                       datetime.fromtimestamp(row["created_at"], tz=UTC).isoformat(), integration=True))
+
     def sweep(self) -> None:
         with self.store.transaction():
             state = copy.deepcopy(self.store.integration) or empty_state()
-            changed = bool(state["active_agent"]) and not any(
-                row["agent_id"] == state["active_agent"] and self.store.integration_agent_valid(row)
-                for row in state["requests"].values()
-            )
+            changed = False
             for row in state["requests"].values():
                 if row["state"] == "completed":
                     matching = [r for r in self.store.records if r.subject == row["agent_id"]]
@@ -159,9 +164,14 @@ class Integration:
                         or credential.verifier in self.store.lifecycle.get("blocked", [])):
                     raise EnrollmentError("invalid_ack")
                 if row["state"] == "completed":
+                    self._register_agent(row)
                     return self.public(row)
                 if row["state"] != "delivered":
                     raise EnrollmentError("unavailable")
+                # Persist metadata first. Credentials remain unusable until the
+                # completed proof and enabled credential commit together; a crash
+                # cannot leave usable integration authority without its registry row.
+                self._register_agent(row)
                 row["state"] = "completed"
                 self._save(state, tuple(replace(r, enabled=True) if r.id == credential.id else r
                                         for r in self.store.records))

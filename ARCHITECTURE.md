@@ -350,7 +350,7 @@ Complete immutable selections are captured at turn start and used across WS,
 WebRTC, announcements and button speech. Shared Wyoming adapters replace the
 realtime path's duplicate transport clients. The boolean device `voice` flag
 retains its existing meaning. Realtime TTS still buffers an entire segment.
-See [speech settings](docs/speech-settings.md) for persistence, API, readiness
+See [speech settings](docs/configuration.md) for persistence, API, readiness
 limits, configuration examples and the #45/#49 owner/scoped auth integration seam.
 
 
@@ -364,7 +364,7 @@ or enrollment finishes. Code/audio remain in RAM only; approved credentials
 still follow the existing signed redemption and durable-save flow.
 
 The portal's **Pairing and access → Edit pairing messages** stores `intro` and
-`code` text in `DATA_DIR/pairing-prompts.json`. Owner-session/CSRF-protected POSTs
+`code` text in `config.json` under `pairing.prompts`. Owner-session/CSRF-protected POSTs
 to `/api/enrollment/v1/prompts` and `/save-prompts` read/write these settings.
 The welcome is limited to 400 characters and must not contain `{code}`; the
 code announcement is limited to 200 characters and must contain `{code}` once.

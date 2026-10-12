@@ -31,7 +31,7 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     seed("tok-E", Role.DEVICE, "dev1")
     registry.reset()
     agent_registry._reset_for_tests()
-    agent_registry._openclaw_direct_active = True  # type: ignore[attr-defined]
+    agent_registry.activate("openclaw-direct")
     yield
     agent_registry._reset_for_tests()
     registry.reset()

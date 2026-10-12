@@ -26,10 +26,17 @@ test.use({ baseURL: origin, trace: "off", screenshot: "off", video: "off" });
 test.beforeEach(async () => {
   data = mkdtempSync(resolve(root, ".browser-test-"));
   // Synthetic unavailable Wyoming providers exercise selection without model inference.
-  writeFileSync(resolve(data, "speech-providers.json"), JSON.stringify([
-    { id: "parakeet", kind: "stt", adapter: "parakeet-v3", model: "v3", host: "127.0.0.1", port: 1 },
-    { id: "kokoro", kind: "tts", adapter: "kokoro", model: "kokoro-test", host: "127.0.0.1", port: 1, voices: ["af", "bf"] },
-  ]));
+  writeFileSync(resolve(data, "speech.json"), JSON.stringify({
+    version: 1,
+    providers: [
+      { id: "whisper", kind: "stt", adapter: "whisper", model: "test", host: "127.0.0.1", port: 1 },
+      { id: "piper", kind: "tts", adapter: "piper", model: "test", host: "127.0.0.1", port: 1, voices: ["amy"] },
+      { id: "parakeet", kind: "stt", adapter: "parakeet-v3", model: "v3", host: "127.0.0.1", port: 1 },
+      { id: "kokoro", kind: "tts", adapter: "kokoro", model: "kokoro-test", host: "127.0.0.1", port: 1, voices: ["af", "bf"] },
+    ],
+    defaults: { mode: "standard", stt_backend: "whisper", tts_backend: "piper", voices: { piper: "amy", kokoro: "af" } },
+    devices: {},
+  }));
   environment = {
     PATH: process.env.PATH,
     REALTIME_ENABLED: "0",

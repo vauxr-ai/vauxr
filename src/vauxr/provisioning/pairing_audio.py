@@ -12,6 +12,7 @@ from typing import TypedDict
 from aiohttp import web
 
 from vauxr.config import get_config
+from vauxr.config_files import invalid, read_json, update_json
 from vauxr.speech.wyoming_tts import synthesize
 
 MEDIA_TYPE = "application/vnd.vauxr.pairing-audio"
@@ -49,21 +50,31 @@ def validate_prompts(value: object) -> Prompts:
 
 
 def prompts_path() -> Path:
-    return Path(get_config().data_dir) / "pairing-prompts.json"
+    return Path(get_config().data_dir) / "config.json"
 
 
 def load_prompts() -> Prompts:
     path = prompts_path()
-    return validate_prompts(json.loads(path.read_text())) if path.exists() else DEFAULT_PROMPTS.copy()
+    data = read_json(path) if path.exists() else {}
+    if not isinstance(data, dict) or not isinstance(data.get("pairing", {}), dict):
+        raise invalid(path, "pairing", "expected an object")
+    try:
+        return validate_prompts(data.get("pairing", {}).get("prompts", DEFAULT_PROMPTS.copy()))
+    except ValueError:
+        raise invalid(path, "pairing.prompts", "expected intro (1–400 characters) and code (1–200 characters), with {code} exactly once in code only") from None
 
 
 def save_prompts(value: object) -> Prompts:
     prompts = validate_prompts(value)
     path = prompts_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(prompts) + "\n")
-    temporary.replace(path)
+
+    def change(data: dict) -> dict:
+        pairing = data.get("pairing", {})
+        if not isinstance(pairing, dict):
+            raise invalid(path, "pairing", "expected an object")
+        return {**data, "pairing": {**pairing, "prompts": prompts}}
+
+    update_json(path, change)
     return prompts
 
 
@@ -105,7 +116,7 @@ async def proof_response(request: web.Request, result: dict) -> web.Response:
             code = await render(prompts["code"].replace("{code}", spoken_code), MAX_CODE_BYTES)
         if time.time() >= result["expires_at"]:
             return fallback
-    except Exception:
+    except Exception:  # noqa: BLE001 — provider errors must use the redacted fallback
         # Provider exceptions may contain text/code; never include them.
         log.warning("Pairing speech unavailable; using device console delivery")
         return fallback

@@ -1,9 +1,9 @@
 import { ownerFetch } from "../auth/api";
 import { useCallback, useEffect, useState } from "react";
 
-type Backend = { id: string; kind: "stt" | "tts"; model: string; voices: string[]; readiness: string };
-type Defaults = { mode?: "standard" | "realtime"; realtime_model?: string; realtime_voice?: string; stt_backend: string; tts_backend: string; voices: Record<string, string> };
-type View = { voice?: { mode: "standard" | "realtime"; realtime_model: string; realtime_voice: string }; realtime?: { configured: boolean; voices: string[] }; defaults: Defaults; overrides: Partial<Defaults>; effective: {
+type Backend = { id: string; kind: "stt" | "tts" | "realtime"; model: string; voices: string[]; readiness: string };
+type Defaults = { mode?: "standard" | "realtime"; realtime_backend?: string; realtime_voice?: string; stt_backend: string; tts_backend: string; voices: Record<string, string> };
+type View = { voice?: { mode: "standard" | "realtime"; realtime_backend: string; realtime_model: string; realtime_voice: string }; realtime?: { configured: boolean; voices: string[] }; defaults: Defaults; overrides: Partial<Defaults>; effective: {
   stt_backend: string; tts_backend: string; voice_id: string;
 } | null; backends: Backend[]; error: string | null };
 
@@ -75,12 +75,12 @@ export default function SpeechSettings({ deviceId, onModeChange }: {
         </select>
       </label>
       {data.voice?.mode === "realtime" ? <>
-        <label>Realtime provider / model<select className={style} value={data.voice.realtime_model}
-          onChange={e => void update({ realtime_model: e.target.value })}>
-          <option value="gpt-live-1">OpenAI · gpt-live-1</option></select></label>
+        <label>Realtime provider / model<select className={style} value={data.voice.realtime_backend}
+          onChange={e => void update({ realtime_backend: e.target.value })}>
+          {data.backends.filter(b => b.kind === "realtime").map(b => <option key={b.id} value={b.id}>{b.id} · {b.model} · {b.readiness}</option>)}</select></label>
         <label>Realtime voice<select className={style} value={data.voice.realtime_voice}
           onChange={e => void update({ realtime_voice: e.target.value })}>
-          {(data.realtime?.voices || ["marin", "cedar"]).map(v => <option key={v}>{v}</option>)}
+          {(data.realtime?.voices || []).map(v => <option key={v}>{v}</option>)}
         </select></label>
         {!data.realtime?.configured && <p>Realtime needs server setup: enable Realtime and configure the OpenAI API key on Vauxr.</p>}
       </> : <>

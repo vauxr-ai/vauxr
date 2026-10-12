@@ -10,7 +10,10 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any, Literal, TypedDict
+
+from vauxr.config_files import invalid, read_json, write_json
 
 log = logging.getLogger("vauxr.device_config")
 
@@ -83,7 +86,7 @@ VALID_BUTTON_COMMANDS: frozenset[str] = frozenset({"set_volume", "mute", "unmute
 
 KNOWN_FIELDS: frozenset[str] = frozenset(
     {
-        "pipeline_mode", "transport_mode", "name", "voice", "follow_up_mode",
+        "transport_mode", "name", "voice", "follow_up_mode",
         "output_sample_rate", "barge_in", "button_actions",
     }
 )
@@ -189,9 +192,7 @@ def _sanitize_entry(device_id: str, raw: Any) -> DeviceConfig:
     for key, value in raw.items():
         if key not in KNOWN_FIELDS:
             continue
-        if key == "pipeline_mode":
-            cfg["pipeline_mode"] = "realtime" if value == "realtime" else "standard"
-        elif key == "transport_mode":
+        if key == "transport_mode":
             cfg["transport_mode"] = "websocket" if value == "websocket" else "webrtc"
         elif key == "name" and isinstance(value, str):
             cfg["name"] = value
@@ -241,10 +242,37 @@ def barge_in_enabled(cfg: DeviceConfig | None) -> bool:
     return cfg.get("barge_in", True) is True
 
 
-def load_device_configs(data_dir: str) -> dict[str, DeviceConfig]:
+def load_device_configs(data_dir: str, *, strict: bool = False) -> dict[str, DeviceConfig]:
     path = device_config_path(data_dir)
     if not os.path.exists(path):
+        if strict:
+            write_json(Path(path), {})
         return {}
+
+    if strict:
+        parsed = read_json(Path(path))
+        if not isinstance(parsed, dict):
+            raise invalid(Path(path), "$", "expected an object keyed by device IDs")
+        for entry in parsed.values():
+            if not isinstance(entry, dict) or entry.keys() - KNOWN_FIELDS:
+                raise invalid(Path(path), "devices.*", "expected an object of supported device settings")
+            for key, value in entry.items():
+                valid = True
+                if key == "transport_mode":
+                    valid = isinstance(value, str) and value in ("websocket", "webrtc")
+                elif key == "name":
+                    valid = isinstance(value, str) and _DISPLAY_NAME_CONTROLS.search(value) is None and sum(2 if ord(c) > 0xFFFF else 1 for c in value) <= 128
+                elif key in ("voice", "barge_in"):
+                    valid = type(value) is bool
+                elif key == "follow_up_mode":
+                    valid = isinstance(value, str) and value in VALID_FOLLOW_UP_MODES
+                elif key == "output_sample_rate":
+                    valid = type(value) is int and value > 0
+                elif key == "button_actions":
+                    valid = parse_button_actions(value)[1] is None
+                if not valid:
+                    raise invalid(Path(path), "devices.*." + key, "invalid device setting; see the device settings schema")
+        return {device_id: _sanitize_entry(device_id, entry) for device_id, entry in parsed.items()}
 
     try:
         with open(path, encoding="utf-8") as f:
@@ -263,7 +291,5 @@ def load_device_configs(data_dir: str) -> dict[str, DeviceConfig]:
 def save_device_configs(data_dir: str, configs: dict[str, DeviceConfig]) -> None:
     os.makedirs(data_dir, exist_ok=True)
     path = device_config_path(data_dir)
-    # 2-space indent matches the Node JSON.stringify(_, null, 2) output so
-    # devices.json diffs cleanly when viewed across versions.
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(configs, f, indent=2)
+    write_json(Path(path), {device_id: {key: value for key, value in cfg.items() if key != "pipeline_mode"}
+                            for device_id, cfg in configs.items()})

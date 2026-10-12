@@ -8,16 +8,16 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 
-import vauxr.auth.service as auth
 import vauxr.agents.registry as agent_registry
+import vauxr.auth.service as auth
 import vauxr.config as config
 import vauxr.devices.registry as device_registry
+from tests.auth_helpers import TRANSPORT_HEADERS, create_agent, owner_headers, seed
+from tests.test_announce import FakeWs
 from vauxr.auth.policy import HTTP_OPERATIONS, WS_OPERATIONS, Role
-from vauxr.web.server import _require_auth, make_http_app
 from vauxr.realtime.app import _offer_handler
 from vauxr.server import make_app
-from tests.auth_helpers import TRANSPORT_HEADERS, owner_headers, seed
-from tests.test_announce import FakeWs
+from vauxr.web.server import _require_auth, make_http_app
 
 
 @pytest.fixture(autouse=True)
@@ -344,8 +344,8 @@ async def test_inactive_agent_cannot_inject_voice_response():
 
     from vauxr.agents.server import AgentServer
 
-    active, _ = await agent_registry.create("Active")
-    inactive, _ = await agent_registry.create("Inactive")
+    active, _ = await create_agent("Active")
+    inactive, _ = await create_agent("Inactive")
     agent_registry.activate(active.id)
     seed("idle-agent-secret", Role.INTEGRATION, inactive.id)
     cs = AgentServer()
@@ -461,7 +461,7 @@ async def test_reissued_agent_rejects_existing_connection_in_both_directions(res
     from vauxr.agents.server import AgentServer
     from vauxr.server import APP_STATE
 
-    agent, _ = await agent_registry.create("Active")
+    agent, _ = await create_agent("Active")
     agent_registry.activate(agent.id)
     seed("agent-secret", Role.INTEGRATION, agent.id)
     cs = AgentServer()
@@ -510,7 +510,7 @@ async def test_lifecycle_revoke_closes_idle_socket_before_owner_response(role):
     path = "/ws"
     frame = {"type": "hello", "device_id": subject, "token": token}
     if role == "integration":
-        agent, _ = await agent_registry.create("Lifecycle test")
+        agent, _ = await create_agent("Lifecycle test")
         agent_registry.activate(agent.id)
         subject = agent.id
         token = "lifecycle-integration-secret"
@@ -583,7 +583,7 @@ async def test_integration_revocation_stops_media_without_plugin_socket(monkeypa
     import vauxr.auth.connections as auth_connections
     from vauxr.agents.server import AgentServer, _Connection
 
-    agent, _ = await agent_registry.create("Orphaned media")
+    agent, _ = await create_agent("Orphaned media")
     agent_registry.activate(agent.id)
     seed("media-integration-secret", Role.INTEGRATION, agent.id)
     server = AgentServer()
@@ -622,7 +622,7 @@ async def test_realtime_media_retains_integration_generation(monkeypatch):
     from vauxr.provisioning.lifecycle_http import LIFECYCLE
     from vauxr.web.owner import OWNER
 
-    agent, _ = await agent_registry.create("Media dependency")
+    agent, _ = await create_agent("Media dependency")
     agent_registry.activate(agent.id)
     seed("media-integration-secret", Role.INTEGRATION, agent.id)
     app = make_http_app()
@@ -668,7 +668,7 @@ async def test_lifecycle_http_teardown_timeout_and_maintenance_retry(monkeypatch
     subject = "speaker"
     token = "device-secret"
     if role == "integration":
-        agent, _ = await agent_registry.create("Teardown failure")
+        agent, _ = await create_agent("Teardown failure")
         agent_registry.activate(agent.id)
         subject = agent.id
         token = "synthetic-hanging-integration"

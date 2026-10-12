@@ -10,8 +10,8 @@ from aiohttp.test_utils import TestServer
 import vauxr.config as config
 import vauxr.speech.openai as openai_tts
 import vauxr.speech.store as speech
-from vauxr.speech.store import Backend, SpeechStore
 from vauxr.speech.catalog import load_backends, validate_backend
+from vauxr.speech.store import Backend, SpeechStore
 from vauxr.speech.wyoming_tts import synthesize
 
 PCM = struct.pack("<2400h", *([1000, -1000] * 1200))  # 100 ms at 24 kHz
@@ -114,11 +114,14 @@ def test_catalog_offers_openai_as_option_with_piper_default(tmp_path, monkeypatc
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     config.reset_config()
-    assert [b.id for b in load_backends(config.get_config()) if b.kind == "tts"] == ["piper"]
+    without_key = load_backends(config.get_config())
+    assert [b.id for b in without_key if b.kind == "tts"] == ["piper", "kokoro", "openai-tts"]
+    assert next(b for b in without_key if b.kind == "realtime").id == "openai-live"
 
     monkeypatch.setenv("OPENAI_API_KEY", "local-test-key")
     config.reset_config()
     backends = load_backends(config.get_config())
+    assert backends == without_key
     openai = next(b for b in backends if b.id == "openai-tts")
     assert openai.adapter == "openai" and openai.voices[:2] == ("marin", "cedar")
     assert "api.openai.com" in openai_tts.base_url(openai) and openai_tts.base_url(openai).startswith("https")
