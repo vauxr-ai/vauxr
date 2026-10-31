@@ -33,6 +33,7 @@ class DeviceActivity:
         self.pending_writes = self.epoch = self.revision = 0
         self.task: asyncio.Task | None = None
         self.lock = asyncio.Lock()
+        self.control_lock = asyncio.Lock()
         self._vad = self._resampler = None
 
     def owns(self):
@@ -164,7 +165,10 @@ class DeviceActivity:
             revision = self.revision
             first_notice = self.last_sent == float('-inf')
             try:
-                sent = await asyncio.wait_for(self.session._send_control(message), 1)
+                async with self.control_lock:
+                    if not self.admitted():
+                        return
+                    sent = await asyncio.wait_for(self.session._send_control(message), 1)
             except (TimeoutError, ConnectionError):
                 sent = False
             if not sent:
@@ -216,12 +220,15 @@ class DeviceActivity:
         if self.closed:
             return
         owned = self.owns()
+        self.close()
         if owned:
             try:
-                await asyncio.wait_for(self.session._send_control({'type':'audio.end', 'follow_up':False}), 1)
+                async with self.control_lock:
+                    if not self.session._closed and self.session._owns_control():
+                        await asyncio.wait_for(self.session._send_control(
+                            {'type': 'audio.end', 'follow_up': False}), 1)
             except (TimeoutError, ConnectionError):
                 pass
-        self.close()
         if owned:
             asyncio.create_task(self.session.close())
 

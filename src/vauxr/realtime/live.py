@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import secrets
 import time
@@ -39,6 +40,9 @@ from vauxr.realtime.transcript import TranscriptRelay
 from vauxr.speech.store import get_store
 
 LIVE_INSTRUCTIONS = (
+    "During active follow-up, nearby speech may be between people rather than addressed to you. "
+    "Stay silent for unrelated conversation or uncertain address. Natural replies and clear commands "
+    "do not need another wake word. Respect requests to stop listening; never just promise silence. "
     "Handle casual voice conversation naturally. Consult the backend for personal memory, "
     "context you lack, deeper reasoning and all actions. Never claim an action succeeded without "
     "its backend result. Backend results are context for your spoken reply, not another voice. "
@@ -54,7 +58,16 @@ class BackendWorker(BaseWorker):
 
     @job(name="run", sequential=True)
     async def consult(self, message: BusJobRequestMessage) -> None:
+        await self.live.user_turn_done.wait()
+        epoch = self.live.address_gate.epoch if self.live.address_gate else None
+        gate = self.live.address_gate
+        if gate is not None and not await gate.admitted():
+            await self.send_job_response(message.job_id, {"text": ""})
+            return
         await self.live.flush_transcript(wait_for_user=True)
+        if gate is not None and (gate.closed or not gate.allowed or gate.epoch != epoch):
+            await self.send_job_response(message.job_id, {"text": ""})
+            return
         request = "Consult the latest outstanding request in this realtime conversation."
         result = await self.live.request("consult", {"request": request}, timeout=300)
         text = str(result.get("text", ""))
@@ -74,6 +87,8 @@ class LiveService(OpenAILiveLLMService):
         from vauxr.realtime.device_activity import DeviceActivity
         self.startup = getattr(session, "_startup", None)
         self.device_activity = DeviceActivity(session) if session.is_physical_live else None
+        from vauxr.realtime.addressed import AddressGate
+        self.address_gate = AddressGate(self._quiet_address_turn) if self.device_activity else None
         self.agent_id = agent_id
         self.session_id = secrets.token_hex(16)
         self.fragments: list[dict[str, object]] = []
@@ -98,6 +113,25 @@ class LiveService(OpenAILiveLLMService):
             await self._process_live_frame(frame, FrameDirection.DOWNSTREAM)
 
     async def _handle_server_event(self, evt: live_events.ServerEvent) -> None:
+        gate = self.address_gate
+        if gate is not None:
+            if isinstance(evt, live_events.OutputAudioDeltaEvent):
+                # Live includes continuous silence. Drop idle silence, but
+                # retain pauses once a held reply starts so its cadence survives.
+                from vauxr.realtime.device_activity import audible
+                pcm = base64.b64decode(evt.delta)
+                if not gate.allowed and not gate.pending and not audible(pcm):
+                    return
+                if await gate.hold(evt, len(pcm)):
+                    return
+            elif isinstance(evt, live_events.TranscriptDeltaEvent) and evt.role == "assistant":
+                if await gate.hold(evt, len(evt.delta.encode())):
+                    return
+            elif gate.closed and isinstance(evt, live_events.SessionDelegationCreatedEvent):
+                return
+        await self._dispatch_server_event(evt)
+
+    async def _dispatch_server_event(self, evt: live_events.ServerEvent) -> None:
         activity = self.device_activity
         if activity:
             if evt.type == "session.started":
@@ -141,9 +175,14 @@ class LiveService(OpenAILiveLLMService):
         await self._process_live_frame(frame, direction)
 
     async def _process_live_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        if isinstance(frame, InputAudioRawFrame) and self.address_gate is not None and self.address_gate.closed:
+            return
         if self.device_activity:
             if isinstance(frame, InputAudioRawFrame):
+                was_speaking = self.device_activity.user_speaking
                 await self.device_activity.input_audio(frame)
+                if not was_speaking and self.device_activity.user_speaking:
+                    await self._begin_address_turn()
             elif isinstance(frame, InterruptionFrame):
                 await self.device_activity.interrupt()
             elif isinstance(frame, (CancelFrame, EndFrame)):
@@ -166,9 +205,30 @@ class LiveService(OpenAILiveLLMService):
             self.agent_id, self.session.device_id, self.session_id, operation, payload, timeout=timeout,
         )
 
+    async def _quiet_address_turn(self) -> None:
+        await self.broadcast_frame(InterruptionFrame)
+        await self.device_activity.stop()
+
+    async def _begin_address_turn(self) -> None:
+        gate = self.address_gate
+        if gate is not None and not gate.closed and not gate.collecting:
+            gate.begin()
+            # Flush queued previous speech at the real output boundary. Live
+            # does not emit Pipecat interruption frames for its own barge-in.
+            await self.broadcast_frame(InterruptionFrame)
+
     async def _handle_evt_transcript_delta(self, evt: Any) -> None:
-        if self.finishing:
+        if self.finishing or (self.address_gate is not None and self.address_gate.closed):
             return
+        if evt.role == "user" and evt.delta and self.address_gate is not None:
+            from vauxr.realtime.addressed import dismissed
+            if not self._user_turn.open:
+                await self._begin_address_turn()
+            text = self._user_turn.text + evt.delta
+            if len(text) > self.address_gate.MAX_TEXT or dismissed(text):
+                await super()._handle_evt_transcript_delta(evt)
+                await self.address_gate.stop()
+                return
         if evt.delta:
             self.session._touch_activity()
             if self.device_activity:
@@ -185,6 +245,8 @@ class LiveService(OpenAILiveLLMService):
     async def _append_turn(self, role: str, delta: str, accumulated: str, evt: Any) -> None:
         # Keep Pipecat's audio/context frames streaming. Browser text is a
         # replaceable snapshot, never another persistent history fragment.
+        if role == "assistant" and self.address_gate is not None:
+            self.address_gate.previous = accumulated
         await super()._append_turn(role, delta, accumulated, evt)
         await self._send_transcript_turn(role, accumulated, final=False)
 
@@ -194,6 +256,11 @@ class LiveService(OpenAILiveLLMService):
         turn = self._user_turn if role == "user" else self._assistant_turn
         text = turn.text if turn.open else ""
         await super()._end_turn(role)
+        if text and self.address_gate is not None and not self.address_gate.closed and not self.finishing:
+            if role == "user":
+                self.address_gate.decide(text, self._dispatch_server_event)
+            else:
+                self.address_gate.previous = text
         if text:
             # The SDK transcript writer appends immutable, idempotent messages.
             # Only a closed turn is a record; UI snapshots/deltas are not records.
@@ -221,6 +288,8 @@ class LiveService(OpenAILiveLLMService):
                 await self.device_activity.delegation(delegation.id, False)
 
     async def cleanup(self) -> None:
+        if self.address_gate is not None:
+            self.address_gate.close()
         if self.device_activity:
             self.device_activity.close()
         await self.transcript_relay.close()
@@ -241,6 +310,8 @@ class LiveService(OpenAILiveLLMService):
         from vauxr.realtime.session import _device_ws, _send_json
         ws = _device_ws(self.session.device_id)
         self.finishing = True
+        if self.address_gate is not None:
+            self.address_gate.close()
         if self.device_activity:
             self.device_activity.close()
 
