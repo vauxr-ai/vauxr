@@ -2,13 +2,23 @@
 from __future__ import annotations
 
 import asyncio
+from asyncio import sleep
 from collections import deque
-from typing import Any, Awaitable, Callable
+from time import monotonic
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
+
+if TYPE_CHECKING:
+    from pipecat.frames.frames import InputAudioRawFrame
 
 
 class StartupAudio:
     MAX_AUDIO_SECONDS = 15
     TIMEOUT_SECONDS = 20.0
+    # Stay below the live provider's 1.2x rate / five-second burst allowance.
+    # Slightly faster than real time lets queued RTP eventually catch up.
+    REPLAY_SPEED = 1.15
+    BURST_SECONDS = 4.0
+    DRAIN_TIMEOUT_SECONDS = TIMEOUT_SECONDS + MAX_AUDIO_SECONDS / (REPLAY_SPEED - 1)
 
     def __init__(self, startup_id: int, fail: Callable[[str], Awaitable[None]],
                  *, input_rate: int = 24000) -> None:
@@ -27,6 +37,7 @@ class StartupAudio:
         self._consume: Callable[[Any], Awaitable[None]] | None = None
         self._fail = fail
         self._drain_task: asyncio.Task | None = None
+        self._send_at = 0.0
         self._timer = asyncio.get_running_loop().call_later(
             self.TIMEOUT_SECONDS, self.fail, "REALTIME_STARTUP_TIMEOUT")
 
@@ -93,7 +104,26 @@ class StartupAudio:
     def _maybe_drain(self) -> None:
         if (not self.closed and not self.drained and self.complete and self.provider_ready
                 and self._consume is not None and self._drain_task is None):
+            # Setup remains bounded by TIMEOUT_SECONDS. A paced replay needs a
+            # separate bound: incoming RTP continues at 1x while we catch up.
+            self._timer.cancel()
+            self._timer = asyncio.get_running_loop().call_later(
+                self.DRAIN_TIMEOUT_SECONDS, self.fail, "REALTIME_STARTUP_TIMEOUT")
+            self._send_at = monotonic() - self.BURST_SECONDS / self.REPLAY_SPEED
             self._drain_task = asyncio.create_task(self._drain())
+
+    async def _consume_paced(self, frame: InputAudioRawFrame) -> None:
+        duration = len(frame.audio) / (frame.sample_rate * frame.num_channels * 2)
+        now = monotonic()
+        # Cap saved credit after a slow consumer too; a stall must not allow
+        # the next queued segment to be dumped in one unbounded burst.
+        self._send_at = max(self._send_at, now - self.BURST_SECONDS / self.REPLAY_SPEED)
+        self._send_at += duration / self.REPLAY_SPEED
+        delay = self._send_at - now
+        if delay > 0:
+            await sleep(delay)
+        if not self.closed:
+            await self._consume(frame)
 
     async def _drain(self) -> None:
         from pipecat.audio.resamplers.soxr_resampler import SOXRAudioResampler
@@ -111,12 +141,17 @@ class StartupAudio:
             for offset in range(0, len(pcm), chunk_bytes):
                 if self.closed:
                     return
-                await self._consume(InputAudioRawFrame(
-                    audio=pcm[offset:offset + chunk_bytes], sample_rate=self.input_rate, num_channels=1))
-            self._bytes_24k -= len(pcm) * 24000 // self.input_rate
+                audio = pcm[offset:offset + chunk_bytes]
+                await self._consume_paced(InputAudioRawFrame(
+                    audio=audio, sample_rate=self.input_rate, num_channels=1))
+                if self.closed:
+                    return
+                self._bytes_24k -= len(audio) * 24000 // self.input_rate
             while self._rtp and not self.closed:
                 frame = self._rtp.popleft()
-                await self._consume(frame)
+                await self._consume_paced(frame)
+                if self.closed:
+                    return
                 self._bytes_24k -= len(frame.audio) * 24000 // frame.sample_rate
             if not self.closed:
                 # No await between observing an empty FIFO and releasing live
