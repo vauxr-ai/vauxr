@@ -2,6 +2,7 @@
 
 import json
 import logging
+import ssl
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
@@ -866,8 +867,11 @@ def test_direct_tls_boundary_retained_and_never_accepted_as_lan(tls):
     app[PROXIES] = ()
     for extra, expected in [({}, tls), ({"X-Forwarded-Proto": "https"}, False),
                             ({"Forwarded": "proto=https"}, False)]:
+        # An HTTPS URL alone does not make aiohttp's mock transport use TLS.
         request = make_mocked_request("GET", "https://owner.example/api/auth/status",
-                                      headers={"Host": "owner.example", **extra}, app=app)
+                                      headers={"Host": "owner.example", **extra}, app=app,
+                                      sslcontext=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER))
+        assert request.secure
         assert secure_request(request) == expected
 
 
