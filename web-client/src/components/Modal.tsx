@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useId, type ReactNode, type RefObject } from "react";
 
 /** Native modal supplies inert background, focus containment and Escape handling. */
 export default function Modal({
@@ -14,6 +14,7 @@ export default function Modal({
   returnFocus: RefObject<HTMLButtonElement>;
   titleContent?: ReactNode; headerAction?: ReactNode; className?: string;
 }) {
+  const titleId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const element = dialog.current!;
@@ -27,7 +28,7 @@ export default function Modal({
     <dialog
       ref={dialog}
       className={`modal auth-panel ${className}`}
-      aria-labelledby="modal-title"
+      aria-labelledby={titleId}
       onKeyDown={(event) => {
         if (event.key !== "Tab") return;
         const controls = Array.from(
@@ -53,9 +54,8 @@ export default function Modal({
       <header className="modal-heading">
         <div>
           <span className="eyebrow">MAKE IT YOURS</span>
-          <h2 id="modal-title">{titleContent || title}</h2>
+          <div className="modal-title-line"><h2 id={titleId}>{titleContent || title}</h2>{headerAction}</div>
         </div>
-        {headerAction}
         <button type="button" aria-label="Close dialog" onClick={onClose}>
           ×
         </button>

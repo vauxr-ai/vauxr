@@ -24,7 +24,15 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await closeAgentDetail(page);
     await page.getByRole("button", { name: "Agents", exact: true }).click();
     await page.getByRole("button", { name: "View agent Household integration" }).click();
-    const metadata = page.getByRole("region", { name: "Integration configuration" });
+    const editor = page.getByRole("dialog", { name: "Household integration", exact: true });
+    await expect(editor.getByRole("region", { name: "Integration configuration" })).toHaveCount(0);
+    await expect(editor.getByText(/Agent ID:|This route is shared|Registered route/)).toHaveCount(0);
+    await expect(editor.getByRole("button", {name:"Test selected voice",exact:true})).toBeDisabled();
+    await closeAgentDetail(page);
+    await page.getByRole("button", { name: "Runtime diagnostics for Household integration", exact: true }).click();
+    const diagnostics = page.getByRole("dialog", { name: "Agent runtime diagnostics", exact: true });
+    await expect(diagnostics).toHaveClass(/agent-diagnostics-modal/);
+    const metadata = diagnostics.getByRole("region", { name: "Integration configuration" });
     await expect(metadata.getByText(/Registered route/)).toBeVisible();
     await expect(metadata.getByText(/does not prove connectivity/)).toBeVisible();
     await expect(metadata.getByRole("button")).toHaveCount(0);
@@ -33,12 +41,13 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(sockets).toBe(0);
     expect(await page.evaluate(() => (window as unknown as { micCalls: number }).micCalls)).toBe(0);
-    await expect(page.getByRole("button", {name:"Test selected voice",exact:true})).toBeDisabled();
     const artifacts = process.env.VAUXR_METADATA_ARTIFACT_DIR;
     if (artifacts) {
       mkdirSync(artifacts, { recursive: true });
       await page.screenshot({ path: resolve(artifacts, `integration-metadata-${width}-${theme}.png`) });
     }
+    await closeAgentDetail(page);
+    await page.getByRole("button", { name: "View agent Household integration", exact: true }).click();
     await page.getByRole("button", {name:"Edit agent name"}).click();
     await page.getByLabel("Agent name", { exact: true }).fill("Renamed household");
     await page.getByRole("button", { name: "Save name", exact: true }).click();
@@ -47,6 +56,9 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await closeAgentDetail(page);
     await page.getByRole("button", { name: "Agents", exact: true }).click();
     await page.getByRole("button", { name: "View agent Renamed household" }).click();
+    await expect(page.getByRole("region", { name: "Integration configuration" })).toHaveCount(0);
+    await closeAgentDetail(page);
+    await page.getByRole("button", { name: "Runtime diagnostics for Renamed household", exact: true }).click();
     await expect(metadata.getByText(/does not prove connectivity/)).toBeVisible();
   });
 }

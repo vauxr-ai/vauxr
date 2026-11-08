@@ -926,9 +926,6 @@ button.refresh-button:hover:not(:disabled) { color:var(--accent); background:var
 .agent-profile { display:flex; gap:18px; align-items:center; }
 .agent-profile .agent-avatar { width:76px; height:76px; border-radius:22px; }
 .agent-profile small { display:block; font-size:11px; margin-top:6px; }
-.avatar-upload { position:relative; display:inline-flex !important; flex-direction:row !important; font-size:13px; font-weight:600; color:var(--accent); border:1px solid var(--line); border-radius:10px; padding:10px 14px; cursor:pointer; }
-.avatar-upload input { position:absolute; opacity:0; inset:0; width:100%; cursor:pointer; }
-.avatar-upload:focus-within { outline:2px solid var(--accent); outline-offset:3px; }
 #rename-agent { display:block; margin:0; }
 #rename-agent input { width:100%; font-size:inherit; padding:6px 10px; }
 .name-edit-actions { display:flex; gap:8px; margin-top:8px; }
@@ -942,3 +939,12 @@ button.refresh-button:hover:not(:disabled) { color:var(--accent); background:var
 .agent-detail-modal .speech-fields {grid-template-columns:minmax(0,1fr)}
 
 @media(max-width:760px){.space-y-5 > dialog.agent-detail-modal[open]{margin:0}}
+.modal-title-line { display:flex; align-items:center; gap:8px; min-width:0; }
+.modal-title-line h2 { min-width:0; overflow-wrap:anywhere; }
+.modal-title-line > button { align-self:center; width:44px; height:44px; }
+.agent-avatar-edit { position:relative; padding:0; border:0; background:none; border-radius:22px; }
+.avatar-edit-badge { position:absolute; bottom:-3px; right:-3px; display:grid; place-items:center; width:26px; height:26px; border-radius:50%; background:var(--accent); color:white; border:2px solid var(--panel); }
+.avatar-dropzone { position:relative; display:flex; flex-direction:column; align-items:center; gap:18px; text-align:center; padding:36px 20px; border:2px dashed var(--line); border-radius:20px; cursor:pointer; background:var(--panel); }
+.avatar-dropzone input { max-width:100%; }
+.avatar-dropzone:focus-within { outline:2px solid var(--accent); outline-offset:3px; }
+.agent-diagnostics-action { min-width:44px; min-height:44px; font-size:24px; }

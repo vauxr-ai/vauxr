@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ownerFetch } from "../auth/api";
-import AgentPipeline from "./AgentPipeline";
+import { PipelineGraph } from "./AgentPipeline";
 import RefreshButton from "./RefreshButton";
 
 type Backend = { id: string; kind: "stt" | "tts" | "realtime"; model: string; voices: string[]; readiness: string };
@@ -80,7 +80,7 @@ export default function DeviceVoicePipeline({ deviceId, onModeChange, transport 
         <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "Hide voice pipeline overrides" : "Override agent voice pipeline defaults"}</button>
         {expanded && <fieldset disabled={busy} className="device-voice-overrides speech-fields">
           {data.policy.chat_only ? <p>Chat-only agent. Select a voice-enabled agent to use this device’s microphone and speaker.</p> : <>
-            <AgentPipeline mode={mode} agentName={agent?.name || data.policy.fallback_agent || "Agent"} stt={data.effective?.stt_backend} tts={data.effective?.tts_backend} realtime={data.voice?.realtime_backend} enabled isDefault={false} />
+            <PipelineGraph mode={mode} agentName={agent?.name || data.policy.fallback_agent || "Agent"} stt={data.effective?.stt_backend} tts={data.effective?.tts_backend} realtime={data.voice?.realtime_backend} />
             {data.effective && mode !== "realtime" && <p className="device-muted">Effective: {data.effective.stt_backend} / {data.effective.tts_backend} / {data.effective.voice_id}</p>}
             {transport}
             {select("Voice mode", data.overrides.mode || "", data.defaults.mode === "realtime" ? "Live" : "Standard", [...new Set([...data.policy.available_modes, ...(data.overrides.mode ? [data.overrides.mode] : [])])].map(value => ({value, label: value === "realtime" ? "Live / Realtime" : "Standard"})), value => save({ mode: value || null }))}

@@ -30,11 +30,14 @@ for (const width of [390, 1366])
       detail.getByRole("heading", { name: "Household assistant", exact: true }),
     ).toBeVisible();
     await expect(
-      detail.getByRole("region", { name: "Agent model runtime", exact: true }),
-    ).toContainText("Setup needed");
-    await expect(
       detail.getByLabel("Enable Live", { exact: true }),
     ).toBeDisabled();
+    await expect(detail.getByRole("region", { name: "Agent model runtime", exact: true })).toHaveCount(0);
+    await expect(detail.getByRole("button", { name: "Remove agent", exact: true })).toHaveCount(0);
+    await closeAgentDetail(page);
+    await page.getByRole("button", { name: "Runtime diagnostics for Household assistant", exact: true }).click();
+    const diagnostics = page.getByRole("dialog", { name: "Agent runtime diagnostics", exact: true });
+    await expect(diagnostics.getByRole("region", { name: "Agent model runtime", exact: true })).toContainText("Setup needed");
     console.log(
       `Registered agent ${width}: Standard enabled, Live unavailable`,
     );
@@ -65,8 +68,8 @@ for (const width of [390, 1366])
     await companion
       .getByRole("button", { name: "Collapse voice companion", exact: true })
       .click();
-    await page.getByRole("button", {name:"View agent Household assistant",exact:true}).click();
-    await detail
+    await page.getByRole("button", {name:"Runtime diagnostics for Household assistant",exact:true}).click();
+    await diagnostics
       .getByRole("button", { name: "Remove agent", exact: true })
       .click();
     await expect(page.getByRole("alert")).toContainText("unassign all devices");
@@ -82,8 +85,8 @@ for (const width of [390, 1366])
     await companion
       .getByRole("button", { name: "Collapse voice companion", exact: true })
       .click();
-    await page.getByRole("button", {name:"View agent Household assistant",exact:true}).click();
-    await detail
+    await page.getByRole("button", {name:"Runtime diagnostics for Household assistant",exact:true}).click();
+    await diagnostics
       .getByRole("button", { name: "Remove agent", exact: true })
       .click();
     await expect(
