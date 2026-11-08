@@ -230,7 +230,10 @@ for (const width of [375, 390]) {
       await device
         .getByLabel("Voice mode", { exact: true })
         .selectOption("realtime");
-      await expect(device.getByLabel("Realtime voice")).toHaveValue(liveVoice);
+      await expect(device.getByLabel("Realtime voice")).toHaveValue("");
+      await expect(
+        device.getByLabel("Realtime voice"),
+      ).toHaveAccessibleDescription(`Selected: Inherit agent (${liveVoice})`);
       await expectInsideSpeechCard(device);
       await capture(page, `${width}-${theme}-device-realtime`, device);
       await device
@@ -284,6 +287,8 @@ for (const width of [375, 390]) {
       await device.scrollIntoViewIfNeeded();
       await expectInsideSpeechCard(device);
       const columns = await device
+        .locator("fieldset.speech-fields")
+        .last()
         .locator(".speech-field")
         .evaluateAll((fields) =>
           fields.slice(0, 2).map((field) => ({
@@ -299,14 +304,14 @@ for (const width of [375, 390]) {
         .click();
       await expectInsideSpeechCard(device);
       const expandedColumns = await device
+        .locator("fieldset.speech-fields")
+        .last()
         .locator(".speech-field")
         .evaluateAll((fields) =>
-          fields
-            .slice(0, 2)
-            .map((field) => ({
-              top: field.getBoundingClientRect().top,
-              width: field.getBoundingClientRect().width,
-            })),
+          fields.slice(0, 2).map((field) => ({
+            top: field.getBoundingClientRect().top,
+            width: field.getBoundingClientRect().width,
+          })),
         );
       expect(
         Math.abs(expandedColumns[0].top - expandedColumns[1].top),

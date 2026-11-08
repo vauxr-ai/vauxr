@@ -759,3 +759,18 @@
   flex-wrap: wrap;
   gap: 12px;
 }
+
+.speech-settings .speech-check {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+}
+.speech-check input {
+  flex: none;
+  margin-block-start: 0.35em;
+}
+.agent-detail .speech-mode-policy {
+  display: block;
+  width: 100%;
+}

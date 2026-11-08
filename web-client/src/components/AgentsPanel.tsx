@@ -2,6 +2,7 @@ import IntegrationEnrollment from "./IntegrationEnrollment";
 import { useEffect, useState } from "react";
 import { useAgents, type ApiAgent } from "../hooks/useAgents";
 import Icon from "./Icon";
+import SpeechSettings from "./SpeechSettings";
 
 export default function AgentsPanel({
   onContext,
@@ -37,7 +38,7 @@ export default function AgentsPanel({
   async function activate(agent: ApiAgent) {
     if (
       !window.confirm(
-        `Make ${agent.name} the active route for all devices? This changes server routing, not just your companion.`,
+        `Make ${agent.name} the active fallback route for unassigned devices? This changes server routing, not just your companion.`,
       )
     )
       return;
@@ -46,8 +47,8 @@ export default function AgentsPanel({
       await api.activateAgent(agent.id);
       await refresh();
       window.dispatchEvent(new Event("agent-route-changed"));
-    } catch {
-      setError("Agent activation failed. Refresh before retrying.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Agent activation failed. Refresh before retrying.");
     } finally {
       setBusy(false);
     }
@@ -59,7 +60,10 @@ export default function AgentsPanel({
         <div className="section-heading">
           <div>
             <h2>Routing agents</h2>
-            <p>The active route serves voice conversations across devices.</p>
+            <p>
+              The active route serves devices that have no explicit agent
+              assignment.
+            </p>
           </div>
           <button disabled={loading || busy} onClick={refresh}>
             Refresh agents
@@ -141,6 +145,7 @@ export default function AgentsPanel({
               <p>
                 Agent ID: <code>{selected.id}</code>
               </p>
+              <SpeechSettings key={selected.id} agentId={selected.id} />
               <form
                 onSubmit={async (event) => {
                   event.preventDefault();

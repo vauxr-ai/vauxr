@@ -126,7 +126,7 @@ async def test_websocket_policy_rejects_device_realtime_start(env, monkeypatch, 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
     from vauxr.speech import store as speech_store
     monkeypatch.setattr(speech_store, "get_store", lambda: SimpleNamespace(
-        voice_settings=lambda _: {"mode": "realtime"}))
+        managed=lambda _: False, voice_settings=lambda _: {"mode": "realtime"}))
     await server._realtime_start(server.AppState(), ws, ctx, message)
     assert json.loads(ws.send_str.call_args.args[0])["code"] == "REALTIME_UNAVAILABLE"
     assert not ctx.realtime and ctx.startup is None
@@ -147,7 +147,7 @@ async def test_explicit_browser_live_still_arms_without_a_startup_id(env, monkey
         realtime=SimpleNamespace(enabled=True, host="vauxr.local")))
     monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
     monkeypatch.setattr(speech_store, "get_store", lambda: SimpleNamespace(
-        voice_settings=lambda _: {"mode": "realtime"}))
+        managed=lambda _: False, voice_settings=lambda _: {"mode": "realtime"}))
     await server._realtime_start(server.AppState(), ws, ctx, {"mode": "live"})
     assert json.loads(ws.send_str.call_args.args[0]) == {"type": "realtime.armed"}
     assert ctx.realtime and ctx.realtime_media and ctx.startup is None

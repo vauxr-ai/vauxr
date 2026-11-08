@@ -91,7 +91,7 @@ async def test_transport_paths_resolve_device_selection_once(neutral_store, monk
     resolver = Mock(wraps=neutral_store.resolve)
     monkeypatch.setattr(neutral_store, "resolve", resolver)
     ws = SimpleNamespace(closed=False, send_str=AsyncMock(), send_bytes=AsyncMock())
-    agents = SimpleNamespace(get_active_agent=lambda: SimpleNamespace(type="openclaw-direct"))
+    agents = SimpleNamespace(get_active_agent=lambda device_id="": SimpleNamespace(type="openclaw-direct"))
     captured = []
     transcribed = []
     done = asyncio.Event()

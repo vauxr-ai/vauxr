@@ -11,15 +11,17 @@ import asyncio
 import json
 import logging
 import secrets
+from collections import deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, TypedDict
 
 from aiohttp import WSMsgType, web
 
-import vauxr.auth.connections as auth_connections
 import vauxr.agents.registry as agent_registry
-from vauxr.auth.service import authenticate, current
+import vauxr.auth.connections as auth_connections
 from vauxr.auth.policy import Operation, Principal, allowed, audit_denial
+from vauxr.auth.service import authenticate, current
 from vauxr.config import get_config
 from vauxr.devices.config import load_device_display_name
 
@@ -35,7 +37,7 @@ class DeviceResponseListener(TypedDict):
 
 
 class _Connection:
-    __slots__ = ("authenticated", "authority", "agent", "principal", "ws")
+    __slots__ = ("agent", "authenticated", "authority", "principal", "ws")
 
     def __init__(self, ws: web.WebSocketResponse) -> None:
         self.ws: web.WebSocketResponse = ws
@@ -43,6 +45,14 @@ class _Connection:
         self.authenticated = False
         self.principal: Principal | None = None
         self.authority: auth_connections.Connection | None = None
+
+
+@dataclass
+class _ResponseOrigin:
+    connection: _Connection
+    device_id: str
+    run_id: str | None = None
+    finished: bool = False
 
 
 async def _send_json(ws: web.WebSocketResponse, obj: dict[str, Any]) -> None:
@@ -58,6 +68,11 @@ class AgentServer:
     def __init__(self) -> None:
         self._realtime_requests: dict[str, tuple[_Connection, str, asyncio.Future]] = {}
         self._connections: dict[str, _Connection] = {}
+        # Bounded admission history survives listener removal / local cancellation.
+        # Standard run IDs are assigned by the peer; bind the first response to
+        # an admitted transcript, then require its exact run ID for later frames.
+        self._response_origins: deque[_ResponseOrigin] = deque(maxlen=256)
+        self._realtime_origins: deque[tuple[str, _Connection, str]] = deque(maxlen=256)
         self._response_listeners: dict[str, DeviceResponseListener] = {}
         self._response_agents: dict[str, str] = {}
         self._media_turns: dict[asyncio.Event, str] = {}
@@ -67,7 +82,7 @@ class AgentServer:
         self, agent_id: str, device_id: str, session: str, operation: str,
         payload: dict[str, Any] | None = None, *, timeout: float = 30,
     ) -> dict[str, Any]:
-        active = agent_registry.get_active()
+        active = agent_registry.get_for_device(device_id)
         conn = self._connections.get(agent_id)
         if (active is None or active.id != agent_id or conn is None or conn.ws.closed
                 or not current(conn.principal)):
@@ -75,6 +90,7 @@ class AgentServer:
         request_id = secrets.token_hex(16)
         future = asyncio.get_running_loop().create_future()
         self._realtime_requests[request_id] = (conn, device_id, future)
+        self._realtime_origins.append((request_id, conn, device_id))
         try:
             frame = {"type": "agent.realtime.request", "requestId": request_id,
                      "deviceId": device_id, "session": session, "operation": operation,
@@ -92,8 +108,8 @@ class AgentServer:
 
     # --- Pipeline-facing API ---
 
-    def get_active_agent(self) -> agent_registry.Agent | None:
-        return agent_registry.get_active()
+    def get_active_agent(self, device_id: str = "") -> agent_registry.Agent | None:
+        return agent_registry.get_for_device(device_id) if device_id else agent_registry.get_active()
 
     def is_active_connected(self) -> bool:
         active = agent_registry.get_active()
@@ -105,7 +121,7 @@ class AgentServer:
         return conn is not None and not conn.ws.closed and current(conn.principal)
 
     def send_transcript(self, device_id: str, text: str) -> bool:
-        active = agent_registry.get_active()
+        active = agent_registry.get_for_device(device_id)
         if active is None:
             log.warning("No active agent — dropping transcript")
             return False
@@ -128,6 +144,7 @@ class AgentServer:
         if name is not None:
             frame["deviceDisplayName"] = name
 
+        self._response_origins.append(_ResponseOrigin(conn, device_id))
         # Schedule the WS send on the event loop; the pipeline calls this
         # synchronously, so we return True optimistically once we've queued.
         asyncio.create_task(
@@ -167,7 +184,7 @@ class AgentServer:
 
     def add_response_listener(self, device_id: str, listener: DeviceResponseListener) -> None:
         self._response_listeners[device_id] = listener
-        active = agent_registry.get_active()
+        active = agent_registry.get_for_device(device_id)
         self._response_agents[device_id] = active.id if active else ""
 
     def remove_response_listener(
@@ -303,29 +320,104 @@ class AgentServer:
         log.info("agent authenticated: %s (%s)", agent.name, agent.id)
 
     async def _handle_authenticated_message(self, conn: _Connection, msg: dict[str, Any]) -> None:
-        active = agent_registry.get_active()
+        device_id = msg.get("deviceId")
+        active = (
+            agent_registry.get_for_device(device_id)
+            if isinstance(device_id, str)
+            else agent_registry.get_active()
+        )
         authenticated = current(conn.principal)
-        if (not authenticated or not allowed(conn.principal, Operation.VOICE_RESPONSE)
-                or conn.agent is None or conn.principal.subject != conn.agent.id
-                or active is None or active.id != conn.agent.id
-                or self._connections.get(conn.agent.id) is not conn
-                or not isinstance(msg.get("type"), str)
-                or msg.get("type") not in {
-                    "agent.response.delta", "agent.response.end", "agent.response.error", "agent.realtime.result"
-                }):
+        if (
+            not authenticated
+            or not allowed(conn.principal, Operation.VOICE_RESPONSE)
+            or conn.agent is None
+            or conn.principal.subject != conn.agent.id
+            or self._connections.get(conn.agent.id) is not conn
+            or not isinstance(msg.get("type"), str)
+            or msg.get("type")
+            not in {
+                "agent.response.delta",
+                "agent.response.end",
+                "agent.response.error",
+                "agent.realtime.result",
+            }
+        ):
             audit_denial(authenticated)
-            await _send_json(conn.ws, {"type": "error",
-                                      "code": "FORBIDDEN" if authenticated else "UNAUTHORIZED",
-                                      "message": "Access denied"})
+            await _send_json(
+                conn.ws,
+                {
+                    "type": "error",
+                    "code": "FORBIDDEN" if authenticated else "UNAUTHORIZED",
+                    "message": "Access denied",
+                },
+            )
             await conn.ws.close()
             return
-        if msg.get("type") == "agent.realtime.result":
+        msg_type = msg["type"]
+        is_selected = active is not None and active.id == conn.agent.id
+        origin = None
+        if msg_type == "agent.realtime.result":
+            if not isinstance(msg.get("requestId"), str):
+                await _send_json(
+                    conn.ws, {"type": "error", "code": "INVALID_MESSAGE", "message": "Missing requestId"}
+                )
+                return
+            correlated = any(
+                request_id == msg.get("requestId") and peer is conn and identity == device_id
+                for request_id, peer, identity in self._realtime_origins
+            )
+        else:
+            run_id = msg.get("runId")
+            if isinstance(device_id, str) and isinstance(run_id, str):
+                origin = next(
+                    (
+                        item
+                        for item in self._response_origins
+                        if item.connection is conn and item.device_id == device_id and item.run_id == run_id
+                    ),
+                    None,
+                )
+                if origin is None:
+                    origin = next(
+                        (
+                            item
+                            for item in self._response_origins
+                            if item.connection is conn and item.device_id == device_id and item.run_id is None
+                        ),
+                        None,
+                    )
+                    if origin is not None:
+                        origin.run_id = run_id
+            correlated = origin is not None
+        if not is_selected and not correlated:
+            audit_denial(True)
+            await _send_json(conn.ws, {"type": "error", "code": "FORBIDDEN", "message": "Access denied"})
+            # Device-output authority is scoped. Even an unrecognized / expired
+            # run cannot revoke a current shared integration credential or D2.
+            return
+        if not is_selected or (origin is not None and origin.finished):
+            # Output authority ended, not the integration's credential or external
+            # operation. D2 and unrelated pending requests on this socket survive.
+            if msg_type == "agent.realtime.result":
+                pending = self._realtime_requests.get(msg.get("requestId", ""))
+                if pending and pending[0] is conn and pending[1] == device_id and not pending[2].done():
+                    pending[2].set_exception(
+                        RuntimeError("Device route changed; stale realtime result discarded")
+                    )
+            elif origin is not None and msg_type in {"agent.response.end", "agent.response.error"}:
+                origin.finished = True
+            return
+        if origin is not None and msg_type in {"agent.response.end", "agent.response.error"}:
+            origin.finished = True
+        if msg_type == "agent.realtime.result":
             pending = self._realtime_requests.get(msg.get("requestId", ""))
             if pending and pending[0] is conn and pending[1] == msg.get("deviceId"):
                 future = pending[2]
                 if not future.done():
                     if msg.get("error"):
-                        future.set_exception(RuntimeError("Backend realtime operation failed; check backend action status"))
+                        future.set_exception(
+                            RuntimeError("Backend realtime operation failed; check backend action status")
+                        )
                     elif isinstance(msg.get("result"), dict):
                         future.set_result(msg["result"])
             return

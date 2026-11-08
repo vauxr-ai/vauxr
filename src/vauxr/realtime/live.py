@@ -300,7 +300,7 @@ class OutputGain(FrameProcessor):
 
 
 async def start_live(session: Any, connection: Any) -> None:
-    active = agent_registry.get_active()
+    active = agent_registry.get_for_device(session.device_id)
     if active is None or active.type != "openclaw":
         raise ValueError("Realtime requires a selected OpenClaw integration Agent")
     session._connection = connection

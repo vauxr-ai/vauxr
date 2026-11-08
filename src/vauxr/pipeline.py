@@ -461,7 +461,7 @@ async def run_text_turn(
     if abort.is_set():
         return
 
-    active = agent_server.get_active_agent()
+    active = agent_server.get_active_agent(device_id)
     if active is not None and getattr(active, "type", None) == "openclaw-direct" and openclaw_client is not None:
         log.info("Routing via openclaw-direct for %s", device_id)
         await _route_via_openclaw_direct(

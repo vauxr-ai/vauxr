@@ -720,20 +720,20 @@ describe("DevicesPanel", () => {
   });
 });
 
-it("defaults to WebRTC Standard and saves explicit Realtime mode", async () => {
+it("defaults to WebRTC and saves transport independently of voice mode", async () => {
   const user = userEvent.setup();
   renderPanel();
   await waitForDevices();
   await user.click(screen.getByRole("button", { name: /Living Room/ }));
-  const select = screen.getByRole("combobox", { name: "Voice mode" });
+  const select = screen.getByRole("combobox", { name: "Voice transport" });
   expect(select).toHaveValue("webrtc");
-  await user.selectOptions(select, "realtime");
+  await user.selectOptions(select, "websocket");
   await waitFor(() =>
     expect(fetchSpy).toHaveBeenCalledWith(
       expect.stringContaining("/api/devices/d1"),
       expect.objectContaining({
         method: "PATCH",
-        body: JSON.stringify({ voice_mode: "realtime" }),
+        body: JSON.stringify({ transport_mode: "websocket" }),
       }),
     ),
   );
@@ -761,7 +761,7 @@ it("shows barge-in only for WebRTC Standard", async () => {
     screen.getByRole("combobox", { name: "Barge-in" }),
   ).toBeInTheDocument();
 
-  const select = screen.getByRole("combobox", { name: "Voice mode" });
+  const select = screen.getByRole("combobox", { name: "Voice transport" });
   await user.selectOptions(select, "websocket");
   await waitFor(() => {
     expect(

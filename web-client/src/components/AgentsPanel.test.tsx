@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   activateAgent: vi.fn(),
 }));
 vi.mock("../hooks/useAgents", () => ({ useAgents: () => mocks }));
+vi.mock("./SpeechSettings", () => ({ default: () => null }));
 vi.mock("./IntegrationEnrollment", () => ({ default: () => null }));
 
 it("keeps the name draft after a failed save and only claims success after persistence", async () => {

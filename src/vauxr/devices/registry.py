@@ -80,7 +80,12 @@ def update_config(device_id: str, patch: DeviceConfig) -> DeviceConfig:
     speech = get_store()
     previous_mode = speech.devices.get(device_id, {}).get("mode")
     if "pipeline_mode" in patch:
-        speech.update({"mode": patch["pipeline_mode"]}, device_id)
+        speech.update({"mode": patch["pipeline_mode"]}, device_id, transport=patch.get("transport_mode"))
+    elif "transport_mode" in patch and speech.managed(device_id):
+        from vauxr.speech.store import VoiceConflict
+        conflict = speech.conflict(device_id, transport=patch["transport_mode"])
+        if conflict:
+            raise VoiceConflict(conflict)
     merged: DeviceConfig = {**_configs.get(device_id, {}), **{k: v for k, v in patch.items() if k != "pipeline_mode"}}
     updated = {**_configs, device_id: merged}
     try:

@@ -11,6 +11,8 @@ interface Props {
   transcript?: string;
   status?: string;
   modeBusy?: boolean;
+  availableModes?: string[];
+  voiceConflict?: boolean;
   connectionState: ConnectionState;
   isConnected: boolean;
   micUnavailable: boolean;
@@ -59,7 +61,10 @@ export default function TalkPanel(props: Props) {
   } = props;
 
   const buttonDisabled =
-    !isConnected || micUnavailable || props.modeBusy === true;
+    !isConnected ||
+    micUnavailable ||
+    props.modeBusy === true ||
+    props.voiceConflict === true;
 
   const helper = !isConnected
     ? STATE_HELPER.disconnected
@@ -140,7 +145,14 @@ export default function TalkPanel(props: Props) {
               <button
                 key={m}
                 role="radio"
-                disabled={props.modeBusy || !isConnected}
+                disabled={
+                  props.modeBusy ||
+                  !isConnected ||
+                  (props.availableModes &&
+                    !props.availableModes.includes(
+                      m === "realtime" ? "realtime" : "standard",
+                    ))
+                }
                 aria-checked={talkMode === m}
                 onClick={() => onSetTalkMode(m)}
                 className={`focus-ring flex-1 rounded-md px-2 py-1.5 font-medium capitalize transition-colors ${

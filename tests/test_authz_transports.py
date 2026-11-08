@@ -55,6 +55,8 @@ ROUTES = [
     ("POST", "/api/devices/missing/announce", "oi", 404),
     ("POST", "/api/devices/missing/command", "oi", 404),
     ("GET", "/api/agents", "o", 200),
+    ("GET", "/api/agents/missing/speech", "o", 404),
+    ("PATCH", "/api/agents/missing/speech", "o", 404),
     ("POST", "/api/agents", "o", 501),
     ("DELETE", "/api/agents/missing", "o", 501),
     ("POST", "/api/agents/missing/activate", "o", 404),
@@ -117,8 +119,8 @@ def test_route_inventory_complete():
                  ("POST", "/api/integrations/v1/{action}")}
     expected.add(("GET", "/firmware-delivery/{token}/{filename}"))
     assert actual == expected
-    # Speech uses one injected boundary for four path/method combinations.
-    assert len(HTTP_OPERATIONS) + 4 == len(ROUTES)
+    # Speech uses one injected boundary for six path/method combinations.
+    assert len(HTTP_OPERATIONS) + 6 == len(ROUTES)
 
 
 async def test_unknown_handler_and_api_fallback_deny():

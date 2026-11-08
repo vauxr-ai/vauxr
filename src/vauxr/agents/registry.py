@@ -195,6 +195,14 @@ def get_by_id(agent_id: str) -> Agent | None:
     return next((a for a in get_all() if a.id == agent_id), None)
 
 
+def get_for_device(device_id: str) -> Agent | None:
+    """An explicit assignment never falls back when its agent disappears."""
+    from vauxr.speech.store import get_store
+
+    assigned = get_store().assignments.get(device_id)
+    return get_by_id(assigned) if assigned else get_active()
+
+
 def get_active() -> Agent | None:
     return next((a for a in get_all() if a.active), None)
 

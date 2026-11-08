@@ -77,7 +77,7 @@ export function useWebSocket(opts: UseWebSocketOpts) {
             type: "hello",
             device_id: deviceId,
             token,
-            caps: [],
+            caps: ["ws", "webrtc"],
           }),
         );
         addLog("sys", "WebSocket open; authenticating scoped browser device");
