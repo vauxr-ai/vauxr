@@ -96,7 +96,7 @@ async def test_transport_paths_resolve_device_selection_once(neutral_store, monk
     transcribed = []
     done = asyncio.Event()
 
-    async def transcribe(chunks, *, backend):
+    async def transcribe(chunks, *, backend, device_id):
         transcribed.append(backend)
         return "hello"
 

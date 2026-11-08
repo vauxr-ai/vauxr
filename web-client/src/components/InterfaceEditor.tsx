@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ownerFetch, jsonResponse } from "../auth/api";
+import RefreshButton from "./RefreshButton";
 type Source = {title:string; html:string; css:string; revision:string; published:boolean};
 const fields = (source:Source) => ({title:source.title,html:source.html,css:source.css});
 export default function InterfaceEditor({onDirtyChange}:{onDirtyChange?:(dirty:boolean)=>void}) {
@@ -54,7 +55,7 @@ export default function InterfaceEditor({onDirtyChange}:{onDirtyChange?:(dirty:b
       <div className="flex flex-wrap gap-2">
         <button type="button" disabled={busy} onClick={()=>{setBusy(true);setError("");void preview(source).then(()=>setStatus("Draft preview updated; it has not been published.")).catch(()=>setError("Preview unavailable; source retained.")).finally(()=>setBusy(false));}}>Preview draft</button>
         <button disabled={busy||!dirty}>Publish interface</button>
-        <button type="button" disabled={busy} onClick={()=>void load()}>Reload published interface</button>
+        <RefreshButton label="Reload published interface" busy={busy} onClick={load} />
       </div>
       {previewed !== JSON.stringify(fields(source)) && <p>Preview shows the last rendered source. Choose Preview draft to update it.</p>}
     </form>}

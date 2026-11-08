@@ -360,7 +360,7 @@ async def test_list_agents_empty(client: TestClient) -> None:
 
 
 @pytest.mark.parametrize("method,path", [
-    ("POST", "/api/agents"), ("DELETE", "/api/agents/missing"),
+    ("POST", "/api/agents"),
     ("POST", "/api/agents/missing/rotate"),
 ])
 async def test_agent_lifecycle_is_explicitly_unshipped(client, method, path):

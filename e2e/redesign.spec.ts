@@ -1,3 +1,4 @@
+import { closeAgentDetail } from "./auth-fixture";
 import { openIntegrations, openSettings } from "./auth-fixture";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -41,6 +42,7 @@ test("B2 keeps administration independent, browser ownership stable, and microph
   expect(await page.evaluate(() => (window as any).micCalls)).toBe(0);
   let sockets = 0;
   page.on("websocket", () => sockets++);
+  await closeAgentDetail(page);
   await page
     .getByRole("button", { name: "Connect browser", exact: true })
     .click();
@@ -56,26 +58,32 @@ test("B2 keeps administration independent, browser ownership stable, and microph
       talk.getByRole("button", { name: "Hold to Talk" }),
     ).toBeEnabled();
   }
+  await closeAgentDetail(page);
   await page.getByRole("button", { name: "Devices", exact: true }).click();
   const device = page.locator("main li").first();
   await device.getByRole("button").first().click();
   await device.getByLabel("Double press action").selectOption("command");
   await expect(device.getByLabel("Double press command")).toHaveValue("mute");
+  await device.getByRole("button", {name:"Edit device name"}).click();
   await device
-    .getByLabel("Name", { exact: true })
+    .getByLabel("Device name", { exact: true })
     .fill("Browser acceptance device");
-  await device.getByLabel("Name", { exact: true }).blur();
+  await device.getByLabel("Device name", { exact: true }).blur();
   await expect(
-    device.getByText("Browser acceptance device", { exact: true }),
+    device.getByRole("heading", { name: /^Browser acceptance device/ }),
   ).toBeVisible();
+  await closeAgentDetail(page);
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await closeAgentDetail(page);
   await page.getByRole("button", { name: "Devices", exact: true }).click();
   await page.getByText("Browser acceptance device", { exact: true }).click();
   await expect(page.getByLabel("Double press command")).toHaveValue("mute");
+  await closeAgentDetail(page);
   await page.getByRole("button", { name: "Collapse voice companion" }).click();
   await expect(
     talk.getByRole("button", { name: "Hold to Talk" }),
   ).toBeVisible();
+  await closeAgentDetail(page);
   await page.getByRole("button", { name: "Expand voice companion" }).click();
   expect(sockets).toBe(1);
   const button = talk.getByRole("button", { name: "Hold to Talk" });
@@ -111,6 +119,7 @@ test("B2 themes, reserved desktop companion, phone focus and authenticated scree
       );
       const size = viewport.width > 760 ? "desktop" : "phone";
       await screenshot(page, `${size}-${theme}-agents`);
+      await closeAgentDetail(page);
       await page
         .getByRole("button", { name: "Expand voice companion" })
         .click();
@@ -156,13 +165,15 @@ test("B2 themes, reserved desktop companion, phone focus and authenticated scree
     }
   }
   await page.setViewportSize({ width: 1366, height: 900 });
+  await closeAgentDetail(page);
   await page
     .getByRole("button", { name: "Connect browser", exact: true })
     .click();
+  await closeAgentDetail(page);
   await page.getByRole("button", { name: "Devices", exact: true }).click();
   await page.locator("main li").first().getByRole("button").first().click();
   await expect(
-    page.getByRole("region", { name: "Device speech", exact: true }),
+    page.getByRole("region", { name: "Assigned agent", exact: true }),
   ).toBeVisible();
   for (const size of ["desktop", "phone"]) {
     await page.setViewportSize(
@@ -180,6 +191,7 @@ test("B2 themes, reserved desktop companion, phone focus and authenticated scree
             .getByRole("main")
             .evaluate((el) => el.scrollWidth <= el.clientWidth),
         ).toBe(true);
+        await closeAgentDetail(page);
         await page
           .getByRole("button", { name: "Expand voice companion" })
           .click();
@@ -204,6 +216,7 @@ test("phone access panel wraps long device identities without horizontal scrolli
     json: [{ id: deviceId, name: "Living room speaker", state: "connected" }],
   }));
   await page.setViewportSize({ width: 390, height: 844 });
+  await closeAgentDetail(page);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await openSettings(page,"Access & security");
   const panel = page.locator(".auth-panel").filter({
@@ -221,6 +234,7 @@ test("Settings manages real webhook configuration without voice", async ({
   server,
 }) => {
   await login(page, server);
+  await closeAgentDetail(page);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await openSettings(page,"Webhooks");
   await page.getByRole("button", { name: "Add webhook" }).click();
@@ -251,7 +265,9 @@ test("Settings manages real webhook configuration without voice", async ({
   await renamed.getByRole("button", { name: "Delete", exact: true }).click();
   await renamed.getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(page.locator("main li")).toHaveCount(1);
+  await closeAgentDetail(page);
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await closeAgentDetail(page);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await openSettings(page,"Webhooks");
   await expect(page.locator("main li")).toHaveCount(1);
@@ -276,7 +292,7 @@ test("agent names persist independently of shared routing and credentials", asyn
     exact: true,
   });
   await openIntegrations(page);
-  await enrollment.getByText("Refresh integration requests").click();
+  await enrollment.getByRole("button", { name: "Refresh integration requests", exact: true }).click();
   const requestRow = enrollment.getByRole("region", {
     name: `Integration request ${request.request_id}`,
     exact: true,
@@ -294,25 +310,21 @@ test("agent names persist independently of shared routing and credentials", asyn
     saved: true,
   });
   await openIntegrations(page);
-  await enrollment.getByText("Refresh integration requests").click();
+  await enrollment.getByRole("button", { name: "Refresh integration requests", exact: true }).click();
+  await closeAgentDetail(page);
   await page.getByRole("button", {name:"Agents",exact:true}).click();
-  await page.getByText("Refresh agents", { exact: true }).click();
+  await page.getByRole("button", {name: "Refresh agents", exact: true}).click();
   page.on("dialog", (dialog) => dialog.accept());
   await page
     .locator("main li")
     .filter({ hasText: "Household helper" })
     .getByText("Set as default", { exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "View agent Household helper" })
-    .click();
-  const detail = page.getByRole("region", {
-    name: "Agent detail",
-    exact: true,
-  });
+  const detail = page.locator(`main li[data-agent-id="${request.agent_id}"]`);
+  await detail.getByRole("button", {name:"Edit agent name"}).click();
   await detail.getByLabel("Agent name").fill("Kitchen guide");
   await detail.getByRole("button", { name: "Save name" }).click();
-  await expect(detail.getByRole("status").filter({ hasText: "Agent name saved." })).toHaveText("Agent name saved.");
+  await expect(page.getByRole("status").filter({ hasText: "Agent name saved." })).toHaveText("Agent name saved.");
   await expect(page.locator(".companion-header h2")).toHaveText(
     "Kitchen guide",
   );
@@ -336,12 +348,15 @@ test("agent names persist independently of shared routing and credentials", asyn
     token: device.device_token,
   });
   try {
+    await closeAgentDetail(page);
     await page.getByRole("button", { name: "Expand voice companion" }).click();
     await screenshot(page, "populated-agent-detail");
+    await closeAgentDetail(page);
     await page.getByRole("button", { name: "Devices", exact: true }).click();
     await page.getByText(device.device_id, { exact: true }).first().click();
-    await page.getByLabel("Name", { exact: true }).fill("Kitchen speaker");
-    await page.getByLabel("Name", { exact: true }).blur();
+    await page.getByRole("button", {name:"Edit device name"}).click();
+    await page.getByLabel("Device name", { exact: true }).fill("Kitchen speaker");
+    await page.getByLabel("Device name", { exact: true }).blur();
     await expect(page.locator(".context-chip")).toHaveText(
       "Viewing Kitchen speaker",
     );
@@ -351,12 +366,14 @@ test("agent names persist independently of shared routing and credentials", asyn
       await page.keyboard.press("Escape");
       await page.setViewportSize({ width: 390, height: 844 });
       await screenshot(page, `populated-device-${theme}-phone`);
+      await closeAgentDetail(page);
       await page
         .getByRole("button", { name: "Expand voice companion" })
         .click();
       await screenshot(page, `populated-device-${theme}-phone-voice`);
       await page.keyboard.press("Escape");
       await page.setViewportSize({ width: 1366, height: 900 });
+      await closeAgentDetail(page);
       await page
         .getByRole("button", { name: "Expand voice companion" })
         .click();
@@ -383,8 +400,7 @@ test("agent names persist independently of shared routing and credentials", asyn
     await server.restart();
     await page.reload();
     await expect(page.getByRole("main")).toBeVisible();
-    await page.getByRole("button", { name: "View agent Remote guide" }).click();
-    await expect(detail.getByLabel("Agent name")).toHaveValue("Remote guide");
+    await expect(page.getByRole("heading", {name:"Remote guide", level:3, exact:true})).toBeVisible();
   } finally {
     speaker.ws.close();
   }
@@ -400,12 +416,14 @@ test("collapsed voice dock reports pending transport and explicit cancellation",
     socket.onMessage(() => {});
   });
   await login(page, server);
+  await closeAgentDetail(page);
   await page
     .getByRole("button", { name: "Connect browser", exact: true })
     .click();
   await expect(page.locator(".companion-header [role=status]")).toHaveText(
     "Connecting · Mic off",
   );
+  await closeAgentDetail(page);
   await page.getByRole("button", { name: "Collapse voice companion" }).click();
   await expect(
     page.getByRole("button", { name: "Cancel connection" }),

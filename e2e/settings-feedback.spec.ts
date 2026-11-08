@@ -178,7 +178,7 @@ for (const width of [320, 390, 1440])
       name: "Integration enrollment",
       exact: true,
     });
-    await enrollment.getByText("Refresh integration requests").click();
+    await enrollment.getByRole("button", { name: "Refresh integration requests", exact: true }).click();
     const row = enrollment.getByRole("region", {
       name: `Integration request ${request.request_id}`,
       exact: true,

@@ -1,6 +1,11 @@
+import type { BrowserVoiceProps } from "./VoiceSample";
+import RefreshButton from "./RefreshButton";
 import AccessPanel from "./AccessPanel";
 import EventLog from "./EventLog";
-import SpeechSettings from "./SpeechSettings";
+import DeviceVoicePipeline from "./DeviceVoicePipeline";
+import DeviceMetrics from "./DeviceMetrics";
+import Modal from "./Modal";
+import "./DevicesPanel.css";
 import { ownerFetch } from "../auth/api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deriveHttpUrl, useHttpApi } from "../hooks/useHttpApi";
@@ -26,7 +31,7 @@ interface DeviceConfig {
   transport_mode?: "websocket" | "webrtc";
   voice_mode?: "websocket" | "webrtc" | "realtime" | null;
   follow_up_mode?: FollowUpMode;
-  output_sample_rate?: number;
+  output_sample_rate?: number | null;
   barge_in?: boolean;
   button_actions?: Partial<Record<GestureId, ButtonAction>>;
 }
@@ -59,14 +64,7 @@ const STATE_DOT: Record<string, string> = {
 };
 
 const FOLLOW_UP_OPTIONS: FollowUpMode[] = ["auto", "always", "never"];
-const COMMANDS = [
-  "set_volume",
-  "mute",
-  "unmute",
-  "reboot",
-  "ota",
-  "set_barge_in",
-] as const;
+const DEFAULT_ANNOUNCEMENT = "Hello world! this is the vauxr speaker test announcement. I sure hope you can hear me";
 const GESTURE_ROWS: { id: GestureId; label: string }[] = [
   { id: "double_press", label: "Double press" },
   { id: "triple_press", label: "Triple press" },
@@ -86,7 +84,7 @@ interface SaveStatus {
   message?: string;
 }
 
-interface Props {
+interface Props extends BrowserVoiceProps {
   logs?: LogEntry[];
   onContext?: (context: string) => void;
   wsUrl: string;
@@ -99,12 +97,6 @@ const POLL_INTERVAL_MS = 5_000;
 
 const inputClass =
   "rounded-md border border-white/5 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-60";
-
-const primaryBtn =
-  "focus-ring rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50";
-
-const ghostBtn =
-  "focus-ring inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:bg-white/5 hover:text-zinc-200";
 
 const labelClass = "flex flex-col gap-1.5 text-xs font-medium text-zinc-400";
 
@@ -121,6 +113,7 @@ export default function DevicesPanel({
   addLog,
   onContext,
   logs = [],
+  ...browserVoice
 }: Props) {
   // Device administration is owner-session based, not contingent on a voice socket.
   const baseUrl = wsUrl ? deriveHttpUrl(wsUrl) : window.location.origin;
@@ -133,9 +126,15 @@ export default function DevicesPanel({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<Record<string, SaveStatus>>({});
+  const pendingWrites = useRef(0);
+  const writeQueue = useRef(Promise.resolve());
+  const revision = useRef(0);
+  const deviceWriteVersion = useRef<Record<string, number>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const refresh = useCallback(async () => {
+    if (pendingWrites.current) return;
+    const readRevision = revision.current;
     try {
       const res = await ownerFetch("/api/devices");
       if (!res.ok) {
@@ -152,6 +151,7 @@ export default function DevicesPanel({
       const list: ApiDeviceWithConfig[] = Array.isArray(body)
         ? body
         : (body.devices ?? []);
+      if (readRevision !== revision.current || pendingWrites.current) return;
       setDevices(list);
       try {
         setWebhooks(await listWebhooks());
@@ -175,7 +175,15 @@ export default function DevicesPanel({
 
   const updateDeviceConfig = useCallback(
     async (deviceId: string, patch: Partial<DeviceConfig>, label: string) => {
+      ++pendingWrites.current;
+      ++revision.current;
+      const ticket = (deviceWriteVersion.current[deviceId] || 0) + 1;
+      deviceWriteVersion.current[deviceId] = ticket;
       setSaveStatus((s) => ({ ...s, [deviceId]: { status: "saving" } }));
+      const prior = writeQueue.current;
+      let release!: () => void;
+      writeQueue.current = new Promise<void>(resolve => { release = resolve; });
+      await prior;
       try {
         const res = await ownerFetch(
           `/api/devices/${encodeURIComponent(deviceId)}`,
@@ -212,22 +220,20 @@ export default function DevicesPanel({
             return { ...d, ...updated, config };
           }),
         );
-        setSaveStatus((s) => ({ ...s, [deviceId]: { status: "saved" } }));
+        if (deviceWriteVersion.current[deviceId] === ticket) setSaveStatus((s) => ({ ...s, [deviceId]: { status: "saved" } }));
         addLog("sys", `Device ${deviceId}: ${label}`, deviceId);
-        setTimeout(() => {
-          setSaveStatus((s) => {
-            if (s[deviceId]?.status !== "saved") return s;
-            const { [deviceId]: _, ...rest } = s;
-            return rest;
-          });
-        }, 1500);
+
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setSaveStatus((s) => ({
+        if (deviceWriteVersion.current[deviceId] === ticket) setSaveStatus((s) => ({
           ...s,
           [deviceId]: { status: "error", message: msg },
         }));
         addLog("sys", `Device ${deviceId} update error: ${msg}`, deviceId);
+      } finally {
+        --pendingWrites.current;
+        ++revision.current;
+        release();
       }
     },
     [addLog],
@@ -256,20 +262,11 @@ export default function DevicesPanel({
 
   return (
     <div className="card overflow-hidden">
-      <div className="p-4"><button onClick={()=>setAddingDevice(!addingDevice)} aria-expanded={addingDevice}>{addingDevice ? "Close Add Device" : "+ Add Device"}</button></div>
-      {addingDevice && <AccessPanel mode="pairing"/>}
-      <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
-        <div>
-          <h2 className="text-base font-semibold text-zinc-100">Devices</h2>
-          <p className="text-xs text-zinc-500">
-            Connected hardware, per-device settings, and actions.
-          </p>
-        </div>
-        <button className={ghostBtn} onClick={refresh}>
-          <Icon name="refresh" size={14} />
-          Refresh
-        </button>
+      <div className="flex items-center justify-end gap-3 border-b border-white/5 px-5 py-3">
+        <button onClick={()=>setAddingDevice(!addingDevice)} aria-expanded={addingDevice}>{addingDevice ? "Close Add Device" : "+ Add Device"}</button>
+        <RefreshButton label="Refresh" onClick={refresh} />
       </div>
+      {addingDevice && <AccessPanel mode="pairing"/>}
 
       <div className="px-5 py-4">
         {error && (
@@ -291,6 +288,7 @@ export default function DevicesPanel({
             {devices.map((d) => (
               <DeviceCard
                 key={d.id}
+                {...browserVoice}
                 device={d}
                 expanded={!!expanded[d.id]}
                 onToggle={() => toggleExpanded(d.id)}
@@ -310,7 +308,7 @@ export default function DevicesPanel({
   );
 }
 
-interface DeviceCardProps {
+interface DeviceCardProps extends BrowserVoiceProps {
   logs: LogEntry[];
   device: ApiDeviceWithConfig;
   expanded: boolean;
@@ -334,6 +332,7 @@ function DeviceCard({
   addLog,
   httpBase,
   webhooks,
+  ...browserVoice
 }: DeviceCardProps) {
   const [effectiveMode, setEffectiveMode] = useState<"standard" | "realtime" | null | "unknown">("unknown");
   const chatOnly = effectiveMode === null || (effectiveMode === "unknown" && device.chat_only === true);
@@ -358,10 +357,17 @@ function DeviceCard({
     }
   }, [device.config?.name, device.name]);
 
-  const [annText, setAnnText] = useState("hello world");
+  const cancelName = useRef(false);
+  const [editingName, setEditingName] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const diagnosticsButton = useRef<HTMLButtonElement>(null);
+  const nameButton = useRef<HTMLButtonElement>(null);
+  const [annText, setAnnText] = useState(DEFAULT_ANNOUNCEMENT);
+  const [announcementBusy, setAnnouncementBusy] = useState(false);
+  const [commandStatus, setCommandStatus] = useState("");
+  const [commandBusy, setCommandBusy] = useState(false);
   const [annError, setAnnError] = useState("");
 
-  const [ctlCommand, setCtlCommand] = useState<string>(COMMANDS[0]);
   const [ctlVolume, setCtlVolume] = useState("50");
   const [ctlOtaUrl, setCtlOtaUrl] = useState("");
   const [ctlBargeIn, setCtlBargeIn] = useState("true");
@@ -370,20 +376,25 @@ function DeviceCard({
 
   const handleAnnounce = async () => {
     setAnnError("");
-    const text = annText.trim() === "" ? "hello world" : annText;
+    const text = annText.trim() || DEFAULT_ANNOUNCEMENT;
+    setAnnouncementBusy(true);
     try {
       await api.announce(device.id, text);
       addLog("sys", `Announce sent to ${device.id}: "${text}"`, device.id);
-      setAnnText("hello world");
+      setCommandStatus("Announcement sent");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setAnnError(msg);
       addLog("sys", `Announce error: ${msg}`, device.id);
-    }
+    } finally { setAnnouncementBusy(false); }
   };
 
-  const handleCommand = async () => {
+  const handleCommand = async (ctlCommand: string) => {
+    if (commandBusy) return;
     setCtlError("");
+    setCommandStatus("");
+    if (ctlCommand === "set_volume" && (!Number.isFinite(Number(ctlVolume)) || Number(ctlVolume) < 0 || Number(ctlVolume) > 100)) { setCtlError("Volume must be between 0 and 100."); return; }
+    setCommandBusy(true);
     try {
       const params =
         ctlCommand === "set_volume"
@@ -395,14 +406,16 @@ function DeviceCard({
               : undefined;
       await api.command(device.id, ctlCommand, params);
       addLog("sys", `Command ${ctlCommand} sent to ${device.id}`, device.id);
+      setCommandStatus(`${ctlCommand.replace(/_/g, " ")} command sent`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setCtlError(msg);
       addLog("sys", `Command error: ${msg}`, device.id);
-    }
+    } finally { setCommandBusy(false); }
   };
 
   const handleNameBlur = () => {
+    if (cancelName.current) { cancelName.current = false; return; }
     const trimmed = nameDraft.trim();
     const current = device.config?.name ?? device.name ?? "";
     if (trimmed === current) return;
@@ -455,263 +468,60 @@ function DeviceCard({
           id={panelId}
           className="space-y-4 border-t border-white/5 px-3 py-3"
         >
-          <SpeechSettings deviceId={device.id} onModeChange={setEffectiveMode} />
-          <details className="card p-3 text-sm">
-            <summary>Device diagnostics</summary>
-            <p className="my-2 text-zinc-400">
-              Actions recorded for this device in this browser session.
-            </p>
-            <div className="h-48">
-              <EventLog
-                entries={logs.filter((entry) => entry.deviceId === device.id)}
-              />
+          <header className="device-detail-heading">
+            {editingName ? <form onSubmit={event => { event.preventDefault(); handleNameBlur(); setEditingName(false); nameButton.current?.focus(); }}>
+              <input aria-label="Device name" autoFocus value={nameDraft} onChange={event => setNameDraft(event.target.value)} onBlur={() => { handleNameBlur(); setEditingName(false); }} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); cancelName.current = true; setNameDraft(device.config?.name || device.name); setEditingName(false); nameButton.current?.focus(); } }} />
+            </form> : <h3>{device.config?.name || device.name || device.id}<button ref={nameButton} type="button" className="device-pencil" aria-label="Edit device name" disabled={saving} onClick={() => { cancelName.current = false; setEditingName(true); }}><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-5-5L4 14Z"/></svg></button></h3>}
+            <SaveBadge status={saveStatus}/>
+          </header>
+          <section className="device-section device-audio" aria-label="Speaker controls">
+            <div className="device-volume">
+              <label htmlFor={`${panelId}-volume`}>Output volume <span>{ctlVolume}%</span></label>
+              <input id={`${panelId}-volume`} aria-label="Output volume" type="range" min="0" max="100" step="1" className="vauxr-volume-range" value={ctlVolume} disabled={commandBusy || chatOnly} onChange={event => setCtlVolume(event.target.value)} onPointerUp={() => void handleCommand("set_volume")} onKeyUp={event => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) void handleCommand("set_volume"); }} />
+              <small className="device-muted">Sends on release. Device volume readback is unavailable.</small>
             </div>
-          </details>
-          <section aria-label="Device configuration" className="space-y-3">
-            <div className="card-section-title">Config</div>
-            <div className="flex flex-wrap items-end gap-3">
-              <label className={labelClass}>
-                Name
-                <input
-                  className={inputClass}
-                  value={nameDraft}
-                  onChange={(e) => setNameDraft(e.target.value)}
-                  onBlur={handleNameBlur}
-                  disabled={saving}
-                />
-              </label>
-              <label className={labelClass}>
-                Voice transport
-                <select
-                  className={inputClass}
-                  value={voiceMode === "websocket" ? "websocket" : "webrtc"}
-                  disabled={saving || chatOnly}
-                  onChange={(e) =>
-                    onPatch(
-                      device.id,
-                      {
-                        transport_mode: e.target.value as
-                          "websocket" | "webrtc",
-                      },
-                      `Voice transport → ${e.target.value}`,
-                    )
-                  }
-                >
-                  <option value="websocket">
-                    WebSocket only · no barge-in
-                  </option>
-                  <option value="webrtc">WebRTC · Standard or Live</option>
-                </select>
-              </label>
-              <label className={labelClass}>
-                Follow-up
-                <select
-                  className={inputClass}
-                  value={mode}
-                  onChange={(e) =>
-                    onPatch(
-                      device.id,
-                      { follow_up_mode: e.target.value as FollowUpMode },
-                      `follow_up_mode → ${e.target.value}`,
-                    )
-                  }
-                  disabled={saving || chatOnly}
-                >
-                  {FOLLOW_UP_OPTIONS.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {voiceMode === "webrtc" && (
-                <label className={labelClass}>
-                  Barge-in
-                  <select
-                    className={inputClass}
-                    value={bargeIn ? "on" : "off"}
-                    onChange={(e) =>
-                      onPatch(
-                        device.id,
-                        { barge_in: e.target.value === "on" },
-                        `barge_in → ${e.target.value}`,
-                      )
-                    }
-                    disabled={saving || chatOnly}
-                  >
-                    <option value="on">on</option>
-                    <option value="off">off</option>
-                  </select>
-                </label>
-              )}
-              <label className={labelClass}>
-                Sample rate
-                <select
-                  className={inputClass}
-                  value={sampleRate ?? ""}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    const patch =
-                      val === ""
-                        ? { output_sample_rate: undefined }
-                        : { output_sample_rate: parseInt(val, 10) };
-                    onPatch(
-                      device.id,
-                      patch,
-                      `output_sample_rate → ${val || "default"}`,
-                    );
-                  }}
-                  disabled={saving || chatOnly}
-                >
-                  <option value="">default</option>
-                  <option value="16000">16000</option>
-                  <option value="22050">22050</option>
-                  <option value="24000">24000</option>
-                  <option value="44100">44100</option>
-                </select>
-              </label>
+            <div className="device-announcement">
+              <label className="device-field">Announcement message<input value={annText} onChange={event => setAnnText(event.target.value)} /></label>
+              <button className="button-primary" type="button" disabled={announcementBusy || chatOnly} onClick={() => void handleAnnounce()}><Icon name="volume" size={16}/> {announcementBusy ? "Sending…" : "Test Announce"}</button>
             </div>
-            <p className="text-[11px] text-zinc-500">
-              {chatOnly ? "Chat-only: voice transport, follow-up and audio settings are inactive." : voiceMode === "websocket"
-                ? "WebSocket uses turn-based audio and does not support barge-in."
-                : voiceMode === "realtime"
-                  ? "Realtime uses the selected speech provider for the speech pipeline and interruption handling."
-                  : "Standard uses the configured STT, agent, and TTS pipeline over WebRTC."}
-              {" Changes apply when the device reconnects."}
-            </p>
-            <div className="space-y-2">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                Action button
-              </div>
-              {GESTURE_ROWS.map((row) => (
-                <GestureRow
-                  key={row.id}
-                  label={row.label}
-                  action={device.config?.button_actions?.[row.id]}
-                  webhooks={webhooks}
-                  disabled={saving}
-                  onChange={(next) => {
-                    const merged: Partial<Record<GestureId, ButtonAction>> = {
-                      ...(device.config?.button_actions ?? {}),
-                    };
-                    if (!next || next.kind === "none") {
-                      delete merged[row.id];
-                    } else {
-                      merged[row.id] = next;
-                    }
-                    onPatch(
-                      device.id,
-                      { button_actions: merged },
-                      `${row.label} → ${next?.kind ?? "none"}`,
-                    );
-                  }}
-                />
-              ))}
-            </div>
-            {saveStatus?.status === "error" && (
-              <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-                {saveStatus.message ?? "Save failed"}
-              </p>
-            )}
+            {annError && <p role="alert">{annError}</p>}
+            {commandStatus && <p role="status">{commandStatus}</p>}
+            {ctlError && !diagnosticsOpen && <p role="alert">{ctlError}</p>}
           </section>
+          <DeviceVoicePipeline {...browserVoice} deviceId={device.id} onModeChange={setEffectiveMode} transport={<label className="device-field">Voice transport<select aria-label="Voice transport" value={voiceMode === "websocket" ? "websocket" : "webrtc"} disabled={saving || chatOnly} onChange={event => onPatch(device.id, {transport_mode:event.target.value as "websocket" | "webrtc"}, `Voice transport → ${event.target.value}`)}><option value="websocket">WebSocket only · no barge-in</option><option value="webrtc">WebRTC · Standard or Live</option></select></label>} />
+          <section aria-label="Device features" className="device-section space-y-3">
+            <h3>Device features</h3>
+            <fieldset disabled={saving || chatOnly} className="device-follow-up"><legend>Follow-up</legend><div role="group" aria-label="Follow-up mode">{FOLLOW_UP_OPTIONS.map(value => <button key={value} type="button" aria-pressed={mode === value} onClick={() => onPatch(device.id, {follow_up_mode:value}, `follow_up_mode → ${value}`)}>{value === "auto" ? "Auto" : value === "always" ? "Always" : "Never"}</button>)}</div></fieldset>
+            {voiceMode === "webrtc" && effectiveMode !== "realtime" && <label className="device-switch"><input type="checkbox" role="switch" aria-label="Barge-in" checked={bargeIn} disabled={saving || chatOnly} onChange={event => onPatch(device.id, {barge_in:event.target.checked}, `barge_in → ${event.target.checked}`)}/> Barge-in</label>}
+            <p className="device-muted">{chatOnly ? "Chat-only: voice features are inactive." : voiceMode === "websocket" ? "WebSocket uses turn-based audio without barge-in." : effectiveMode === "realtime" ? "Realtime handles interruptions through the selected provider." : "Barge-in lets you interrupt a spoken response."} Changes apply when the device reconnects.</p>
+            <h4>Button Actions</h4>
+            {GESTURE_ROWS.map(row => <GestureRow key={row.id} label={row.label} action={device.config?.button_actions?.[row.id]} webhooks={webhooks} disabled={saving} onChange={next => {
+              const merged = {...device.config?.button_actions};
+              if (!next || next.kind === "none") delete merged[row.id]; else merged[row.id] = next;
+              onPatch(device.id, {button_actions:merged}, `${row.label} → ${next?.kind ?? "none"}`);
+            }}/>) }
+            {saveStatus?.status === "error" && <p role="alert">{saveStatus.message || "Save failed"}</p>}
+            <button ref={diagnosticsButton} type="button" onClick={() => setDiagnosticsOpen(true)}>Device Diagnostics</button>
+          </section>
+          <section className="device-section" aria-label="Device metrics & logging">
+            <h3>Device metrics &amp; logging</h3>
+            <DeviceMetrics deviceId={device.id}/>
+            <details><summary>Session activity log</summary><p className="device-muted">Actions recorded for this device in this browser session.</p><div className="h-48"><EventLog entries={logs.filter(entry => entry.deviceId === device.id)}/></div></details>
+          </section>
+          {diagnosticsOpen && <Modal title="Device Diagnostics" onClose={() => setDiagnosticsOpen(false)} returnFocus={diagnosticsButton} className="device-diagnostics-modal">
+            <p className="device-muted">Commands target {device.config?.name || device.name}. Command delivery is not device acknowledgment.</p>
+            <div className="device-diagnostic-grid">
+              <form onSubmit={event => { event.preventDefault(); void handleCommand("set_volume"); }}><h3>Volume</h3><label className="device-field">Volume<input type="number" min={0} max={100} required value={ctlVolume} onChange={event => setCtlVolume(event.target.value)}/></label><button disabled={commandBusy} type="submit">Set volume</button></form>
+              <section><h3>Audio</h3><button disabled={commandBusy} type="button" onClick={() => void handleCommand("mute")}>Mute</button><button disabled={commandBusy} type="button" onClick={() => void handleCommand("unmute")}>Unmute</button></section>
+              <section><h3>Restart</h3><button disabled={commandBusy} type="button" onClick={() => void handleCommand("reboot")}>Reboot device</button></section>
+              <form onSubmit={event => { event.preventDefault(); void handleCommand("ota"); }}><h3>Firmware update</h3><label className="device-field">Firmware URL<input type="url" value={ctlOtaUrl} onChange={event => setCtlOtaUrl(event.target.value)} placeholder={otaPlaceholder}/></label><button disabled={commandBusy} type="submit">Install firmware</button></form>
+              <section><h3>Barge-in command</h3><label className="device-switch"><input role="switch" type="checkbox" aria-label="Command barge-in enabled" checked={ctlBargeIn === "true"} onChange={event => setCtlBargeIn(String(event.target.checked))}/> Enabled</label><button disabled={commandBusy || chatOnly || voiceMode !== "webrtc" || effectiveMode === "realtime"} type="button" onClick={() => void handleCommand("set_barge_in")}>Set barge-in</button></section>
+              <section><h3>Audio output</h3><label className="device-field">Sample rate<select aria-label="Sample rate" value={sampleRate ?? ""} disabled={saving || chatOnly} onChange={event => onPatch(device.id, {output_sample_rate:event.target.value ? Number(event.target.value) : null}, `output_sample_rate → ${event.target.value || "default"}`)}><option value="">default</option>{[16000,22050,24000,44100].map(rate => <option key={rate} value={rate}>{rate}</option>)}</select></label></section>
+            </div>
+            {commandStatus && <p role="status">{commandStatus}</p>}
+            {ctlError && <p role="alert">{ctlError}</p>}
+          </Modal>}
 
-          <section aria-label="Announce" className="space-y-2">
-            <div className="card-section-title">Announce</div>
-            <div className="flex flex-wrap items-end gap-3">
-              <label className={labelClass + " flex-1 min-w-[180px]"}>
-                Text
-                <input
-                  className={inputClass}
-                  value={annText}
-                  onChange={(e) => setAnnText(e.target.value)}
-                  placeholder="Hello from the browser"
-                />
-              </label>
-              <button
-                className={primaryBtn}
-                onClick={handleAnnounce}
-                type="button"
-              >
-                Send
-              </button>
-            </div>
-            {annError && (
-              <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-                {annError}
-              </p>
-            )}
-          </section>
-
-          <section aria-label="Control" className="space-y-2">
-            <div className="card-section-title">Control</div>
-            <div className="flex flex-wrap items-end gap-3">
-              <label className={labelClass}>
-                Command
-                <select
-                  className={inputClass}
-                  value={ctlCommand}
-                  onChange={(e) => setCtlCommand(e.target.value)}
-                >
-                  {COMMANDS.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {ctlCommand === "set_volume" && (
-                <label className={labelClass}>
-                  Volume
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    className={inputClass + " w-24"}
-                    value={ctlVolume}
-                    onChange={(e) => setCtlVolume(e.target.value)}
-                  />
-                </label>
-              )}
-              {ctlCommand === "ota" && (
-                <label className={labelClass + " flex-1 min-w-[220px]"}>
-                  Firmware URL
-                  <input
-                    className={inputClass}
-                    value={ctlOtaUrl}
-                    onChange={(e) => setCtlOtaUrl(e.target.value)}
-                    placeholder={otaPlaceholder}
-                    aria-label="Firmware URL"
-                  />
-                </label>
-              )}
-              {ctlCommand === "set_barge_in" && (
-                <label className={labelClass}>
-                  Enabled
-                  <select
-                    className={inputClass}
-                    value={ctlBargeIn}
-                    onChange={(e) => setCtlBargeIn(e.target.value)}
-                    aria-label="Barge-in enabled"
-                  >
-                    <option value="true">true</option>
-                    <option value="false">false</option>
-                  </select>
-                </label>
-              )}
-              <button
-                className={primaryBtn}
-                onClick={handleCommand}
-                type="button"
-              >
-                Send
-              </button>
-            </div>
-            {ctlError && (
-              <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-                {ctlError}
-              </p>
-            )}
-          </section>
         </div>
       )}
     </li>
@@ -893,9 +703,9 @@ function GestureRow({
 function SaveBadge({ status }: { status?: SaveStatus }) {
   if (!status) return null;
   if (status.status === "saving")
-    return <span className="text-[11px] text-zinc-400">Saving…</span>;
+    return <span role="status" className="text-[11px] text-zinc-400">Saving…</span>;
   if (status.status === "saved")
-    return <span className="text-[11px] text-emerald-400">Saved</span>;
+    return <span role="status" className="text-[11px] text-emerald-400">Saved</span>;
   return (
     <span className="text-[11px] text-red-400" title={status.message}>
       Error

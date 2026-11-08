@@ -142,7 +142,7 @@ async def announce_to_device(device: Any, text: str) -> bool:
     try:
         selection = resolve(device.id)
         async for chunk in synthesize(
-            text, selection=selection, target_rate=device.output_sample_rate,
+            text, device_id=device.id, selection=selection, target_rate=device.output_sample_rate,
             abort_event=abort, on_sample_rate=on_rate
         ):
             seq = registry.next_seq(device.id)

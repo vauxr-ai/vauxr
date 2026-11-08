@@ -574,7 +574,7 @@ function OwnerApp() {
             <p>{pageDescription}</p>
           </header>
           {activeSection === "devices" ? (
-            <DevicesPanel
+            <DevicesPanel browserDeviceId={deviceId} browserConnected={isConnected} browserCredential={browserCredential}
               wsUrl={wsUrl}
               token=""
               wsState="connected"
@@ -593,7 +593,7 @@ function OwnerApp() {
               />
             </>
           ) : (
-            <AgentsPanel onContext={setViewContext} onSelection={setSelection} />
+            <AgentsPanel onContext={setViewContext} onSelection={setSelection} browserDeviceId={deviceId} browserConnected={isConnected} browserCredential={browserCredential} />
           )}
 
         </div>

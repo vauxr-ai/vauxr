@@ -31,6 +31,7 @@ async def transcribe(
     timeout: float = 30.0,
     *,
     backend: Backend | None = None,
+    device_id: str | None = None,
 ) -> str:
     """Send audio chunks to the selected Wyoming STT service, return the first transcript text."""
     backend = backend or resolve().stt
@@ -75,7 +76,11 @@ async def transcribe(
                         text = ev.data.get("text", "")
                         return text if isinstance(text, str) else ""
 
-        return await asyncio.wait_for(_read_transcript(), timeout=timeout)
+        text = await asyncio.wait_for(_read_transcript(), timeout=timeout)
+        if text.strip():
+            from vauxr.devices.metrics import record
+            record(device_id, "stt_transcriptions")
+        return text
     finally:
         writer.close()
         try:

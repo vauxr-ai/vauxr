@@ -1,3 +1,4 @@
+import RefreshButton from "./RefreshButton";
 import { useEffect, useState } from "react";
 import { jsonResponse, ownerFetch, ownerPost, randomId } from "../auth/api";
 import PairingMessages from "./PairingMessages";
@@ -146,11 +147,7 @@ export default function AccessPanel({
           <PairingMessages />
         </>
       )}
-      <button disabled={busy} onClick={() => run(refresh)}>
-        {mode === "security"
-          ? "Refresh identities"
-          : "Refresh pairing and identities"}
-      </button>
+      <RefreshButton label={mode === "security" ? "Refresh identities" : "Refresh pairing and identities"} busy={busy} onClick={() => run(refresh)} />
       {busy && <p role="status">Loading or submitting access request…</p>}
       {error && (
         <>
@@ -324,8 +321,8 @@ export default function AccessPanel({
                   : ""}
               </small>
               <div>
-                <button
-                  disabled={busy}
+                <RefreshButton label="Refresh status"
+                  busy={busy}
                   onClick={() =>
                     run(async () => {
                       const result = await ownerPost(
@@ -343,9 +340,7 @@ export default function AccessPanel({
                       );
                     })
                   }
-                >
-                  Refresh status
-                </button>{" "}
+                />{" "}
                 <button
                   disabled={busy}
                   onClick={() =>

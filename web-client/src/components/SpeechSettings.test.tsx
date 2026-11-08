@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { setCsrf } from "../auth/api";
 import SpeechSettings from "./SpeechSettings";
 
@@ -36,6 +36,7 @@ const view = {
     },
   ],
 };
+beforeEach(() => { vi.stubGlobal("ResizeObserver", class {observe() {} disconnect() {}}); });
 afterEach(() => {
   vi.unstubAllGlobals();
   setCsrf("");
@@ -101,7 +102,7 @@ it("refreshes inheritors and scopes voice controls after a global model change",
   vi.stubGlobal("fetch", fetcher);
   render(<SpeechSettings deviceId="b" />);
   await screen.findByText("Effective: whisper / piper / amy");
-  fireEvent.click(screen.getByText("Refresh speech"));
+  fireEvent.click(screen.getByRole("button", {name: "Refresh speech"}));
   await screen.findByText("Effective: whisper / kokoro / af");
   expect(screen.getByRole("option", { name: "af" })).toBeTruthy();
   expect(screen.queryByRole("option", { name: "amy" })).toBeNull();
@@ -152,9 +153,9 @@ it.each([undefined, "device-a"])(
         deviceId,
       });
       await waitFor(() =>
-        expect(screen.getByText("Refresh speech")).toBeEnabled(),
+        expect(screen.getByRole("button", {name: "Refresh speech"})).toBeEnabled(),
       );
-      fireEvent.click(screen.getByText("Refresh speech"));
+      fireEvent.click(screen.getByRole("button", {name: "Refresh speech"}));
       await waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
       expect(changed.mock.calls[1][0].detail).toEqual(
         changed.mock.calls[0][0].detail,
@@ -243,9 +244,8 @@ it("saves Live-only enablement and default atomically, retaining the draft on an
   render(<SpeechSettings agentId="agent" />);
   const standard = await screen.findByLabelText("Enable Standard");
   fireEvent.click(standard);
-  fireEvent.change(screen.getByLabelText("Default voice mode"), {
-    target: { value: "realtime" },
-  });
+  fireEvent.click(screen.getByRole("tab", {name: "Live / Realtime"}));
+  fireEvent.click(screen.getByRole("button", {name: "Default Live"}));
   fetcher.mockResolvedValueOnce({
     ok: false,
     status: 409,
@@ -254,13 +254,15 @@ it("saves Live-only enablement and default atomically, retaining the draft on an
     }),
   });
   fireEvent.click(
-    screen.getByRole("button", { name: "Save voice configuration" }),
+    screen.getByRole("button", { name: "Save pipeline configuration" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "kitchen-speaker: reset its Standard override",
   );
-  expect(standard).not.toBeChecked();
-  expect(screen.getByLabelText("Default voice mode")).toHaveValue("realtime");
+  fireEvent.click(screen.getByRole("tab", {name: "Standard"}));
+  expect(screen.getByRole("button", {name: "Enable Standard"})).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(screen.getByRole("tab", {name: "Live / Realtime"}));
+  expect(screen.getByRole("button", {name: "Default Live"})).toHaveAttribute("aria-pressed", "true");
   expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({
     enabled_modes: ["realtime"],
     default_mode: "realtime",
@@ -268,10 +270,10 @@ it("saves Live-only enablement and default atomically, retaining the draft on an
   expect(fetcher.mock.calls[1][0]).toBe("/api/agents/agent/speech");
   fireEvent.click(screen.getByLabelText("Enable Live"));
   expect(
-    screen.getByRole("button", { name: "Save voice configuration" }),
+    screen.getByRole("button", { name: "Save pipeline configuration" }),
   ).toBeEnabled();
-  expect(screen.getByText(/Chat-only: text conversation remains available/)).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Save voice configuration" }));
+  expect(screen.getByText(/Chat-only · No voice modes enabled/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Save pipeline configuration" }));
   await waitFor(() => expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({
     enabled_modes: [], default_mode: null,
   }));
@@ -360,40 +362,38 @@ it("stages a disabled Live provider and saves provider, voice, enablement and de
   vi.stubGlobal("fetch", fetcher);
   render(<SpeechSettings agentId="agent" />);
   await screen.findByLabelText("Enable Standard");
-  fireEvent.change(screen.getByLabelText("Configure mode providers"), {
-    target: { value: "realtime" },
-  });
-  fireEvent.change(screen.getByLabelText("Realtime provider / model"), {
-    target: { value: "live-provider" },
-  });
-  fireEvent.change(screen.getByLabelText("Realtime voice"), {
-    target: { value: "ash" },
-  });
+  fireEvent.click(screen.getByRole("tab", {name: "Live / Realtime"}));
+  fireEvent.click(screen.getByRole("button", {name: "Edit Realtime Provider"}));
+  fireEvent.click(screen.getByRole("radio", {name: /live-provider/}));
+  fireEvent.click(screen.getByRole("radio", {name: "ash", exact: true}));
   expect(fetcher).toHaveBeenCalledTimes(1); // Provider preparation is not an enablement request.
-  expect(
-    screen.getByText("Draft Live: live-provider / live-model / ash"),
-  ).toBeVisible();
+  expect(screen.getByRole("radio", {name: /live-provider/})).toBeChecked();
+  expect(screen.getByRole("radio", {name: "ash", exact: true})).toBeChecked();
+  fireEvent.click(screen.getByRole("button", {name: "Close entity settings"}));
+  fireEvent.click(screen.getByRole("tab", {name: "Standard"}));
   fireEvent.click(screen.getByLabelText("Enable Standard"));
+  fireEvent.click(screen.getByRole("tab", {name: "Live / Realtime"}));
   fireEvent.click(screen.getByLabelText("Enable Live"));
-  fireEvent.change(screen.getByLabelText("Default voice mode"), {
-    target: { value: "realtime" },
-  });
+  fireEvent.click(screen.getByRole("tab", {name: "Live / Realtime"}));
+  fireEvent.click(screen.getByRole("button", {name: "Default Live"}));
   fetcher.mockResolvedValueOnce({
     ok: false,
     status: 409,
     json: async () => ({ error: "D1: reconnect with WebRTC first" }),
   });
   fireEvent.click(
-    screen.getByRole("button", { name: "Save voice configuration" }),
+    screen.getByRole("button", { name: "Save pipeline configuration" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "D1: reconnect with WebRTC first",
   );
-  expect(screen.getByLabelText("Realtime provider / model")).toHaveValue(
-    "live-provider",
-  );
-  expect(screen.getByLabelText("Realtime voice")).toHaveValue("ash");
-  expect(screen.getByLabelText("Enable Standard")).not.toBeChecked();
+  fireEvent.click(screen.getByRole("button", {name: "Edit Realtime Provider"}));
+  expect(screen.getByRole("radio", {name: /live-provider/})).toBeChecked();
+  expect(screen.getByRole("radio", {name: "ash", exact: true})).toBeChecked();
+  fireEvent.click(screen.getByRole("button", {name: "Close entity settings"}));
+  fireEvent.click(screen.getByRole("tab", {name: "Standard"}));
+  expect(screen.getByLabelText("Enable Standard")).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(screen.getByRole("tab", {name: "Live / Realtime"}));
   expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({
     realtime_backend: "live-provider",
     realtime_voice: "ash",
@@ -425,12 +425,159 @@ it("stages a disabled Live provider and saves provider, voice, enablement and de
     }),
   });
   fireEvent.click(
-    screen.getByRole("button", { name: "Save voice configuration" }),
+    screen.getByRole("button", { name: "Save pipeline configuration" }),
   );
-  await waitFor(() =>
-    expect(screen.queryByText(/Unsaved provider changes/)).toBeNull(),
-  );
-  expect(
-    screen.getByText("Effective Live: live-provider / live-model / ash"),
-  ).toBeVisible();
+  await screen.findByText(/Pipeline configuration saved/);
+  fireEvent.click(screen.getByRole("button", {name: "Edit Realtime Provider"}));
+  expect(screen.getByRole("radio", {name: /live-provider/})).toBeChecked();
+  expect(screen.getByRole("radio", {name: "ash", exact: true})).toBeChecked();
+  expect(screen.getByRole("button", {name: "Default Live"})).toHaveAttribute("aria-pressed", "true");
+});
+
+const previewPolicy = {
+  agent_id: "agent", assigned: false, configured: true,
+  integration_modes: ["standard", "realtime"], enabled_modes: ["standard"],
+  default_mode: "standard", available_modes: ["standard"],
+  capabilities_known: true, conflict: null, agents: [{id: "agent", name: "Household"}],
+};
+it("navigates provider tabs by keyboard and disables disconnected previews", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ok: true, json: async () => ({...view, policy: previewPolicy})}));
+  render(<SpeechSettings agentId="agent" agentName="Workshop" />);
+  fireEvent.click(await screen.findByRole("button", {name: "Edit Text To Speech"}));
+  expect(screen.getByRole("button", {name: "Test selected voice"})).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", {name: "Close entity settings"}));
+  const standard = screen.getByRole("tab", {name: "Standard"});
+  fireEvent.keyDown(standard, {key: "End"});
+  expect(screen.getByRole("tab", {name: "Live / Realtime"})).toHaveFocus();
+  fireEvent.click(screen.getByRole("button", {name: "Edit Realtime Provider"}));
+  expect(screen.getByText(/samples are available for Standard/)).toBeVisible();
+  fireEvent.keyDown(screen.getByRole("dialog"), {key: "Escape"});
+  fireEvent.keyDown(screen.getByRole("tab", {name: "Live / Realtime"}), {key: "ArrowRight"});
+  expect(standard).toHaveFocus();
+});
+it("cancels preview on draft selection change without persisting selection", async () => {
+  let signal: AbortSignal | undefined;
+  const fetcher = vi.fn().mockImplementation(async (path, init) => {
+    if (path === "/api/speech/preview") { signal = init.signal; return new Promise(() => {}); }
+    return {ok: true, json: async () => ({...view, policy: previewPolicy})};
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<SpeechSettings agentId="agent" browserDeviceId="browser" browserConnected browserCredential={() => "browser-proof"} />);
+  fireEvent.click(await screen.findByRole("button", {name: "Edit Text To Speech"}));
+  fireEvent.click(screen.getByRole("button", {name: "Test selected voice"}));
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({device_id: "browser", tts_backend: "piper", voice: "amy"});
+  expect(new Headers(fetcher.mock.calls[1][1].headers).get("X-Vauxr-Browser")).toBe("browser-proof");
+  fireEvent.click(screen.getByRole("radio", {name: "sam", exact: true}));
+  expect(signal?.aborted).toBe(true);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("button", {name: "Stop"})).toBeNull();
+});
+it("reports preview errors and disables unavailable providers", async () => {
+  const fetcher = vi.fn().mockResolvedValue({ok: true, json: async () => ({...view, policy: previewPolicy})});
+  vi.stubGlobal("fetch", fetcher);
+  render(<SpeechSettings agentId="agent" browserDeviceId="browser" browserConnected browserCredential={() => "browser-proof"} />);
+  fireEvent.click(await screen.findByRole("button", {name: "Edit Text To Speech"}));
+  const test = screen.getByRole("button", {name: "Test selected voice"});
+  fetcher.mockResolvedValueOnce({ok: false, status: 503, json: async () => ({error: "Synthesis unavailable"})});
+  fireEvent.click(test);
+  expect(await screen.findByText("Synthesis unavailable")).toBeVisible();
+  fireEvent.click(screen.getByRole("radio", {name: /kokoro/}));
+  expect(test).toBeDisabled();
+});
+it.each([false, true])("cleans up local playback on disconnect and reports playback rejection (%s)", async (reject) => {
+  const pause = vi.fn();
+  const play = reject ? vi.fn().mockRejectedValue(new Error("Playback denied")) : vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("Audio", class {pause = pause; play = play;});
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  const revoke = vi.fn();
+  URL.createObjectURL = vi.fn().mockReturnValue("blob:sample");
+  URL.revokeObjectURL = revoke;
+  try {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async path => path === "/api/speech/preview"
+      ? {ok: true, blob: async () => new Blob(["wav"], {type: "audio/wav"})}
+      : {ok: true, json: async () => ({...view, policy: previewPolicy})}));
+    const {rerender} = render(<SpeechSettings agentId="agent" browserDeviceId="browser" browserConnected browserCredential={() => "browser-proof"} />);
+    fireEvent.click(await screen.findByRole("button", {name: "Edit Text To Speech"}));
+  fireEvent.click(screen.getByRole("button", {name: "Test selected voice"}));
+    await screen.findByText(reject ? "Playback denied" : "Playing in this browser.");
+    expect(play).toHaveBeenCalledTimes(1);
+    rerender(<SpeechSettings agentId="agent" browserDeviceId="browser" browserConnected={false} browserCredential={() => "browser-proof"} />);
+    expect(pause).toHaveBeenCalled();
+    expect(revoke).toHaveBeenCalledWith("blob:sample");
+  } finally {
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+  }
+});
+
+it("recovers initial load failure through the accessible refresh action", async () => {
+  const fetcher = vi.fn().mockRejectedValueOnce(new Error("Offline")).mockResolvedValue({ok:true,json:async()=>view});
+  vi.stubGlobal("fetch", fetcher);
+  render(<SpeechSettings />);
+  fireEvent.click(await screen.findByRole("button", {name:"Retry voice configuration"}));
+  await screen.findByLabelText("TTS backend");
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it("stages an agent model profile with voice settings, reports partial save and retries without discarding edits", async () => {
+  let rejectSpeech = true;
+  const fetcher = vi.fn().mockImplementation(async (path, init) => {
+    if (path === "/api/settings/providers") return {ok: true, json: async () => ({profiles: [
+      {id: "local", name: "Household local", provider: "ollama", model: "local-model"},
+      {id: "remote", name: "Remote", provider: "openai", model: "remote-model"},
+    ]})};
+    if (path === "/api/support") return {ok: true, json: async () => ({provider: "ollama", model: "direct-model"})};
+    if (init?.method === "PATCH" && rejectSpeech) return {ok: false, status: 409, json: async () => ({error: "Device override conflict"})};
+    return {ok: true, json: async () => ({...view, policy: previewPolicy})};
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<SpeechSettings agentId="agent" agentType="support" agentName="Support"/>);
+  fireEvent.click(await screen.findByRole("button", {name: "Edit Support"}));
+  const local = await screen.findByRole("radio", {name: /Household local/});
+  expect(screen.getByRole("radio", {name: /Remote/})).toBeDisabled();
+  fireEvent.click(local);
+  fireEvent.keyDown(screen.getByRole("dialog"), {key: "Escape"});
+  expect(screen.getByRole("button", {name: "Edit Support"})).toHaveFocus();
+  fireEvent.click(screen.getByRole("button", {name: "Edit Text To Speech"}));
+  fireEvent.click(screen.getByRole("radio", {name: "sam", exact: true}));
+  fireEvent.keyDown(screen.getByRole("dialog"), {key: "Escape"});
+  expect(fetcher.mock.calls.filter(([, init]) => ["PATCH", "POST"].includes(init?.method))).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", {name: "Save pipeline configuration"}));
+  await screen.findByText(/agent model profile was saved, but voice settings were not/);
+  const writes = fetcher.mock.calls.filter(([, init]) => ["PATCH", "POST"].includes(init?.method));
+  expect(writes.map(([path]) => path)).toEqual(["/api/support", "/api/agents/agent/speech"]);
+  expect(JSON.parse(writes[0][1].body)).toEqual({profile_id: "local"});
+  expect(JSON.parse(writes[1][1].body)).toEqual({voices: {piper: "sam"}, enabled_modes: ["standard"], default_mode: "standard"});
+  rejectSpeech = false;
+  fireEvent.click(screen.getByRole("button", {name: "Save pipeline configuration"}));
+  await screen.findByText(/Pipeline configuration saved/);
+  expect(screen.queryByText(/agent model profile was saved, but voice settings were not/)).toBeNull();
+});
+
+
+it("does not leave a saved confirmation on a newly changed graph policy", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ok:true,json:async()=>({...view,policy:previewPolicy})}));
+  render(<SpeechSettings agentId="agent"/>);
+  fireEvent.click(await screen.findByRole("button", {name:"Save pipeline configuration"}));
+  await screen.findByText(/Pipeline configuration saved/);
+  fireEvent.click(screen.getByRole("button", {name:"Enable Standard"}));
+  expect(screen.getByText("Unsaved pipeline changes.")).toBeVisible();
+  expect(screen.queryByText(/Pipeline configuration saved/)).toBeNull();
+});
+
+it("signals modal success only after a completed save and keeps rejected edits open", async () => {
+  const onSaved=vi.fn();
+  let finish: (response: unknown)=>void = ()=>{};
+  vi.stubGlobal("fetch",vi.fn((_path,init)=>init?.method==="PATCH" ? new Promise(resolve=>{finish=resolve;}) : Promise.resolve({ok:true,json:async()=>({...view,policy:previewPolicy})})));
+  render(<SpeechSettings agentId="agent" onSaved={onSaved}/>);
+  fireEvent.click(await screen.findByRole("button",{name:"Save pipeline configuration"}));
+  expect(screen.getByText("Saving pipeline configuration…")).toBeVisible();
+  expect(onSaved).not.toHaveBeenCalled();
+  finish({ok:false,status:409,json:async()=>({error:"Assigned device requires Live"})});
+  expect(await screen.findByRole("alert")).toHaveTextContent("Assigned device requires Live");
+  expect(onSaved).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button",{name:"Save pipeline configuration"}));
+  finish({ok:true,json:async()=>({...view,policy:previewPolicy})});
+  await waitFor(()=>expect(onSaved).toHaveBeenCalledTimes(1));
 });

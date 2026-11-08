@@ -213,6 +213,11 @@ async def test_installed_live_audio_delegation_recording_and_shutdown(monkeypatc
             assert sum(t["final"] and t["text"] == "Done" for t in transcripts()) == 1
             await llm.finish_transcript()
             assert len([f for op, p in operations if op == "record" for f in p["fragments"]]) == 5
+            from vauxr.devices.metrics import get_store
+            totals = get_store().view("browser", "1h")["totals"]
+            assert totals["realtime_user_turns"] == 2
+            assert totals["realtime_assistant_turns"] == 3
+            assert totals["stt_transcriptions"] == totals["tts_syntheses"] == 0
             assert len([op for op, _ in operations if op == "consult"]) == 1
             assert any(not f["delivered"] for op, payload in operations if op == "record" for f in payload["fragments"] if f["role"] == "assistant")
         finally:

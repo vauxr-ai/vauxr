@@ -1,831 +1,122 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ConnectionState, LogEntry } from "../hooks/useWebSocket";
 import DevicesPanel from "./DevicesPanel";
 
-const mockListDevices = vi.fn();
-const mockAnnounce = vi.fn();
-const mockCommand = vi.fn();
-
-const stableApi = {
-  listDevices: mockListDevices,
-  announce: mockAnnounce,
-  command: mockCommand,
-};
-
-vi.mock("../hooks/useHttpApi", () => ({
-  deriveHttpUrl: vi.fn(() => "http://localhost:8080"),
-  useHttpApi: vi.fn(() => stableApi),
-}));
-
-interface FakeDevice {
-  id: string;
-  name: string;
-  state: string;
-  lastSeen: string;
-  config: {
-    name?: string;
-    voice_mode?: "websocket" | "webrtc" | "realtime";
-    follow_up_mode?: "auto" | "always" | "never";
-    output_sample_rate?: number;
-    barge_in?: boolean;
-  };
-}
-
-const DEVICES: FakeDevice[] = [
-  {
-    id: "d1",
-    name: "Living Room",
-    state: "idle",
-    lastSeen: "2026-01-01T12:00:00Z",
-    config: { name: "Living Room", follow_up_mode: "auto" },
-  },
-  {
-    id: "d2",
-    name: "Kitchen",
-    state: "listening",
-    lastSeen: "2026-01-01T12:00:00Z",
-    config: { name: "Kitchen", follow_up_mode: "always" },
-  },
-];
-
-let fetchSpy: ReturnType<typeof vi.fn>;
-
-function jsonResponse(body: unknown, ok = true, status = 200): Response {
-  return {
-    ok,
-    status,
-    statusText: ok ? "OK" : "Error",
-    json: async () => body,
-  } as unknown as Response;
-}
-
+const announce = vi.fn(), command = vi.fn();
+const api = { announce, command };
+vi.mock("../hooks/useHttpApi", () => ({ deriveHttpUrl: () => "http://localhost", useHttpApi: () => api }));
+let devices: any[], speech: any, calls: {url:string; body:any}[];
+let fail = "";
+function response(body: unknown, status = 200) { return {ok:status === 200, status, json:async () => body} as Response; }
 beforeEach(() => {
-  vi.clearAllMocks();
-  fetchSpy = vi.fn().mockImplementation((url: string) => {
-    if (String(url).includes("/api/webhooks")) {
-      return Promise.resolve(jsonResponse([]));
+  vi.clearAllMocks(); fail = ""; calls = [];
+  devices = [{id:"d1",name:"Living Room",state:"idle",lastSeen:"2026-01-01T12:00:00Z",config:{name:"Living Room",follow_up_mode:"auto",voice_mode:"webrtc"}}, {id:"d2",name:"Kitchen",state:"offline",lastSeen:"2026-01-01T12:00:00Z",config:{}}];
+  speech = {defaults:{mode:"standard",stt_backend:"whisper",tts_backend:"piper",voices:{piper:"amy"}},overrides:{},effective:{stt_backend:"whisper",tts_backend:"piper",voice_id:"amy"},voice:{mode:"standard"},backends:[{id:"whisper",kind:"stt",model:"base",voices:[],readiness:"ready"},{id:"piper",kind:"tts",model:"en",voices:["amy"],readiness:"ready"}],policy:{assigned:false,agent_id:"nova",fallback_agent:"Nova",agents:[{id:"nova",name:"Nova"},{id:"ada",name:"Ada"}],available_modes:["standard"]}};
+  globalThis.fetch = vi.fn(async (url, init) => {
+    const path = String(url), body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    if (body) calls.push({url:path,body});
+    if (fail && path.includes(fail)) return response({error:"Cannot save now"},503);
+    if (path.endsWith("/speech")) {
+      if (body?.agent_id !== undefined) { speech.policy.assigned = !!body.agent_id; speech.policy.agent_id = body.agent_id || "nova"; }
+      if (body && !("agent_id" in body)) speech.overrides = body.reset ? {} : {...speech.overrides,...body};
+      return response(structuredClone(speech));
     }
-    return Promise.resolve(jsonResponse(DEVICES));
-  });
-  globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    if (path.includes("/metrics")) return response({window:"24h",bucket_seconds:3600,buckets:[],totals:{},metrics:[],observed_since:"2026-01-01T00:00:00Z",retention_days:30});
+    if (path.includes("/api/webhooks")) return response([{id:"w1",name:"Lights"}]);
+    if (path.endsWith("/api/devices")) return response(structuredClone(devices));
+    if (body) { const d = devices.find(d => path.endsWith(d.id)); d.config = {...d.config,...body}; if (body.name) d.name=body.name; if (body.transport_mode) d.config.voice_mode=body.transport_mode; return response(structuredClone(d)); }
+    return response({});
+  }) as typeof fetch;
+});
+afterEach(() => vi.restoreAllMocks());
+function panel(extra = {}) { return render(<DevicesPanel wsUrl="ws://localhost" token="" wsState="connected" addLog={vi.fn()} {...extra}/>); }
+async function open() { await userEvent.click(await screen.findByRole("button",{name:/Living Room.*idle/})); await screen.findByRole("combobox",{name:"Assigned agent"}); }
+it("shows disconnected and empty states", async () => {
+  const view=panel({wsState:"disconnected"}); expect(screen.getByText(/Connect to a server/)).toBeVisible(); view.unmount(); devices=[]; panel(); expect(await screen.findByText("No devices yet")).toBeVisible();
+});
+it("selects complete rows, opens one device at a time and keeps administration independent of voice", async () => {
+  panel(); await open(); expect(screen.getByRole("heading",{name:"Device features"})).toBeVisible(); await userEvent.click(screen.getByRole("button",{name:/Kitchen.*offline/})); expect(screen.getAllByRole("region",{name:"Assigned agent"})).toHaveLength(1);
+});
+it("autosaves agent assignment, names the default, and hides overrides until requested", async () => {
+  panel(); await open(); expect(screen.getByRole("option",{name:"Use default agent (Nova)"})).toBeVisible(); expect(screen.queryByRole("combobox",{name:"STT backend"})).toBeNull(); expect(screen.queryByRole("button",{name:"Save agent assignment"})).toBeNull();
+  await userEvent.selectOptions(screen.getByRole("combobox",{name:"Assigned agent"}),"ada"); await waitFor(() => expect(calls).toContainEqual({url:"/api/devices/d1/speech",body:{agent_id:"ada"}})); expect(await screen.findByText("Saved")).toBeVisible();
+  await userEvent.click(screen.getByRole("button",{name:"Override agent voice pipeline defaults"})); expect(screen.getByRole("combobox",{name:"Voice transport"})).toBeVisible(); expect(screen.getByRole("combobox",{name:"TTS backend"})).toBeVisible();
+  await userEvent.selectOptions(screen.getByRole("combobox",{name:"Voice transport"}),"websocket"); await waitFor(() => expect(calls.some(c=>c.body.transport_mode==="websocket")).toBe(true));
+});
+it("preserves saved selection and presents errors on rejected autosaves", async () => {
+  panel(); await open(); fail="/speech"; await userEvent.selectOptions(screen.getByRole("combobox",{name:"Assigned agent"}),"ada"); expect(await screen.findByRole("alert")).toHaveTextContent("Cannot save now"); expect(screen.getByRole("combobox",{name:"Assigned agent"})).toHaveValue("");
+});
+it("renames inline on Enter and leaves the pencil next to title", async () => {
+  panel(); await open(); await userEvent.click(screen.getByRole("button",{name:"Edit device name"})); const input=screen.getByRole("textbox",{name:"Device name"}); await userEvent.clear(input); await userEvent.type(input,"Studio{Enter}"); await waitFor(() => expect(calls.some(c=>c.body.name==="Studio")).toBe(true)); expect(await screen.findByRole("heading",{name:"Studio"})).toContainElement(screen.getByRole("button",{name:"Edit device name"}));
+});
+it("autosaves follow-up segmented choice and barge-in switch", async () => {
+  panel(); await open(); await userEvent.click(screen.getByRole("button",{name:"Always",exact:true})); await waitFor(() => expect(screen.getByRole("button",{name:"Always"})).toHaveAttribute("aria-pressed","true"));
+  await userEvent.click(screen.getByRole("switch",{name:"Barge-in",exact:true})); await waitFor(() => expect(calls.some(c=>c.body.barge_in===false)).toBe(true));
+});
+it.each(["websocket","realtime"])("does not offer unsupported barge-in for %s", async mode => { devices[0].config.voice_mode=mode; if (mode==="realtime") speech.voice.mode="realtime"; panel(); await open(); expect(screen.queryByRole("switch",{name:"Barge-in",exact:true})).toBeNull(); });
+it("preserves webhook gesture mappings after save", async () => {
+  panel(); await open(); await userEvent.selectOptions(screen.getByRole("combobox",{name:"Double press action"}),"webhook"); await waitFor(() => expect(calls.some(c=>c.body.button_actions?.double_press?.webhook_id==="w1")).toBe(true)); expect(screen.getByRole("combobox",{name:"Double press webhook"})).toHaveValue("w1");
+});
+it("uses the requested announcement default, retains edited text, and targets the correct device", async () => {
+  panel(); await open(); const input=screen.getByRole("textbox",{name:"Announcement message"}); expect(input).toHaveValue("Hello world! this is the vauxr speaker test announcement. I sure hope you can hear me");
+  await userEvent.clear(input); await userEvent.type(input,"Testing the kitchen"); await userEvent.click(screen.getByRole("button",{name:"Test Announce"})); expect(announce).toHaveBeenCalledWith("d1","Testing the kitchen"); expect(input).toHaveValue("Testing the kitchen");
+});
+it("sends slider volume on release rather than every input change", async () => {
+  panel(); await open(); const range=screen.getByRole("slider",{name:"Output volume"}); fireEvent.change(range,{target:{value:"72"}}); expect(command).not.toHaveBeenCalled(); fireEvent.pointerUp(range); await waitFor(() => expect(command).toHaveBeenCalledWith("d1","set_volume",{volume:72}));
+});
+it("exposes all diagnostics simultaneously in a separate modal and sends validated controls", async () => {
+  panel(); await open(); expect(screen.queryByRole("button",{name:"Reboot device"})).toBeNull(); await userEvent.click(screen.getByRole("button",{name:"Device Diagnostics"})); const dialog=screen.getByRole("dialog",{name:"Device Diagnostics"});
+  for (const name of ["Set volume","Mute","Unmute","Reboot device","Install firmware","Set barge-in"]) expect(within(dialog).getByRole("button",{name,exact:true})).toBeVisible();
+  expect(within(dialog).queryByRole("combobox",{name:"Command",exact:true})).toBeNull(); await userEvent.click(within(dialog).getByRole("button",{name:"Mute",exact:true})); await waitFor(()=>expect(command).toHaveBeenCalledWith("d1","mute",undefined));
+  await userEvent.type(within(dialog).getByRole("textbox",{name:"Firmware URL"}),"https://example.test/speaker.bin"); await userEvent.click(within(dialog).getByRole("button",{name:"Install firmware"})); await waitFor(()=>expect(command).toHaveBeenCalledWith("d1","ota",{url:"https://example.test/speaker.bin"}));
+  await userEvent.click(within(dialog).getByRole("button",{name:"Close dialog"})); expect(screen.queryByRole("dialog")).toBeNull(); expect(screen.getByRole("button",{name:"Device Diagnostics"})).toHaveFocus();
+});
+it("scopes session logs by exact device ID", async () => {
+  panel({logs:[{id:1,time:new Date(),dir:"sys",text:"Only d1",deviceId:"d1"},{id:2,time:new Date(),dir:"sys",text:"Misleading d1 mention",deviceId:"d2"}]}); await open(); await userEvent.click(screen.getByText("Session activity log")); expect(screen.getByText("Only d1")).toBeVisible(); expect(screen.queryByText("Misleading d1 mention")).toBeNull();
+});
+it("shows refresh failures and retries", async () => { fail="/api/devices"; panel(); expect(await screen.findByRole("alert")).toHaveTextContent("Cannot save now"); fail=""; await userEvent.click(screen.getByRole("button",{name:"Refresh",exact:true})); await screen.findByRole("button",{name:/Living Room.*idle/}); });
+it("cancels an inline name draft without saving", async () => {
+ panel(); await open(); await userEvent.click(screen.getByRole("button",{name:"Edit device name"})); const input=screen.getByRole("textbox",{name:"Device name"}); await userEvent.clear(input); await userEvent.type(input,"Cancel this{Escape}"); expect(calls.filter(c=>c.body.name)).toHaveLength(0); expect(screen.getByRole("heading",{name:"Living Room"})).toBeVisible();
 });
 
-afterEach(() => {
-  vi.restoreAllMocks();
+it("refreshes open voice overrides after companion mode changes without saving configuration", async () => {
+  panel(); await open();
+  await userEvent.click(screen.getByRole("button", {name:"Override agent voice pipeline defaults"}));
+  expect(screen.getByRole("combobox", {name:"TTS backend"})).toBeVisible();
+  speech.voice = {mode:"realtime", realtime_backend:"live", realtime_voice:"cedar"};
+  speech.policy.available_modes = ["standard", "realtime"];
+  speech.backends.push({id:"live", kind:"realtime", model:"live", voices:["cedar"], readiness:"ready"});
+  await act(async () => { window.dispatchEvent(new CustomEvent("speech-settings-changed", {detail:{source:"talk",deviceId:"d1"}})); });
+  expect(await screen.findByRole("combobox", {name:"Realtime voice"})).toBeVisible();
+  expect(screen.queryByRole("combobox", {name:"TTS backend"})).toBeNull();
+  expect(calls).toHaveLength(0);
 });
 
-function renderPanel(
-  overrides: {
-    wsState?: ConnectionState;
-    addLog?: (dir: LogEntry["dir"], text: string) => void;
-  } = {},
-) {
-  const props = {
-    wsUrl: "ws://localhost:8765",
-    token: "tok",
-    wsState: overrides.wsState ?? "connected",
-    addLog: overrides.addLog ?? vi.fn(),
-  };
-  return render(<DevicesPanel {...props} />);
-}
-
-async function waitForDevices() {
-  await waitFor(() => {
-    expect(screen.getByRole("list")).toBeInTheDocument();
-    expect(
-      within(screen.getByRole("list")).getAllByRole("listitem").length,
-    ).toBeGreaterThan(0);
-  });
-}
-
-describe("DevicesPanel", () => {
-  describe("rendering", () => {
-    it("renders a connect-prompt placeholder when wsState === 'disconnected'", () => {
-      renderPanel({ wsState: "disconnected" });
-      expect(
-        screen.getByText(/connect to a server to manage devices/i),
-      ).toBeInTheDocument();
-      expect(screen.queryByText(/^Devices$/)).not.toBeInTheDocument();
-    });
-
-    it("renders the Devices header when connected", async () => {
-      renderPanel();
-      expect(screen.getByText(/^Devices$/)).toBeInTheDocument();
-      await waitForDevices();
-    });
-
-    it("renders 'No devices yet' when the device list is empty", async () => {
-      fetchSpy.mockResolvedValueOnce(jsonResponse([]));
-      renderPanel();
-      await waitFor(() => {
-        expect(screen.getByText(/no devices yet/i)).toBeInTheDocument();
-      });
-    });
-
-    it("shows error inline when refresh fails", async () => {
-      fetchSpy.mockResolvedValueOnce(
-        jsonResponse({ error: "Network down" }, false, 500),
-      );
-      renderPanel();
-      await waitFor(() => {
-        expect(screen.getByText("Network down")).toBeInTheDocument();
-      });
-    });
-  });
-
-  describe("device cards", () => {
-    it("renders a card per device with name, state pill, and id", async () => {
-      renderPanel();
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      expect(items).toHaveLength(2);
-      expect(within(items[0]).getByText("Living Room")).toBeInTheDocument();
-      expect(within(items[0]).getByText("idle")).toBeInTheDocument();
-      expect(within(items[0]).getByText(/d1/)).toBeInTheDocument();
-      expect(within(items[1]).getByText("Kitchen")).toBeInTheDocument();
-      expect(within(items[1]).getByText("listening")).toBeInTheDocument();
-    });
-
-    it("cards default to collapsed (config/actions hidden)", async () => {
-      renderPanel();
-      await waitForDevices();
-      expect(screen.queryByText(/^Config$/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/^Announce$/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/^Control$/)).not.toBeInTheDocument();
-    });
-
-    it("clicking the card header expands it to show Config/Announce/Control", async () => {
-      const user = userEvent.setup();
-      renderPanel();
-      await waitForDevices();
-
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      const toggle = within(items[0]).getByRole("button", { expanded: false });
-      await user.click(toggle);
-
-      expect(
-        within(items[0]).getByRole("button", { expanded: true }),
-      ).toBeInTheDocument();
-      expect(within(items[0]).getByText(/^Config$/)).toBeInTheDocument();
-      expect(within(items[0]).getByText(/^Announce$/)).toBeInTheDocument();
-      expect(within(items[0]).getByText(/^Control$/)).toBeInTheDocument();
-    });
-
-    it("clicking the header again collapses the card", async () => {
-      const user = userEvent.setup();
-      renderPanel();
-      await waitForDevices();
-
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      const toggle = within(items[0]).getByRole("button", { expanded: false });
-      await user.click(toggle);
-      expect(within(items[0]).getByText(/^Config$/)).toBeInTheDocument();
-
-      const expandedToggle = within(items[0]).getByRole("button", {
-        expanded: true,
-      });
-      await user.click(expandedToggle);
-      expect(within(items[0]).queryByText(/^Config$/)).not.toBeInTheDocument();
-    });
-
-    it("expands cards independently", async () => {
-      const user = userEvent.setup();
-      renderPanel();
-      await waitForDevices();
-
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[0]).getByRole("button", { expanded: false }),
-      );
-
-      expect(within(items[0]).getByText(/^Config$/)).toBeInTheDocument();
-      expect(within(items[1]).queryByText(/^Config$/)).not.toBeInTheDocument();
-    });
-  });
-
-  describe("config section", () => {
-    async function expandFirstCard(user: ReturnType<typeof userEvent.setup>) {
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[0]).getByRole("button", { expanded: false }),
-      );
-      return items[0];
+it("previews the effective override voice only through the authenticated browser and aborts on disconnect", async () => {
+  speech.backends[1].voices.push("sam");
+  speech.effective.voice_id = "sam";
+  let previewSignal: AbortSignal | undefined;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url, init) => {
+    if (String(url) === "/api/speech/preview") {
+      expect(JSON.parse(String(init?.body))).toEqual({device_id:"browser-client",tts_backend:"piper",voice:"sam"});
+      expect(new Headers(init?.headers).get("X-Vauxr-Browser")).toBe("browser-proof");
+      previewSignal = init?.signal as AbortSignal;
+      return new Promise<Response>(() => {});
     }
-
-    it("changing follow-up mode triggers a PATCH and updates state", async () => {
-      const user = userEvent.setup();
-      const updated = {
-        ...DEVICES[0],
-        config: { ...DEVICES[0].config, follow_up_mode: "never" as const },
-      };
-      fetchSpy.mockResolvedValueOnce(jsonResponse(DEVICES));
-      fetchSpy.mockResolvedValueOnce(jsonResponse(updated));
-
-      const addLog = vi.fn();
-      renderPanel({ addLog });
-      const card = await expandFirstCard(user);
-
-      const select = within(card).getByLabelText(/follow-up/i);
-      await user.selectOptions(select, "never");
-
-      await waitFor(() => {
-        const patchCall = fetchSpy.mock.calls.find(
-          (c) =>
-            typeof c[0] === "string" &&
-            (c[0] as string).endsWith("/api/devices/d1"),
-        );
-        expect(patchCall).toBeDefined();
-        const init = patchCall![1] as RequestInit;
-        expect(init.method).toBe("PATCH");
-        expect(JSON.parse(init.body as string)).toEqual({
-          follow_up_mode: "never",
-        });
-      });
-      await waitFor(() => {
-        expect(addLog).toHaveBeenCalledWith(
-          "sys",
-          expect.stringContaining("follow_up_mode → never"),
-          "d1",
-        );
-      });
-    });
-
-    it("changing barge-in triggers a PATCH and updates state", async () => {
-      const user = userEvent.setup();
-      const updated = {
-        ...DEVICES[0],
-        config: { ...DEVICES[0].config, barge_in: false },
-      };
-      fetchSpy.mockResolvedValueOnce(jsonResponse(DEVICES));
-      fetchSpy.mockResolvedValueOnce(jsonResponse(updated));
-
-      const addLog = vi.fn();
-      renderPanel({ addLog });
-      const card = await expandFirstCard(user);
-
-      const select = within(card).getByLabelText(/barge-in/i);
-      await user.selectOptions(select, "off");
-
-      await waitFor(() => {
-        const patchCall = fetchSpy.mock.calls.find(
-          (c) =>
-            typeof c[0] === "string" &&
-            (c[0] as string).endsWith("/api/devices/d1"),
-        );
-        expect(patchCall).toBeDefined();
-        const init = patchCall![1] as RequestInit;
-        expect(init.method).toBe("PATCH");
-        expect(JSON.parse(init.body as string)).toEqual({ barge_in: false });
-      });
-      await waitFor(() => {
-        expect(addLog).toHaveBeenCalledWith(
-          "sys",
-          expect.stringContaining("barge_in → off"),
-          "d1",
-        );
-      });
-    });
-
-    it("changing a button gesture kind PATCHes button_actions", async () => {
-      const user = userEvent.setup();
-      const updated = {
-        ...DEVICES[0],
-        config: {
-          ...DEVICES[0].config,
-          button_actions: {
-            double_press: { kind: "announce", text: "Goodnight" },
-          },
-        },
-      };
-      fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
-        if (String(url).includes("/api/webhooks"))
-          return Promise.resolve(jsonResponse([]));
-        if (init?.method === "PATCH")
-          return Promise.resolve(jsonResponse(updated));
-        return Promise.resolve(jsonResponse(DEVICES));
-      });
-
-      const addLog = vi.fn();
-      renderPanel({ addLog });
-      const card = await expandFirstCard(user);
-
-      const select = within(card).getByLabelText(/double press action/i);
-      await user.selectOptions(select, "announce");
-      const text = within(card).getByLabelText(/double press text/i);
-      await user.type(text, "Goodnight");
-      await user.tab();
-
-      await waitFor(() => {
-        const patchCall = fetchSpy.mock.calls.find(
-          (c) =>
-            typeof c[0] === "string" &&
-            (c[0] as string).includes("/api/devices/d1") &&
-            (c[1] as RequestInit | undefined)?.method === "PATCH",
-        );
-        expect(patchCall).toBeDefined();
-        const init = patchCall![1] as RequestInit;
-        expect(JSON.parse(init.body as string)).toEqual({
-          button_actions: {
-            double_press: { kind: "announce", text: "Goodnight" },
-          },
-        });
-      });
-    });
-
-    it("selecting a webhook mapping keeps the chosen webhook after save", async () => {
-      const user = userEvent.setup();
-      const hooks = [
-        {
-          id: "wh_1",
-          name: "Lights",
-          has_url: true,
-          has_authorization: false,
-          has_body: false,
-        },
-        {
-          id: "wh_2",
-          name: "Goodnight",
-          has_url: true,
-          has_authorization: false,
-          has_body: false,
-        },
-      ];
-      fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
-        if (String(url).includes("/api/webhooks"))
-          return Promise.resolve(jsonResponse(hooks));
-        if (init?.method === "PATCH") {
-          const patch = JSON.parse(String(init.body));
-          return Promise.resolve(
-            jsonResponse({
-              ...DEVICES[0],
-              config: { ...DEVICES[0].config, ...patch },
-            }),
-          );
-        }
-        return Promise.resolve(jsonResponse(DEVICES));
-      });
-
-      renderPanel();
-      const card = await expandFirstCard(user);
-      await waitFor(() => {
-        expect(
-          within(card).getByLabelText(/double press action/i),
-        ).toBeEnabled();
-      });
-
-      await user.selectOptions(
-        within(card).getByLabelText(/double press action/i),
-        "webhook",
-      );
-      const webhookSelect = await waitFor(() =>
-        within(card).getByLabelText(/double press webhook/i),
-      );
-      await user.selectOptions(webhookSelect, "wh_2");
-
-      await waitFor(() => {
-        expect(
-          (
-            within(card).getByLabelText(
-              /double press webhook/i,
-            ) as HTMLSelectElement
-          ).value,
-        ).toBe("wh_2");
-      });
-      const patchBodies = fetchSpy.mock.calls
-        .filter((c) => (c[1] as RequestInit | undefined)?.method === "PATCH")
-        .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
-      expect(patchBodies).toContainEqual({
-        button_actions: {
-          double_press: { kind: "webhook", webhook_id: "wh_2" },
-        },
-      });
-    });
-
-    it("name input saves on blur if changed", async () => {
-      const user = userEvent.setup();
-      fetchSpy.mockResolvedValueOnce(jsonResponse(DEVICES));
-      fetchSpy.mockResolvedValueOnce(
-        jsonResponse({
-          ...DEVICES[0],
-          config: { ...DEVICES[0].config, name: "Den" },
-        }),
-      );
-
-      renderPanel();
-      const card = await expandFirstCard(user);
-
-      const nameInput = within(card).getByLabelText(
-        /name/i,
-      ) as HTMLInputElement;
-      await user.clear(nameInput);
-      await user.type(nameInput, "Den");
-      nameInput.blur();
-
-      await waitFor(() => {
-        const patchCall = fetchSpy.mock.calls.find(
-          (c) =>
-            typeof c[0] === "string" &&
-            (c[0] as string).endsWith("/api/devices/d1"),
-        );
-        expect(patchCall).toBeDefined();
-        expect(
-          JSON.parse((patchCall![1] as RequestInit).body as string),
-        ).toEqual({ name: "Den" });
-      });
-    });
+    return originalFetch(url,init);
   });
-
-  describe("announce action (per card)", () => {
-    it("announce input is pre-filled with 'hello world'", async () => {
-      const user = userEvent.setup();
-      renderPanel();
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[0]).getByRole("button", { expanded: false }),
-      );
-
-      const card = items[0];
-      const text = within(card).getByPlaceholderText(
-        /hello from the browser/i,
-      ) as HTMLInputElement;
-      expect(text.value).toBe("hello world");
-    });
-
-    it("Send button calls api.announce with this device's id", async () => {
-      const user = userEvent.setup();
-      mockAnnounce.mockResolvedValue(undefined);
-      const addLog = vi.fn();
-      renderPanel({ addLog });
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[1]).getByRole("button", { expanded: false }),
-      );
-
-      const card = items[1];
-      const text = within(card).getByPlaceholderText(/hello from the browser/i);
-      await user.clear(text);
-      await user.type(text, "Test");
-
-      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
-      await user.click(sendButtons[0]);
-
-      await waitFor(() => {
-        expect(mockAnnounce).toHaveBeenCalledWith("d2", "Test");
-        expect(addLog).toHaveBeenCalledWith(
-          "sys",
-          expect.stringContaining("Announce sent to d2"),
-          "d2",
-        );
-      });
-    });
-
-    it("resets text input to 'hello world' after a successful announce", async () => {
-      const user = userEvent.setup();
-      mockAnnounce.mockResolvedValue(undefined);
-      renderPanel();
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[0]).getByRole("button", { expanded: false }),
-      );
-
-      const card = items[0];
-      const text = within(card).getByPlaceholderText(
-        /hello from the browser/i,
-      ) as HTMLInputElement;
-      await user.clear(text);
-      await user.type(text, "Hello");
-      expect(text.value).toBe("Hello");
-
-      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
-      await user.click(sendButtons[0]);
-
-      await waitFor(() => expect(text.value).toBe("hello world"));
-    });
-
-    it("submitting empty text sends 'hello world' instead of erroring", async () => {
-      const user = userEvent.setup();
-      mockAnnounce.mockResolvedValue(undefined);
-      const addLog = vi.fn();
-      renderPanel({ addLog });
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[0]).getByRole("button", { expanded: false }),
-      );
-
-      const card = items[0];
-      const text = within(card).getByPlaceholderText(
-        /hello from the browser/i,
-      ) as HTMLInputElement;
-      await user.clear(text);
-      expect(text.value).toBe("");
-
-      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
-      await user.click(sendButtons[0]);
-
-      await waitFor(() => {
-        expect(mockAnnounce).toHaveBeenCalledWith("d1", "hello world");
-      });
-    });
-
-    it("shows inline error and logs when announce fails", async () => {
-      const user = userEvent.setup();
-      mockAnnounce.mockRejectedValue(new Error("Device offline"));
-      const addLog = vi.fn();
-      renderPanel({ addLog });
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[0]).getByRole("button", { expanded: false }),
-      );
-
-      const card = items[0];
-      const text = within(card).getByPlaceholderText(/hello from the browser/i);
-      await user.clear(text);
-      await user.type(text, "Hi");
-      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
-      await user.click(sendButtons[0]);
-
-      await waitFor(() => {
-        expect(within(card).getByText("Device offline")).toBeInTheDocument();
-        expect(addLog).toHaveBeenCalledWith(
-          "sys",
-          expect.stringContaining("Device offline"),
-          "d1",
-        );
-      });
-    });
-  });
-
-  describe("control action (per card)", () => {
-    it("set_volume Send calls api.command with {volume} param", async () => {
-      const user = userEvent.setup();
-      mockCommand.mockResolvedValue(undefined);
-      const addLog = vi.fn();
-      renderPanel({ addLog });
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[0]).getByRole("button", { expanded: false }),
-      );
-
-      const card = items[0];
-      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
-      // The control Send is the last "Send" button in the card
-      await user.click(sendButtons[sendButtons.length - 1]);
-
-      await waitFor(() => {
-        expect(mockCommand).toHaveBeenCalledWith("d1", "set_volume", {
-          volume: 50,
-        });
-        expect(addLog).toHaveBeenCalledWith(
-          "sys",
-          expect.stringContaining("Command set_volume sent to d1"),
-          "d1",
-        );
-      });
-    });
-
-    it("hides volume input for mute/unmute/reboot and sends command without params", async () => {
-      const user = userEvent.setup();
-      mockCommand.mockResolvedValue(undefined);
-      renderPanel();
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[0]).getByRole("button", { expanded: false }),
-      );
-
-      const card = items[0];
-      const cmdSelect = within(card).getByLabelText(/command/i);
-      await user.selectOptions(cmdSelect, "mute");
-      expect(within(card).queryByLabelText(/volume/i)).not.toBeInTheDocument();
-
-      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
-      await user.click(sendButtons[sendButtons.length - 1]);
-
-      await waitFor(() => {
-        expect(mockCommand).toHaveBeenCalledWith("d1", "mute", undefined);
-      });
-    });
-
-    it("shows firmware URL for ota and sends params.url", async () => {
-      const user = userEvent.setup();
-      mockCommand.mockResolvedValue(undefined);
-      renderPanel();
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[0]).getByRole("button", { expanded: false }),
-      );
-
-      const card = items[0];
-      const cmdSelect = within(card).getByLabelText(/command/i);
-      await user.selectOptions(cmdSelect, "ota");
-      expect(within(card).queryByLabelText(/volume/i)).not.toBeInTheDocument();
-      const urlInput = within(card).getByLabelText(/firmware url/i);
-      await user.type(urlInput, "http://nova.lan:8080/firmware/satellite1.bin");
-
-      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
-      await user.click(sendButtons[sendButtons.length - 1]);
-
-      await waitFor(() => {
-        expect(mockCommand).toHaveBeenCalledWith("d1", "ota", {
-          url: "http://nova.lan:8080/firmware/satellite1.bin",
-        });
-      });
-    });
-
-    it("set_barge_in Send calls api.command with {enabled} param", async () => {
-      const user = userEvent.setup();
-      mockCommand.mockResolvedValue(undefined);
-      renderPanel();
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[0]).getByRole("button", { expanded: false }),
-      );
-
-      const card = items[0];
-      const cmdSelect = within(card).getByLabelText(/command/i);
-      await user.selectOptions(cmdSelect, "set_barge_in");
-      const enabled = within(card).getByLabelText(/barge-in enabled/i);
-      await user.selectOptions(enabled, "false");
-
-      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
-      await user.click(sendButtons[sendButtons.length - 1]);
-
-      await waitFor(() => {
-        expect(mockCommand).toHaveBeenCalledWith("d1", "set_barge_in", {
-          enabled: false,
-        });
-      });
-    });
-
-    it("shows inline error when command fails", async () => {
-      const user = userEvent.setup();
-      mockCommand.mockRejectedValue(new Error("Command failed"));
-      renderPanel();
-      await waitForDevices();
-      const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(
-        within(items[0]).getByRole("button", { expanded: false }),
-      );
-
-      const card = items[0];
-      const sendButtons = within(card).getAllByRole("button", { name: "Send" });
-      await user.click(sendButtons[sendButtons.length - 1]);
-
-      await waitFor(() => {
-        expect(within(card).getByText("Command failed")).toBeInTheDocument();
-      });
-    });
-  });
-
-  describe("refresh", () => {
-    it("clicking the single Refresh button re-fetches the device list", async () => {
-      const user = userEvent.setup();
-      renderPanel();
-      await waitForDevices();
-
-      const refreshCallsBefore = fetchSpy.mock.calls.filter(
-        (c) =>
-          typeof c[0] === "string" && (c[0] as string).endsWith("/api/devices"),
-      ).length;
-
-      await user.click(screen.getByRole("button", { name: /refresh/i }));
-
-      await waitFor(() => {
-        const after = fetchSpy.mock.calls.filter(
-          (c) =>
-            typeof c[0] === "string" &&
-            (c[0] as string).endsWith("/api/devices"),
-        ).length;
-        expect(after).toBeGreaterThan(refreshCallsBefore);
-      });
-    });
-
-    it("renders only one Refresh button in the panel", async () => {
-      renderPanel();
-      await waitForDevices();
-      expect(screen.getAllByRole("button", { name: /refresh/i })).toHaveLength(
-        1,
-      );
-    });
-  });
-});
-
-it("defaults to WebRTC and saves transport independently of voice mode", async () => {
-  const user = userEvent.setup();
-  renderPanel();
-  await waitForDevices();
-  await user.click(screen.getByRole("button", { name: /Living Room/ }));
-  const select = screen.getByRole("combobox", { name: "Voice transport" });
-  expect(select).toHaveValue("webrtc");
-  await user.selectOptions(select, "websocket");
-  await waitFor(() =>
-    expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining("/api/devices/d1"),
-      expect.objectContaining({
-        method: "PATCH",
-        body: JSON.stringify({ transport_mode: "websocket" }),
-      }),
-    ),
-  );
-});
-
-it("shows barge-in only for WebRTC Standard", async () => {
-  fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
-    if (init?.method === "PATCH") {
-      return Promise.resolve(
-        jsonResponse({
-          ...DEVICES[0],
-          config: { ...DEVICES[0].config, voice_mode: "websocket" },
-        }),
-      );
-    }
-    if (String(url).includes("/api/webhooks"))
-      return Promise.resolve(jsonResponse([]));
-    return Promise.resolve(jsonResponse(DEVICES));
-  });
-  const user = userEvent.setup();
-  renderPanel();
-  await waitForDevices();
-  await user.click(screen.getByRole("button", { name: /Living Room/ }));
-  expect(
-    screen.getByRole("combobox", { name: "Barge-in" }),
-  ).toBeInTheDocument();
-
-  const select = screen.getByRole("combobox", { name: "Voice transport" });
-  await user.selectOptions(select, "websocket");
-  await waitFor(() => {
-    expect(
-      screen.queryByRole("combobox", { name: "Barge-in" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText(/does not support barge-in/i)).toBeInTheDocument();
-  });
-});
-
-it("attributes diagnostics by exact device identity rather than message substrings", async () => {
-  render(
-    <DevicesPanel
-      wsUrl=""
-      token=""
-      wsState="connected"
-      addLog={vi.fn()}
-      logs={[
-        { ts: 1, dir: "sys", text: "Own event", deviceId: "d1" },
-        { ts: 2, dir: "sys", text: "Device d10 mentions d1", deviceId: "d10" },
-        { ts: 3, dir: "sys", text: "Unattributed text containing d1" },
-      ]}
-    />,
-  );
-  await userEvent.click(await screen.findByText("Living Room"));
-  await userEvent.click(screen.getByText("Device diagnostics"));
-  expect(screen.getByText("Own event")).toBeVisible();
-  expect(screen.queryByText("Device d10 mentions d1")).not.toBeInTheDocument();
-  expect(
-    screen.queryByText("Unattributed text containing d1"),
-  ).not.toBeInTheDocument();
-});
-
-it("updates viewing context on rename, removal and collapse", async () => {
-  let devices = structuredClone(DEVICES);
-  fetchSpy.mockImplementation(async (url: string) =>
-    jsonResponse(
-      String(url).includes("/api/webhooks") ? [] : structuredClone(devices),
-    ),
-  );
-  const onContext = vi.fn();
-  render(
-    <DevicesPanel
-      wsUrl=""
-      token=""
-      wsState="connected"
-      addLog={vi.fn()}
-      onContext={onContext}
-    />,
-  );
-  await userEvent.click(await screen.findByText("Living Room"));
-  expect(onContext).toHaveBeenLastCalledWith("Living Room");
-  devices[0].config.name = "Renamed room";
-  await userEvent.click(
-    screen.getByRole("button", { name: "Refresh", exact: true }),
-  );
-  await waitFor(() =>
-    expect(onContext).toHaveBeenLastCalledWith("Renamed room"),
-  );
-  await userEvent.click(screen.getByText("Renamed room"));
-  expect(onContext).toHaveBeenLastCalledWith("Devices");
-  await userEvent.click(screen.getByText("Renamed room"));
-  devices = devices.slice(1);
-  await userEvent.click(
-    screen.getByRole("button", { name: "Refresh", exact: true }),
-  );
-  await waitFor(() => expect(onContext).toHaveBeenLastCalledWith("Devices"));
+  const {rerender} = panel({browserDeviceId:"browser-client",browserConnected:true,browserCredential:()=>"browser-proof"});
+  await open();
+  await userEvent.click(screen.getByRole("button",{name:"Override agent voice pipeline defaults"}));
+  const graph = screen.getByRole("group",{name:"Standard voice pipeline"});
+  const sample = within(graph).getByRole("button",{name:"Test selected voice"});
+  await userEvent.click(sample);
+  expect(previewSignal?.aborted).toBe(false);
+  expect(command).not.toHaveBeenCalled(); expect(announce).not.toHaveBeenCalled();
+  expect(calls).toHaveLength(0);
+  rerender(<DevicesPanel wsUrl="ws://localhost" token="" wsState="connected" addLog={vi.fn()} browserDeviceId="browser-client" browserConnected={false} browserCredential={()=>"browser-proof"}/>);
+  expect(previewSignal?.aborted).toBe(true);
+  expect(sample).toBeDisabled();
+  expect(sample).toHaveAccessibleDescription("Connect browser voice to test a sample.");
 });

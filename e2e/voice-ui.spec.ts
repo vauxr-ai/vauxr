@@ -147,10 +147,11 @@ test("Talk segments real worklet PCM, barges in, persists modes and keeps button
   }] }));
   await page.getByRole("button", { name: "Devices", exact: true }).click();
   await page.getByText("Saved browser display name", { exact: true }).click();
-  const settings = page.getByRole("region", { name: "Device speech", exact: true });
+  const settings = page.getByRole("region", { name: "Assigned agent", exact: true });
+  await settings.getByRole("button", { name: "Override agent voice pipeline defaults", exact: true }).click();
   await expect(settings.getByRole("combobox", { name: "Voice", exact: true })).toHaveValue(standardVoice);
   await talk.getByRole("radio", { name: "Realtime", exact: true }).click();
-  await expect(settings.getByLabel("Realtime voice")).toHaveValue("cedar");
+  await expect(settings.getByRole("combobox", { name: "Realtime voice", exact: true })).toHaveValue("cedar");
   await settings.getByLabel("Voice mode").selectOption("standard");
   await expect(talk.getByRole("radio", { name: "Standard hands-free" })).toHaveAttribute("aria-checked", "true");
   await expect(settings.getByRole("combobox", { name: "Voice", exact: true })).toHaveValue(standardVoice);

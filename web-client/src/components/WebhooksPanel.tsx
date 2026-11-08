@@ -1,3 +1,4 @@
+import RefreshButton from "./RefreshButton";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deriveHttpUrl } from "../hooks/useHttpApi";
 import { type ApiWebhook, useWebhooks } from "../hooks/useWebhooks";
@@ -224,10 +225,7 @@ export default function WebhooksPanel({ wsUrl, token, wsState: _wsState, addLog,
           </p>
         </div>
         <div className="flex gap-1">
-          <button className={ghostBtn} disabled={busy || loading} onClick={() => void refresh()} type="button">
-            <Icon name="refresh" size={14} />
-            Refresh
-          </button>
+          <RefreshButton label="Refresh" busy={busy || loading} onClick={refresh} />
           <button
             className={ghostBtn + " text-indigo-300 hover:text-indigo-200"}
             ref={addButton}

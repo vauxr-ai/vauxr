@@ -1,3 +1,4 @@
+import LoadingIndicator from "./LoadingIndicator";
 import { useEffect, useState } from "react";
 import { ownerFetch, jsonResponse } from "../auth/api";
 
@@ -32,7 +33,7 @@ export default function SupportSettings({agentId}:{agentId?:string}) {
   return <section aria-label={agentId ? "Agent model runtime" : "Support runtime"} className="space-y-3">
     <h3>{agentId ? "Agent model runtime" : "Independent Support runtime"}</h3>
     <p>Registered LangChain agent. No OpenClaw connection required. Choose a saved model profile from Settings → Model providers or configure a direct local Ollama runtime. No provider or model is selected automatically. OpenAI agent execution is unsupported.</p>
-    <p role="status">{status}</p>
+    {busy && status === "Loading runtime settings…" ? <LoadingIndicator label="Loading runtime settings"/> : <p role="status">{status}</p>}
     <form className="agent-runtime-form grid gap-3" onSubmit={async event => {
       event.preventDefault(); setBusy(true);
       try {

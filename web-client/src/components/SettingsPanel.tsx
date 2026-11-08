@@ -96,7 +96,6 @@ export default function SettingsPanel(
   return (
     <div className="settings-layout administration">
       <nav className="settings-nav" aria-label="Settings sections">
-        <p className="eyebrow">Settings</p>
         {screens.map((s) => (
           <button
             key={s.id}

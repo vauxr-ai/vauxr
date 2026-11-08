@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useId, type ReactNode, type RefObject } from "react";
 
 /** Native modal supplies inert background, focus containment and Escape handling. */
 export default function Modal({
@@ -6,12 +6,15 @@ export default function Modal({
   children,
   onClose,
   returnFocus,
+  titleContent, headerAction, className = "",
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
-  returnFocus: RefObject<HTMLButtonElement>;
+  returnFocus: RefObject<HTMLElement>;
+  titleContent?: ReactNode; headerAction?: ReactNode; className?: string;
 }) {
+  const titleId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const element = dialog.current!;
@@ -24,15 +27,16 @@ export default function Modal({
   return (
     <dialog
       ref={dialog}
-      className="modal auth-panel"
-      aria-labelledby="modal-title"
+      className={`modal auth-panel ${className}`}
+      aria-labelledby={titleContent ? undefined : titleId}
+      aria-label={titleContent ? title : undefined}
       onKeyDown={(event) => {
         if (event.key !== "Tab") return;
         const controls = Array.from(
           dialog.current!.querySelectorAll<HTMLElement>(
-            'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex="0"]',
+            'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [href], [tabindex="0"]',
           ),
-        ).filter((el) => el.getClientRects().length > 0);
+        ).filter((el) => el.tabIndex >= 0 && el.getClientRects().length > 0);
         const first = controls[0],
           last = controls[controls.length - 1];
         if (event.shiftKey && document.activeElement === first) {
@@ -51,7 +55,7 @@ export default function Modal({
       <header className="modal-heading">
         <div>
           <span className="eyebrow">MAKE IT YOURS</span>
-          <h2 id="modal-title">{title}</h2>
+          <div className="modal-title-line"><h2 id={titleId}>{titleContent || title}</h2>{headerAction}</div>
         </div>
         <button type="button" aria-label="Close dialog" onClick={onClose}>
           ×

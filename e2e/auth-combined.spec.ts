@@ -19,7 +19,7 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
   const { secret, request } = await requestIntegration(server);
   const enrollment = page.getByRole("region", { name: "Integration enrollment", exact: true });
   await openIntegrations(page);
-  await enrollment.getByText("Refresh integration requests").click();
+  await enrollment.getByRole("button", { name: "Refresh integration requests", exact: true }).click();
   const row = enrollment.getByRole("region", { name: `Integration request ${request.request_id}`, exact: true });
   await expect(row).toContainText(server.origin);
   await expect(row).not.toContainText(request.user_code);
@@ -42,13 +42,13 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
   expect((await native(server, "/api/devices", undefined, delivery.credential)).status).toBe(401);
   expect((await native(server, "/api/integrations/v1/deliver", secret)).status).toBe(409);
   await openIntegrations(page);
-  await enrollment.getByText("Refresh integration requests").click();
+  await enrollment.getByRole("button", { name: "Refresh integration requests", exact: true }).click();
   await expect(row).toContainText("durable save has NOT been acknowledged");
   const integration = save(server, delivery.credential);
   await client(server, "ack", { ...secret, credential: integration, saved: true });
   await client(server, "ack", { ...secret, credential: integration, saved: true }); // lost-ACK retry
   await openIntegrations(page);
-  await enrollment.getByText("Refresh integration requests").click();
+  await enrollment.getByRole("button", { name: "Refresh integration requests", exact: true }).click();
   await expect(row).toContainText("State: completed");
   expect((await native(server, "/api/devices", undefined, integration)).status).toBe(200);
   for (const path of ["/api/agents", "/api/webhooks", "/api/speech", "/api/devices/offline/speech"]) {
@@ -81,23 +81,24 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
     deviceAgent.ws.close();
     expect((await native(server, "/api/speech", undefined, device.device_token)).status).toBe(403);
     await page.getByRole("button", {name:"Agents",exact:true}).click();
-    await page.getByText("Refresh agents", { exact: true }).click();
+    await page.getByRole("button", {name: "Refresh agents", exact: true}).click();
     const route = page.locator("li").filter({ hasText: "Synthetic OpenClaw" });
     await route.getByRole("button", { name: "Set as default", exact: true }).click();
     await expect(route.locator(".pill").filter({ hasText: /^Default$/ })).toBeVisible();
     // PR58 settings run against the actual connected device projection and real speech API.
     await page.getByRole("button", { name: "Devices", exact: true }).click();
     await page.getByText(device.device_id, { exact: true }).first().click();
-    const speech = page.getByRole("region", { name: "Device speech", exact: true });
+    const speech = page.getByRole("region", { name: "Assigned agent", exact: true });
+    await speech.getByRole("button", { name: "Override agent voice pipeline defaults", exact: true }).click();
     await expect(speech.getByLabel("TTS backend")).toBeVisible();
     await speech.getByLabel("TTS backend").selectOption("piper");
-    await expect(speech.getByRole("button", { name: "Reset to defaults" })).toBeEnabled();
-    await speech.getByRole("button", { name: "Reset to defaults" }).click();
+    await expect(speech.getByRole("button", { name: "Reset voice overrides" })).toBeEnabled();
+    await speech.getByRole("button", { name: "Reset voice overrides" }).click();
     await expect(speech.getByLabel("TTS backend")).toHaveValue("");
     // Owner lifecycle is public metadata only; native client alone delivers and saves the replacement.
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await openSettings(page,"Access & security");
-    await page.getByText("Refresh identities").click();
+    await page.getByRole("button", { name: "Refresh identities", exact: true }).click();
     const access = page.locator("div").filter({ hasText: `Synthetic OpenClaw — ${request.agent_id}` })
       .filter({ has: page.getByRole("button", { name: "rotate integration", exact: true }) }).last();
     await access.getByText("rotate integration", { exact: true }).click();
@@ -149,7 +150,7 @@ test("matching code errors and denial never deliver credentials; legacy forms st
   const second = await requestIntegration(server, "Same display name");
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await openIntegrations(page);
-  await page.getByText("Refresh integration requests").click();
+  await page.getByRole("button", { name: "Refresh integration requests", exact: true }).click();
   const row = page.getByRole("region", { name: `Integration request ${first.request.request_id}`, exact: true });
   await row.getByLabel("Integration matching code").fill(second.request.user_code);
   await row.getByRole("checkbox").check();
@@ -165,7 +166,7 @@ test("matching code errors and denial never deliver credentials; legacy forms st
   await page.reload();
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await openIntegrations(page);
-  await page.getByText("Refresh integration requests").click();
+  await page.getByRole("button", { name: "Refresh integration requests", exact: true }).click();
   await expect(row).toContainText("State: denied");
   await expect(page.getByRole("region", { name: `Integration request ${second.request.request_id}`, exact: true })).toContainText("State: cancelled");
   await expect(page.getByRole("button", { name: /Add agent|Create agent|Rotate token/ })).toHaveCount(0);
@@ -177,7 +178,7 @@ test("server restart preserves owner session, approved integration and speech co
   const { secret, request } = await requestIntegration(server);
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await openIntegrations(page);
-  await page.getByText("Refresh integration requests").click();
+  await page.getByRole("button", { name: "Refresh integration requests", exact: true }).click();
   const row = page.getByRole("region", { name: `Integration request ${request.request_id}`, exact: true });
   await row.getByLabel("Integration matching code").fill(request.user_code);
   await row.getByRole("checkbox").check();

@@ -1,3 +1,4 @@
+import RefreshButton from "./RefreshButton";
 import { useEffect, useState } from "react";
 import { settingsRequest } from "./ProviderSettings";
 type Field = {
@@ -54,14 +55,7 @@ export default function PluginSettings({
           here. Package downloads and external connection setup are separate.
         </p>
       </div>
-      <button
-        disabled={busy}
-        onClick={() => {
-          if (!dirty || confirm("Discard unsaved plugin edits?")) void load();
-        }}
-      >
-        Refresh plugin settings
-      </button>
+      <RefreshButton label="Refresh plugin settings" busy={busy} onClick={async () => {if (!dirty || confirm("Discard unsaved plugin edits?")) await load();}} />
       {error && <p role="alert">{error}</p>}
       {status && <p role="status">{status}</p>}
       {!plugins && !error && <p role="status">Loading declared settings…</p>}

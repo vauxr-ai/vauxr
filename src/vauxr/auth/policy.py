@@ -16,6 +16,7 @@ class Role(StrEnum):
 class Operation(StrEnum):
     DEVICES_LIST = "devices.list"
     DEVICE_CONFIG = "device.configure"
+    DEVICE_METRICS = "device.metrics"
     SPEECH_CONFIG = "speech.configure"
     ANNOUNCE = "device.announce"
     CONTROL = "device.control"
@@ -81,6 +82,7 @@ _OWNER = frozenset(
     {
         Operation.DEVICES_LIST,
         Operation.DEVICE_CONFIG,
+        Operation.DEVICE_METRICS,
         Operation.SPEECH_CONFIG,
         Operation.ANNOUNCE,
         Operation.CONTROL,
@@ -160,14 +162,16 @@ class PairApprovalResult:
 
 HTTP_OPERATIONS = {
     "list_devices": Operation.DEVICES_LIST,
+    "device_metrics": Operation.DEVICE_METRICS,
     "update_device": Operation.DEVICE_CONFIG,
     "announce": Operation.ANNOUNCE,
     "device_command": Operation.CONTROL,
     "list_agents": Operation.AGENT_LIST,
     "create_agent": Operation.CREDENTIAL_CREATE,
-    "delete_agent": Operation.CREDENTIAL_REVOKE,
+    "delete_agent": Operation.AGENT_CONFIG,
     "activate_agent": Operation.AGENT_CONFIG,
     "rename_agent": Operation.AGENT_CONFIG,
+    "agent_avatar": Operation.AGENT_CONFIG,
     "rotate_token": Operation.CREDENTIAL_ROTATE,
     "list_webhooks": Operation.WEBHOOK_CONFIG,
     "get_webhook_configuration": Operation.WEBHOOK_CONFIG,

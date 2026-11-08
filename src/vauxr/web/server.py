@@ -167,6 +167,19 @@ async def list_devices(_request: web.Request) -> web.Response:
 
 
 @_require_auth
+async def device_metrics(request: web.Request) -> web.Response:
+    from vauxr.devices.metrics import WINDOWS, get_store
+
+    device_id = request.match_info["device_id"]
+    if registry.get(device_id) is None:
+        return web.json_response({"error": "device not found"}, status=404)
+    window = request.match_info.get("window", request.query.get("window", "24h"))
+    if window not in WINDOWS:
+        return web.json_response({"error": "window must be 1h, 24h, 7d or 30d"}, status=400)
+    return web.json_response(get_store().view(device_id, window))
+
+
+@_require_auth
 async def update_device(request: web.Request) -> web.Response:
     device_id = request.match_info["device_id"]
     device = registry.get(device_id)
@@ -215,6 +228,11 @@ async def update_device(request: web.Request) -> web.Response:
         if not isinstance(body["barge_in"], bool):
             return web.json_response({"error": "barge_in must be a boolean"}, status=400)
         patch["barge_in"] = body["barge_in"]
+    if "output_sample_rate" in body:
+        rate = body["output_sample_rate"]
+        if rate is not None and (type(rate) is not int or rate not in (16000, 22050, 24000, 44100)):
+            return web.json_response({"error": "output_sample_rate must be 16000, 22050, 24000, 44100 or null"}, status=400)
+        patch["output_sample_rate"] = rate
     if "button_actions" in body:
         actions, err = parse_button_actions(body["button_actions"])
         if err:
@@ -323,6 +341,7 @@ async def device_command(request: web.Request) -> web.Response:
 @_require_auth
 async def list_agents(_request: web.Request) -> web.Response:
     from vauxr.agents.integration_metadata import public_metadata
+    from vauxr.agents.avatars import metadata
     from vauxr.speech.store import get_store as voice_store
 
     agents = [
@@ -334,12 +353,43 @@ async def list_agents(_request: web.Request) -> web.Response:
             "type": c.type,
             "active": c.active,
             "createdAt": c.createdAt,
+            **metadata(c.id),
             **({"builtin": c.builtin} if c.builtin is not None else {}),
         }
         for c in agent_registry.get_all()
     ]
     log.info("200 agents listed: %d", len(agents))
     return web.json_response(agents)
+
+
+@_require_auth
+async def agent_avatar(request: web.Request) -> web.Response:
+    import asyncio
+    from vauxr.agents import avatars
+    agent_id = request.match_info["agent_id"]
+    if agent_registry.get_by_id(agent_id) is None:
+        return web.json_response({"error": "agent not found"}, status=404)
+    try:
+        if request.method == "GET":
+            try:
+                data = avatars.path(agent_id).read_bytes()
+            except FileNotFoundError:
+                raise web.HTTPNotFound() from None
+            return web.Response(body=data, content_type="image/png", headers={
+                "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+        raw = bytearray()
+        async with asyncio.timeout(10):
+            async for chunk in request.content.iter_chunked(65536):
+                raw.extend(chunk)
+                if len(raw) > avatars.MAX_BYTES:
+                    raise web.HTTPRequestEntityTooLarge(max_size=avatars.MAX_BYTES, actual_size=len(raw))
+        data = avatars.normalize(bytes(raw), request.content_type)
+        avatars.save(agent_id, data)
+        return web.json_response(avatars.metadata(agent_id))
+    except (ValueError, TimeoutError):
+        return web.json_response({"error": "Invalid image; use PNG, JPEG or WebP up to 2 MiB and 2048 by 2048"}, status=400)
+    except (OSError, ImportError):
+        return web.json_response({"error": "Avatar storage unavailable"}, status=503)
 
 
 @_require_auth
@@ -350,8 +400,9 @@ async def create_agent(request: web.Request) -> web.Response:
 
 @_require_auth
 async def delete_agent(request: web.Request) -> web.Response:
-    # Replaced by the independently scoped enrollment/lifecycle packages.
-    return web.json_response({"error": "operation not implemented"}, status=501)
+    from vauxr.agents.removal import remove_agent
+
+    return await remove_agent(request, request.match_info["agent_id"])
 
 
 @_require_auth
@@ -619,10 +670,14 @@ def attach_http_routes(app: web.Application) -> None:
 
     app.router.add_route("OPTIONS", "/{tail:.*}", _options)
     app.router.add_get("/api/devices", list_devices)
+    app.router.add_get("/api/devices/{device_id}/metrics", device_metrics)
+    app.router.add_get("/api/devices/{device_id}/metrics/{window}", device_metrics)
     app.router.add_patch("/api/devices/{device_id}", update_device)
     app.router.add_post("/api/devices/{device_id}/announce", announce)
     app.router.add_post("/api/devices/{device_id}/command", device_command)
     app.router.add_get("/api/agents", list_agents)
+    app.router.add_get("/api/agents/{agent_id}/avatar", agent_avatar)
+    app.router.add_post("/api/agents/{agent_id}/avatar", agent_avatar)
     app.router.add_post("/api/agents", create_agent)
     app.router.add_delete("/api/agents/{agent_id}", delete_agent)
     app.router.add_post("/api/agents/{agent_id}/activate", activate_agent)

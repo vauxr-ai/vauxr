@@ -1,14 +1,18 @@
+import LoadingIndicator from "./LoadingIndicator";
+import VoiceSample from "./VoiceSample";
+import AgentPipelineEditor from "./AgentPipelineEditor";
+import RefreshButton from "./RefreshButton";
 import { ownerFetch } from "../auth/api";
 import { useCallback, useEffect, useId, useState } from "react";
 
-type Backend = {
+export type Backend = {
   id: string;
   kind: "stt" | "tts" | "realtime";
   model: string;
   voices: string[];
   readiness: string;
 };
-type Defaults = {
+export type Defaults = {
   mode?: "standard" | "realtime" | null;
   realtime_backend?: string;
   realtime_voice?: string;
@@ -16,7 +20,7 @@ type Defaults = {
   tts_backend: string;
   voices: Record<string, string>;
 };
-type Policy = {
+export type Policy = {
   fallback_agent?: string;
   agent_id: string;
   assigned: boolean;
@@ -102,7 +106,14 @@ export default function SpeechSettings({
   deviceId,
   agentId,
   onModeChange,
+  onSaved, agentName, agentType, browserDeviceId, browserConnected = false, browserCredential,
 }: {
+  onSaved?: () => void;
+  agentName?: string;
+  agentType?: string;
+  browserDeviceId?: string;
+  browserConnected?: boolean;
+  browserCredential?: () => string | null;
   deviceId?: string;
   agentId?: string;
   onModeChange?: (mode: "standard" | "realtime" | null) => void;
@@ -191,7 +202,7 @@ export default function SpeechSettings({
     setSaved("");
     try {
       setData(await request(patch));
-      if (patch) setSaved("Voice settings saved. Applies to new turns.");
+      if (patch) setSaved("Pipeline configuration saved. Applies to new turns.");
       setProviderDraft({});
       window.dispatchEvent(
         new CustomEvent("speech-settings-changed", {
@@ -203,8 +214,10 @@ export default function SpeechSettings({
           },
         }),
       );
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -224,9 +237,8 @@ export default function SpeechSettings({
         }
       : data?.defaults;
   const chatOnly = data?.policy?.chat_only === true;
-  const hasProviderDraft = Object.keys(providerDraft).length > 0;
   const effective = data?.effective;
-  const shownMode = agentId ? editMode : data?.voice?.mode || "standard";
+  const shownMode = agentId ? (data?.policy?.integration_modes.includes(editMode) ? editMode : data?.policy?.integration_modes[0] || "standard") : data?.voice?.mode || "standard";
   const liveBackend = agentId
     ? defaults?.realtime_backend
     : data?.voice?.realtime_backend;
@@ -245,6 +257,7 @@ export default function SpeechSettings({
   const selectedTts = data?.backends.find(
     (b) => b.id === (agentId ? defaults?.tts_backend : effective?.tts_backend),
   );
+  const selectedVoice = selectedTts ? defaults?.voices[selectedTts.id] || selectedTts.voices[0] || "" : "";
   const style = "rounded border border-white/10 bg-zinc-900 p-2 text-sm";
   const backendOptions = (kind: Backend["kind"]): SpeechOption[] =>
     (data?.backends || [])
@@ -253,27 +266,34 @@ export default function SpeechSettings({
         value: backend.id,
         label: `${backend.id} · ${backend.model} · ${backend.readiness}`,
       }));
+  if (agentId) return <section aria-label="Agent voice" className="speech-settings agent-pipeline-settings">
+    {!data && !error && <LoadingIndicator label="Loading voice configuration"/>}
+    {error && <p role="alert">{error}</p>}
+    {data?.error && <p role="alert">{data.error}</p>}
+    {data?.policy?.conflict && <p role="alert">{data.policy.conflict}</p>}
+    {!data && error && <RefreshButton label="Retry voice configuration" busy={busy} onClick={() => void update()}/>}
+    {data?.policy && defaults && <AgentPipelineEditor onSaved={onSaved} key={agentId} agentId={agentId} agentType={agentType} agentName={agentName || agentId}
+      policy={data.policy} defaults={defaults} backends={data.backends} hasProviderDraft={Object.keys(providerDraft).length > 0} saved={saved} busy={busy} mode={shownMode} onModeChange={setEditMode}
+      onDraft={patch => void update(patch)} onSave={patch => update({...providerDraft, ...patch})} onRefresh={() => void update()}
+      preview={<VoiceSample browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential} backend={selectedTts} voice={selectedVoice} mode={shownMode}/>}/>}
+  </section>;
   return (
     <section
       aria-label={
-        agentId ? "Agent voice" : deviceId ? "Device speech" : "Global speech"
+        deviceId ? "Device speech" : "Global speech"
       }
       className="speech-settings card space-y-3 p-4"
     >
       <h2 className="font-semibold">
-        {agentId
-          ? "Agent voice defaults"
-          : deviceId
-            ? "Device speech"
-            : "Global speech defaults"}
+        {deviceId ? "Device speech" : "Global speech defaults"}
       </h2>
-      <p className="text-xs text-zinc-400">
-        Global and device selections save immediately; agent provider edits require Save voice configuration. Defaults apply to new turns. Stop voice before changing its agent or
+      {<p className="text-xs text-zinc-400">
+        Global and device selections save immediately. Defaults apply to new turns. Stop voice before changing its agent or
         mode; reconnect WebRTC for provider changes. Voices belong to a
         configured model.
-      </p>
-      {!data && !error && <p role="status">Loading voice configuration…</p>}
-      {!data && error && <button onClick={() => void update()}>Retry voice configuration</button>}
+      </p>}
+      {!data && !error && <LoadingIndicator label="Loading voice configuration"/>}
+      {!data && error && <RefreshButton label="Retry voice configuration" busy={busy} onClick={() => void update()} />}
       {busy && <p role="status">Checking voice configuration…</p>}
       {saved && <p role="status">{saved}</p>}
       {error && <><p role="alert">{error}</p><p>Refresh to check the stored configuration before retrying a change.</p></>}
@@ -343,29 +363,16 @@ export default function SpeechSettings({
           </p>
         </fieldset>
       )}
-      {agentId && hasProviderDraft && (
-        <p role="status">
-          Unsaved provider changes. Save voice configuration applies modes and
-          providers together.
-        </p>
-      )}
-      {agentId && data?.policy && (
-        <AgentModePolicy
-          key={`${agentId}-${JSON.stringify(data.policy)}`}
-          policy={data.policy}
-          busy={busy}
-          save={(policy) => update({ ...providerDraft, ...policy })}
-        />
-      )}
-      {chatOnly && agentId && <p>Stored provider settings below are inactive while this agent is chat-only.</p>}
-      {data && (!chatOnly || agentId) && (
+      {data && !chatOnly && (
         <fieldset disabled={busy} className="speech-fields">
+          <div style={{display: "flex", justifyContent: "flex-end", gridColumn: "1 / -1"}}>
+            <RefreshButton label="Refresh speech" busy={busy} onClick={() => void update()} />
+          </div>
+          <div className="speech-provider-fields">
           <SpeechSelect
-            label={agentId ? "Configure mode providers" : "Voice mode"}
+            label="Voice mode"
             value={
-              agentId
-                ? editMode
-                : deviceId
+              deviceId
                   ? data.overrides.mode || ""
                   : data.voice?.mode || "standard"
             }
@@ -379,9 +386,7 @@ export default function SpeechSettings({
                     },
                   ]
                 : []),
-              ...(agentId
-                ? data.policy?.integration_modes || ["standard"]
-                : [
+              ...([
                     ...new Set([
                       ...modes,
                       ...(data.overrides.mode ? [data.overrides.mode] : []),
@@ -390,14 +395,11 @@ export default function SpeechSettings({
               ).map((mode) => ({
                 value: mode,
                 label:
-                  (mode === "realtime" ? "Live / Realtime" : "Standard") +
-                  (agentId && !data.policy?.enabled_modes.includes(mode)
-                    ? " (disabled)"
-                    : ""),
+                  mode === "realtime" ? "Live / Realtime" : "Standard",
               })),
             ]}
             onChange={(mode) =>
-              agentId ? setEditMode(mode) : void update({ mode: mode || null })
+              void update({ mode: mode || null })
             }
           />
           {shownMode === "realtime" ? (
@@ -486,6 +488,7 @@ export default function SpeechSettings({
                   />
                 );
               })}
+              <div className="speech-voice-field">
               {selectedTts && (
                 <SpeechSelect
                   label="Voice"
@@ -514,8 +517,10 @@ export default function SpeechSettings({
                   }
                 />
               )}
+              </div>
             </>
           )}
+          </div>
           <div className="speech-actions">
             {deviceId && (
               <button
@@ -525,17 +530,13 @@ export default function SpeechSettings({
                 Reset to defaults
               </button>
             )}
-            <button className={style} onClick={() => void update()}>
-              {agentId && hasProviderDraft
-                ? "Discard provider edits and refresh"
-                : "Refresh speech"}
-            </button>
+
           </div>
         </fieldset>
       )}
       {shownMode === "realtime" && data && !chatOnly && (
         <p className="text-sm speech-selection">
-          {agentId && hasProviderDraft ? "Draft Live:" : "Effective Live:"}{" "}
+          Effective Live:{" "}
           {liveBackend || "unconfigured"} /{" "}
           {selectedLive?.model || "unconfigured"} /{" "}
           {liveVoice || "unconfigured"}
@@ -547,86 +548,10 @@ export default function SpeechSettings({
           {effective.voice_id}
         </p>
       )}
-      <p className="text-xs text-zinc-500">
+      {<p className="text-xs text-zinc-500">
         Readiness checks provider availability, not model inference. Unavailable
         providers do not fall back automatically.
-      </p>
+      </p>}
     </section>
-  );
-}
-
-function AgentModePolicy({
-  policy,
-  busy,
-  save,
-}: {
-  policy: Policy;
-  busy: boolean;
-  save: (patch: object) => Promise<void>;
-}) {
-  const [enabled, setEnabled] = useState(policy.enabled_modes);
-  const [defaultMode, setDefaultMode] = useState(policy.default_mode);
-  const changed =
-    JSON.stringify(enabled) !== JSON.stringify(policy.enabled_modes) ||
-    defaultMode !== policy.default_mode;
-  return (
-    <form
-      className="speech-mode-policy"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void save({ enabled_modes: enabled, default_mode: enabled.length ? defaultMode : null });
-      }}
-    >
-      <fieldset disabled={busy} className="speech-fields">
-        <legend>Enabled voice modes</legend>
-        {["standard", "realtime"].map((mode) => (
-          <label key={mode} className="speech-check">
-            <input
-              type="checkbox"
-              aria-label={mode === "realtime" ? "Enable Live" : "Enable Standard"}
-              checked={policy.integration_modes.includes(mode) && enabled.includes(mode)}
-              disabled={!policy.integration_modes.includes(mode)}
-              onChange={(event) => {
-                const next = event.target.checked ? [...enabled, mode] : enabled.filter(item => item !== mode);
-                setEnabled(next);
-                if (!next.length) setDefaultMode(null);
-                else if (!defaultMode || !next.includes(defaultMode)) setDefaultMode(next[0]);
-              }}
-            />{" "}
-            {mode === "realtime" ? "Enable Live" : "Enable Standard"}
-            {!policy.integration_modes.includes(mode) && <span> (unavailable for this agent)</span>}
-          </label>
-        ))}
-        <SpeechSelect
-          label="Default voice mode"
-          value={defaultMode || ""}
-          options={[
-            ...(!enabled.length ? [{ value: "", label: "Chat-only (no voice default)" }] : []),
-            ...(defaultMode && !policy.integration_modes.includes(defaultMode)
-              ? [
-                  {
-                    value: defaultMode,
-                    label: `Unavailable default (${defaultMode})`,
-                  },
-                ]
-              : []),
-            ...enabled.map((mode) => ({
-              value: mode,
-              label: mode === "realtime" ? "Live" : "Standard",
-            })),
-          ]}
-          onChange={setDefaultMode}
-        />
-        <button
-          disabled={busy || (enabled.length > 0 && !enabled.includes(defaultMode || ""))}
-        >
-          Save voice configuration
-        </button>
-        {changed && <p>Unsaved voice policy</p>}
-        {!enabled.length && (
-          <p role="status">Chat-only: text conversation remains available. No microphone, STT or TTS.</p>
-        )}
-      </fieldset>
-    </form>
   );
 }

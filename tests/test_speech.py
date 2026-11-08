@@ -139,7 +139,7 @@ async def test_midturn_stt_to_multiple_tts_segments(store, monkeypatch):
     stt_backends = []
     finished = asyncio.Event()
 
-    async def transcribe(chunks, *, backend):
+    async def transcribe(chunks, *, backend, device_id):
         stt_backends.append(backend.id)
         return "hello"
 
@@ -290,7 +290,7 @@ async def test_cold_realtime_seed_preserves_complete_selection(store, monkeypatc
     monkeypatch.setattr(session, "_seed_user_text", AsyncMock())
     before = store.resolve("a")
 
-    async def stt(chunks, *, backend):
+    async def stt(chunks, *, backend, device_id):
         assert backend == before.stt
         store.update({"tts_backend": "kokoro"})
         return "hello"
@@ -479,7 +479,7 @@ async def test_realtime_rejected_turn_cannot_retry_resolution(store, monkeypatch
     store.update({"stt_backend": "parakeet", "tts_backend": "kokoro"})
     frames = [frame async for frame in stt.run_stt(audio)]
     assert len(frames) == 1 and isinstance(frames[0], TranscriptionFrame)
-    transcribe.assert_awaited_once_with([audio], sample_rate=stt.sample_rate, backend=selected.stt)
+    transcribe.assert_awaited_once_with([audio], sample_rate=stt.sample_rate, backend=selected.stt, device_id=session.device_id)
     await tts.on_turn_context_created("accepted")
     assert tts._selections["accepted"] == selected
     resolver.assert_called_once_with("a")

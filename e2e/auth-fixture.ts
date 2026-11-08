@@ -166,3 +166,18 @@ export async function openSettings(page: Page, section: string) {
 export async function openIntegrations(page: Page) {
   await openSettings(page, "Apps & Integrations");
 }
+
+/** Management dialogs intentionally make shell and voice controls inert. */
+export async function closeAgentDetail(page: Page) {
+  const detail = page.locator("dialog.agent-detail-modal");
+  if (await detail.isVisible()) await detail.getByRole("button", {name:"Close dialog",exact:true}).click();
+}
+
+/** Use the explicit row menu; the row and name are deliberately not click targets. */
+export async function openAgentAction(page: Page, label: string) {
+  const menu = page.locator('details.agent-actions').filter({has:page.getByRole('button',{name:label,exact:true,includeHidden:true})});
+  if (!await menu.getAttribute('open')) {
+    if (!await menu.evaluate(el=>(el as HTMLDetailsElement).open)) await menu.locator('summary').click();
+  }
+  await page.getByRole('button',{name:label,exact:true}).click();
+}

@@ -10,7 +10,7 @@ export async function ownerFetch(path: string, init: RequestInit = {}) {
     throw new Error("Invalid API path");
   const headers = new Headers(init.headers);
   headers.delete("Authorization");
-  headers.set("Content-Type", "application/json");
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (csrf) headers.set("X-CSRF-Token", csrf);
   const revision = authorityRevision;
   const response = await fetch(path, {

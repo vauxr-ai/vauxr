@@ -87,6 +87,8 @@ def update_config(device_id: str, patch: DeviceConfig) -> DeviceConfig:
         if conflict:
             raise VoiceConflict(conflict)
     merged: DeviceConfig = {**_configs.get(device_id, {}), **{k: v for k, v in patch.items() if k != "pipeline_mode"}}
+    if "output_sample_rate" in patch and patch["output_sample_rate"] is None:
+        merged.pop("output_sample_rate", None)
     updated = {**_configs, device_id: merged}
     try:
         save_device_configs(get_config().data_dir, updated)

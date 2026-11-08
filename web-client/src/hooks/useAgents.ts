@@ -13,6 +13,7 @@ export interface ApiAgent {
   active: boolean;
   createdAt: string;
   builtin?: boolean;
+  avatar_url?: string;
   chat_only?: boolean;
   integration_metadata?: IntegrationMetadata;
 }
@@ -74,5 +75,8 @@ export function useAgents(_baseUrl = "", _token = "") {
     [request],
   );
 
-  return { listAgents, activateAgent, renameAgent };
+  const deleteAgent = useCallback(async (id:string): Promise<void> => {
+    await request(`/api/agents/${encodeURIComponent(id)}`,{method:"DELETE"});
+  },[request]);
+  return { listAgents, activateAgent, renameAgent, deleteAgent };
 }

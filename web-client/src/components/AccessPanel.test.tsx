@@ -210,7 +210,7 @@ it("keeps the operation identity through partial status replies and never treats
   render(<AccessPanel />);
   await user.click(await screen.findByText("rotate integration"));
   await screen.findByRole("alert");
-  await user.click(screen.getByText("Refresh status"));
+  await user.click(screen.getByRole("button", { name: "Refresh status", exact: true }));
   await screen.findByText("Delivery attempted; durable save has NOT been acknowledged.");
   await user.click(screen.getByText("Retry same operation"));
   await screen.findByRole("alert");

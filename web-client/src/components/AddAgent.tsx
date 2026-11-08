@@ -1,3 +1,6 @@
+import LoadingIndicator from "./LoadingIndicator";
+import IntegrationEnrollment from "./IntegrationEnrollment";
+import RefreshButton from "./RefreshButton";
 import { useEffect, useState, useRef } from "react";
 import Modal from "./Modal";
 import { ownerFetch, jsonResponse } from "../auth/api";
@@ -48,16 +51,16 @@ export default function AddAgent({
       {open && (
         <Modal
           title="Add Agent"
-          onClose={() => setOpen(false)}
+          className="agent-create-modal"
+          onClose={() => {if (!busy) setOpen(false);}}
           returnFocus={trigger}
         >
           <p>
-            Choose an implementation registered on this Vauxr server. Each
-            instance keeps its own name, model configuration and voice defaults.
+            Choose your agent type. Each agent keeps its own identity and voice defaults.
           </p>
           {error && <p role="alert">{error}</p>}
           {!definitions && !error && (
-            <p role="status">Loading registered agents…</p>
+            <LoadingIndicator label="Loading registered agents"/>
           )}
           {definitions?.length === 0 && (
             <p>
@@ -65,14 +68,22 @@ export default function AddAgent({
               register an implementation.
             </p>
           )}
-          <button disabled={busy} onClick={() => void load()}>
-            Refresh registered agents
-          </button>
-          {!!definitions?.length && (
+          <RefreshButton label="Refresh registered agents" busy={busy} onClick={load} />
+          <div className={`agent-type-choices ${selected === "@openclaw" ? "is-connecting" : ""}`} role="group" aria-label="Agent type">
+            <button type="button" className="agent-type-choice" aria-label="Choose OpenClaw" aria-pressed={selected === "@openclaw"} disabled={busy} onClick={() => setSelected("@openclaw")}>
+              <span className="agent-type-art"><img src="/agent-types/openclaw.svg" alt=""/></span><strong>OpenClaw</strong><small>Connect your integration</small>
+            </button>
+            {definitions?.map(d => <button type="button" key={d.id} className="agent-type-choice" aria-label={`Choose ${d.name}`} aria-pressed={selected === d.id} disabled={busy} onClick={() => setSelected(d.id)}>
+              <span className="agent-type-art">{d.id === "vauxr-support" ? <img src="/agent-types/vauxr-support.png" alt=""/> : <svg aria-hidden="true" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2"><path d="m32 5 24 14v26L32 59 8 45V19ZM8 19l24 14 24-14M32 33v26"/></svg>}</span>
+              <strong>{d.name}</strong><small>{d.supported_modes.includes("standard") ? "Voice & text" : "Text agent"}</small>
+            </button>)}
+          </div>
+          {selected === "@openclaw" ? <IntegrationEnrollment compact/> : !!definitions?.length && (
             <form
-              className="grid gap-3"
+              className="grid gap-3" aria-busy={busy}
               onSubmit={async (e) => {
                 e.preventDefault();
+                if (busy) return;
                 setBusy(true);
                 setError("");
                 try {
@@ -88,30 +99,13 @@ export default function AddAgent({
                   await onCreated(created);
                   setName("");
                   setOpen(false);
-                } catch {
-                  setError(
-                    "Agent creation failed or its outcome is uncertain. Refresh agents before retrying.",
-                  );
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Agent creation failed. Refresh agents before retrying.");
                 } finally {
                   setBusy(false);
                 }
               }}
             >
-              <label>
-                Registered implementation
-                <select
-                  aria-label="Registered implementation"
-                  disabled={busy}
-                  value={selected}
-                  onChange={(e) => setSelected(e.target.value)}
-                >
-                  {definitions.map((d) => (
-                    <option value={d.id} key={d.id}>
-                      {d.name} · {d.framework}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <label>
                 Agent name
                 <input
@@ -122,6 +116,7 @@ export default function AddAgent({
                   onChange={(e) => setName(e.target.value)}
                 />
               </label>
+              {busy && <p role="status">Creating agent…</p>}
               <button
                 className="button-primary"
                 disabled={busy || !selected || !name.trim()}

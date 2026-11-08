@@ -1,3 +1,4 @@
+import RefreshButton from "./RefreshButton";
 import { useEffect, useRef, useState } from "react";
 import { jsonResponse, ownerFetch } from "../auth/api";
 
@@ -98,9 +99,7 @@ export function ModelProviders({
         <button disabled={busy} onClick={() => edit(blank)}>
           + Add provider profile
         </button>
-        <button disabled={busy} onClick={() => void load()}>
-          Refresh profiles
-        </button>
+        <RefreshButton label="Refresh profiles" busy={busy} onClick={load} />
       </div>
       {error && <p role="alert">{error}</p>}
       {status && <p role="status">{status}</p>}
@@ -465,9 +464,7 @@ export function VoiceProviders({
         >
           + Add voice provider
         </button>
-        <button disabled={busy} onClick={() => void load()}>
-          Refresh voice providers
-        </button>
+        <RefreshButton label="Refresh voice providers" busy={busy} onClick={load} />
         <span className="pill">
           {backends?.filter((b) => b.kind === kind).length ?? "…"} deployments
         </span>
