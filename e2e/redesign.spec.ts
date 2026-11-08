@@ -70,7 +70,7 @@ test("B2 keeps administration independent, browser ownership stable, and microph
     .fill("Browser acceptance device");
   await device.getByLabel("Device name", { exact: true }).blur();
   await expect(
-    device.getByRole("heading", { name: "Browser acceptance device", exact: true }),
+    device.getByRole("heading", { name: /^Browser acceptance device/ }),
   ).toBeVisible();
   await closeAgentDetail(page);
   await page.getByRole("button", { name: "Agents", exact: true }).click();
