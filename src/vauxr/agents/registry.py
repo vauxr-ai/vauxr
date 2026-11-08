@@ -17,7 +17,7 @@ from vauxr.config_files import invalid, read_json, update_json
 if TYPE_CHECKING:
     from vauxr.auth.store import CredentialStore
 
-AgentType = Literal["openclaw", "openclaw-direct"]
+AgentType = Literal["openclaw", "openclaw-direct", "support"]
 
 
 @dataclass
@@ -69,7 +69,7 @@ def _decode(data: object, path: Path) -> tuple[list[Agent], str]:
             )
         if (
             not all(isinstance(row[key], str) and row[key] for key in ("id", "name", "createdAt"))
-            or row["type"] not in ("openclaw", "openclaw-direct")
+            or row["type"] not in ("openclaw", "openclaw-direct", "support")
             or type(row.get("integration", False)) is not bool
             or ("builtin" in row and type(row["builtin"]) is not bool)
         ):
@@ -78,6 +78,10 @@ def _decode(data: object, path: Path) -> tuple[list[Agent], str]:
             row["type"] == "openclaw-direct" and (not row.get("builtin") or row.get("integration"))
         ):
             raise invalid(path, field, "OpenClaw Direct must use its builtin ID and type")
+        if (row["type"] == "support") != (row["id"] == "vauxr-support") or (
+            row["type"] == "support" and (not row.get("builtin") or row.get("integration"))
+        ):
+            raise invalid(path, field, "Support must use its built-in identity")
         agents.append(Agent(**row, active=row["id"] == data["active_agent"]))
     ids = {a.id for a in agents}
     if len(ids) != len(agents) or (data["active_agent"] and data["active_agent"] not in ids):
@@ -140,6 +144,21 @@ def load() -> None:
         )
         data = update_json(path, lambda existing: existing or data)
     _publish(data)
+
+
+def ensure_support() -> None:
+    """Install the built-in route at service startup without changing existing selection."""
+    _ensure_loaded()
+    if get_by_id("vauxr-support") is not None:
+        return
+    support = Agent("vauxr-support", "Vauxr Support", "support", False,
+                    datetime.fromtimestamp(0, tz=UTC).isoformat(), True)
+
+    def change(data: dict) -> dict:
+        agents, active = _decode(data, _path())
+        return _encode([*agents, support], active or (support.id if not agents else ""))
+
+    _commit(change)
 
 
 def validate_authority() -> None:

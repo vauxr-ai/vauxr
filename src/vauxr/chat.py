@@ -87,7 +87,10 @@ async def run_chat(
     listener = {"on_delta": delta, "on_end": end, "on_error": error}
     try:
         async with asyncio.timeout(120):
-            if agent.type == "openclaw-direct":
+            if agent.type == "support":
+                from vauxr.agents.support import answer
+                response = await answer(device_id, text)
+            elif agent.type == "openclaw-direct":
                 if direct is None:
                     raise ChatError("Selected agent is not connected")
 

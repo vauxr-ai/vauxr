@@ -215,7 +215,7 @@ class SpeechStore:
     def agent_defaults(self, agent_id: str) -> dict:
         policy = self.agents.get(agent_id)
         if not policy:
-            return dict(self.defaults)
+            return {**self.defaults, "mode": "standard"} if agent_id == "vauxr-support" else dict(self.defaults)
         selection = policy["selection"]
         return {
             **self.defaults,
@@ -230,6 +230,7 @@ class SpeechStore:
     def managed(self, device_id: str) -> bool:
         return (
             device_id in self.assignments
+            or self.agent_id(device_id) == "vauxr-support"
             or self.agent_id(device_id) in self.agents
             or (bool(self.agents) and not self.agent_id(device_id))
         )
@@ -298,7 +299,7 @@ class SpeechStore:
             "chat_only": self.chat_only_agent(identity),
             "integration_modes": integration,
             "enabled_modes": policy.get("enabled_modes", integration),
-            "default_mode": policy.get("default_mode", self.defaults["mode"]),
+            "default_mode": policy.get("default_mode", self.agent_defaults(identity)["mode"]),
             "available_modes": self.available_modes(device_id) if device_id else [
                 mode for mode in integration if mode in policy.get("enabled_modes", integration)
             ],
@@ -440,7 +441,7 @@ class SpeechStore:
                     agent_id,
                     {
                         "enabled_modes": candidate.integration_modes(agent_id),
-                        "default_mode": candidate.defaults["mode"],
+                        "default_mode": candidate.agent_defaults(agent_id)["mode"],
                         "selection": {},
                     },
                 )

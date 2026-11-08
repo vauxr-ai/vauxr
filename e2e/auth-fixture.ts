@@ -144,3 +144,15 @@ export async function pairDevice(server: Server, integration: string) {
   }
   return post("redeem", { request_id: challenge.request_id, signature: signature("redeem") });
 }
+
+// Synthetic media tests need a framework that implements Live; built-in Support is Standard-only.
+export function seedRealtimeAgent(server: Server) {
+  const path = resolve(server.data, "agents.json");
+  const data = JSON.parse(readFileSync(path, "utf8"));
+  const agentId = "f".repeat(32);
+  data.agents = [...data.agents.filter((agent: any) => agent.id !== agentId), {
+    id:agentId, name:"Synthetic realtime integration", type:"openclaw", createdAt:"2026-01-01T00:00:00Z",
+  }];
+  data.active_agent = agentId;
+  writeFileSync(path, JSON.stringify(data));
+}
