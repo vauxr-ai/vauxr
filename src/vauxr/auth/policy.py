@@ -168,7 +168,7 @@ HTTP_OPERATIONS = {
     "device_command": Operation.CONTROL,
     "list_agents": Operation.AGENT_LIST,
     "create_agent": Operation.CREDENTIAL_CREATE,
-    "delete_agent": Operation.CREDENTIAL_REVOKE,
+    "delete_agent": Operation.AGENT_CONFIG,
     "activate_agent": Operation.AGENT_CONFIG,
     "rename_agent": Operation.AGENT_CONFIG,
     "agent_avatar": Operation.AGENT_CONFIG,

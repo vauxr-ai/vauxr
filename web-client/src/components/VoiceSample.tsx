@@ -57,15 +57,15 @@ export default function VoiceSample({browserDeviceId, browserConnected = false, 
     }
   }
   const description = useId();
-  const reason = !browserConnected ? "Connect browser voice to test a sample." : !canPreview ? "Select a ready text-to-speech provider and voice to test a sample." : previewBusy ? "Voice sample in progress." : "Test selected voice in this browser";
+  const reason = !browserConnected ? "Connect browser voice to test a sample." : !canPreview ? "Select a ready text-to-speech provider and voice to test a sample." : previewBusy ? "Stop voice sample." : "Test selected voice in this browser";
   return <div className="pipeline-sample">
     <span className="pipeline-sample-trigger" tabIndex={!canPreview ? 0 : undefined} aria-label={!canPreview ? reason : undefined} title={reason}>
-      <button type="button" className="pipeline-icon pipeline-sample-button" disabled={!canPreview || previewBusy} aria-label="Test selected voice" aria-describedby={description} onClick={() => void testVoice()}>
-        <svg aria-hidden="true" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M16 6 8 12H3v8h5l8 6ZM21 11c3 3 3 7 0 10m4-14c6 5 6 13 0 18"/></svg>
+      <button type="button" className="pipeline-icon pipeline-sample-button" disabled={!canPreview} aria-label={previewBusy ? "Stop voice sample" : "Test selected voice"} aria-describedby={description} onClick={() => { if (previewBusy) {stopPreview(); setPreviewStatus("Voice sample stopped.");} else void testVoice(); }}>
+        <svg aria-hidden="true" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{previewBusy ? <rect x="9" y="9" width="14" height="14" rx="3"/> : <path d="M16 6 8 12H3v8h5l8 6ZM21 11c3 3 3 7 0 10m4-14c6 5 6 13 0 18"/>}</svg>
       </button><span className="pipeline-sample-tooltip" role="tooltip">{reason}</span>
     </span>
     <span id={description} className="sr-only">{reason}</span>
-    {previewBusy && <button type="button" className="pipeline-sample-stop" onClick={() => {stopPreview(); setPreviewStatus("Voice sample stopped.");}}>Stop</button>}
+
     {previewStatus && <span className="pipeline-sample-status" role="status">{previewStatus}</span>}
   </div>;
 }

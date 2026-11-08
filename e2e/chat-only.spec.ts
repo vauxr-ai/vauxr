@@ -1,3 +1,5 @@
+import {openAgentAction} from "./auth-fixture";
+import {savePipelineAndReopen} from "./pipeline-controls";
 import { pipelineEnabled, expectPipelineEnabled, pipelineMode } from "./pipeline-controls";
 import { closeAgentDetail } from "./auth-fixture";
 import { openIntegrations } from "./auth-fixture";
@@ -38,12 +40,12 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
       await closeAgentDetail(page);
       await page.getByRole("button", {name:"Agents",exact:true}).click();
       await page.getByRole("button", {name: "Refresh agents", exact: true}).click();
-      await page.getByRole("button", { name: "Voice pipeline for Household text companion" }).click();
+      await openAgentAction(page, "Voice pipeline for Household text companion");
       const voice = page.getByRole("region", { name: "Agent voice", exact: true });
       await pipelineEnabled(voice, "Standard", false);
       await pipelineEnabled(voice, "Live", false);
       for (const mode of ["Standard", "Live"]) { await pipelineMode(voice, mode); await expect(voice.getByRole("button", {name:`Default ${mode}`, exact:true})).toHaveAttribute("aria-pressed", "false"); }
-      await voice.getByRole("button", { name: "Save pipeline configuration" }).click();
+      await savePipelineAndReopen(voice);
       await expect(voice.getByText(/Chat-only · No voice modes enabled/)).toBeVisible();
       await closeAgentDetail(page);
       await page.getByRole("button", { name: "Connect browser", exact: true }).click();
@@ -78,7 +80,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
       await page.keyboard.press("Escape");
       await server.restart();
       await page.reload();
-      await page.getByRole("button", { name: "Voice pipeline for Household text companion" }).click();
+      await openAgentAction(page, "Voice pipeline for Household text companion");
       await expectPipelineEnabled(voice, "Standard", false);
       await expectPipelineEnabled(voice, "Live", false);
       await closeAgentDetail(page);

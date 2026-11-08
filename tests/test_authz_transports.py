@@ -62,7 +62,7 @@ ROUTES = [
     ("GET", "/api/agents/missing/speech", "o", 404),
     ("PATCH", "/api/agents/missing/speech", "o", 404),
     ("POST", "/api/agents", "o", 501),
-    ("DELETE", "/api/agents/missing", "o", 501),
+    ("DELETE", "/api/agents/missing", "o", 404),
     ("POST", "/api/agents/missing/activate", "o", 404),
     ("PATCH", "/api/agents/missing", "o", 400),
     ("POST", "/api/agents/missing/rotate", "o", 501),

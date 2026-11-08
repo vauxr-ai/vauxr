@@ -24,9 +24,9 @@ it("keeps the name draft after a failed save and only claims success after persi
   const onContext = vi.fn();
   render(<AgentsPanel onContext={onContext} />);
   await userEvent.click(
-    await screen.findByRole("button", { name: "View agent Original" }),
+    await screen.findByRole("heading", { name: "Original" }),
   );
-  expect(onContext).toHaveBeenLastCalledWith("Original");
+
   expect(screen.getByRole("button", { name: "Default", exact: true })).toBeDisabled();
   expect(screen.queryByRole("button", { name: "Activate", exact: true })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", {name:"Edit agent name"}));
@@ -37,9 +37,7 @@ it("keeps the name draft after a failed save and only claims success after persi
   expect(await screen.findByRole("alert")).toHaveTextContent("Unable to save");
   expect(input).toHaveValue("New name");
   expect(screen.queryByText("Agent name saved.")).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "View agent Original" }),
-  ).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).toBeNull();
   mocks.renameAgent.mockResolvedValue({ id: "stable-id", name: "New name" });
   await userEvent.click(screen.getByRole("button", { name: "Save name" }));
   await waitFor(() =>
@@ -48,6 +46,6 @@ it("keeps the name draft after a failed save and only claims success after persi
   expect(mocks.renameAgent).toHaveBeenLastCalledWith("stable-id", "New name");
   expect(onContext).toHaveBeenLastCalledWith("New name");
   expect(
-    screen.getByRole("button", { name: "View agent New name" }),
+    screen.getByRole("heading", { name: "New name" }),
   ).toBeInTheDocument();
 });

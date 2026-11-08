@@ -1,3 +1,4 @@
+import {openAgentAction} from "./auth-fixture";
 import { pipelineEnabled, expectPipelineEnabled } from "./pipeline-controls";
 import { createServer, type Socket } from 'node:net';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -46,6 +47,7 @@ async function wyoming() {
 for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
   test(`agent editor persists identity and keyboard pipeline; real browser WAV ${width} ${theme}`, async ({page, server}) => {
     test.setTimeout(90000);
+    page.setDefaultTimeout(15000);
     const peer = await wyoming();
     try {
       seedRealtimeAgent(server);
@@ -69,29 +71,26 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       await page.getByLabel('Appearance').selectOption(theme);
       await page.getByRole('button',{name:'Agents',exact:true}).click();
       await expect(page.getByRole('heading',{name:'Agents available for use on voice devices',exact:true})).toBeVisible();
-      const trigger = page.getByRole('button',{name:`View agent ${originalName}`,exact:true});
-      // Use the row's far edge: the stretched action must cover more than its text.
-      const box = (await trigger.boundingBox())!;
-      await trigger.click({position:{x:box.width - 5,y:box.height / 2}});
+      const row = page.locator(`main li[data-agent-id="${agentId}"]`);
+      await row.click({position:{x:5,y:5}});
+      await expect(page.locator('dialog')).toHaveCount(0);
+      await row.getByRole('button',{name:'Edit agent name'}).click();
+      await row.getByLabel('Agent name',{exact:true}).fill('Cancelled name');
+      await row.getByRole('button',{name:'Cancel name edit'}).click();
+      await expect(page.getByRole('heading',{name:originalName, level:3, exact:true})).toBeVisible();
+      await row.getByRole('button',{name:'Edit agent name'}).click();
+      await row.getByLabel('Agent name',{exact:true}).fill(renamed);
+      await row.getByRole('button',{name:'Save name',exact:true}).click();
+      const savedRow = page.locator(`main li[data-agent-id="${agentId}"]`);
+      await expect(savedRow).toBeVisible();
       const modal = page.locator('dialog.agent-detail-modal');
-      await expect(modal).toHaveAccessibleName(originalName);
-      expect(await modal.evaluate(el => el.matches(':modal'))).toBe(true);
-      for (let n=0;n<12;n++) { await page.keyboard.press('Tab'); expect(await modal.evaluate(el => el.contains(document.activeElement))).toBe(true); }
-      await modal.getByRole('button',{name:'Edit agent name'}).click();
-      await modal.getByLabel('Agent name',{exact:true}).fill('Cancelled name');
-      await modal.getByRole('button',{name:'Cancel name edit'}).click();
-      await expect(modal).toHaveAccessibleName(originalName);
-      await modal.getByRole('button',{name:'Edit agent name'}).click();
-      await modal.getByLabel('Agent name',{exact:true}).fill(renamed);
-      await modal.getByRole('button',{name:'Save name',exact:true}).click();
-      await expect(modal).toHaveAccessibleName(renamed);
       const upload = page.waitForResponse(r => r.url().endsWith(`/api/agents/${agentId}/avatar`) && r.request().method()==='POST');
-      const pencil = modal.getByRole('button',{name:'Edit agent name'});
-      const heading = modal.getByRole('heading',{name:renamed,exact:true});
+      const pencil = savedRow.getByRole('button',{name:'Edit agent name'});
+      const heading = savedRow.getByRole('heading',{name:renamed,exact:true});
       const titleBox = (await heading.boundingBox())!, pencilBox = (await pencil.boundingBox())!;
       expect(pencilBox.x - titleBox.x - titleBox.width).toBeLessThan(20);
       await expect(modal.getByText(/Agent ID:|This route is shared|Integration configuration/)).toHaveCount(0);
-      const avatarButton = modal.getByRole('button',{name:'Edit agent avatar'});
+      const avatarButton = savedRow.getByRole('button',{name:`Edit avatar for ${renamed}`});
       await avatarButton.click();
       const avatarDialog = page.getByRole('dialog',{name:'Edit agent avatar',exact:true});
       await page.keyboard.press('Escape');
@@ -109,13 +108,11 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       await expect(avatarDialog).toHaveCount(0);
       await expect(avatarButton).toBeFocused();
       expect((await upload).status()).toBe(200);
-      await expect.poll(() => modal.locator('.agent-avatar img').evaluateAll(images => images.every(image => (image as HTMLImageElement).naturalWidth > 0) && images.length > 0)).toBe(true);
+      await expect.poll(() => savedRow.locator('.agent-avatar img').evaluateAll(images => images.every(image => (image as HTMLImageElement).naturalWidth > 0) && images.length > 0)).toBe(true);
       mkdirSync(artifactDir,{recursive:true});
-      await modal.evaluate(el => {el.scrollTop=0;});
       await page.screenshot({path:resolve(artifactDir,`agent-identity-${width}-${theme}.png`)});
-      await expect(modal.getByRole('region',{name:'Agent voice',exact:true})).toHaveCount(0);
-      await page.keyboard.press('Escape');
-      await page.getByRole('button',{name:`Voice pipeline for ${renamed}`,exact:true}).click();
+      await expect(page.locator('dialog')).toHaveCount(0);
+      await openAgentAction(page, `Voice pipeline for ${renamed}`);
       await expect(modal).toHaveAccessibleName('Voice pipeline');
       const voice = modal.getByRole('region',{name:'Agent voice',exact:true});
       await expect(modal.getByRole('heading',{name:'Voice pipeline',exact:true})).toBeVisible();
@@ -159,23 +156,20 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       await pipelineEnabled(voice, 'Standard', true);
       await voice.getByRole('button',{name:'Default Standard',exact:true}).click();
       await voice.getByRole('button',{name:'Save pipeline configuration'}).click();
-      await expect(voice.getByText(/Pipeline configuration saved/)).toBeVisible();
-      await page.keyboard.press('Escape'); await expect(modal).toHaveCount(0);
+      await expect(modal).toHaveCount(0);
       await expect(page.getByRole('button',{name:`Voice pipeline for ${renamed}`,exact:true})).toBeFocused();
       await page.reload();
-      await page.getByRole('button',{name:`View agent ${renamed}`,exact:true}).click();
-      await expect.poll(() => modal.locator('.agent-avatar img').evaluateAll(images => images.length>0 && images.every(i=>(i as HTMLImageElement).naturalWidth>0))).toBe(true);
+      await expect.poll(() => savedRow.locator('.agent-avatar img').evaluateAll(images => images.length>0 && images.every(i=>(i as HTMLImageElement).naturalWidth>0))).toBe(true);
       const avatar = await page.request.get(`${server.origin}/api/agents/${agentId}/avatar`);
       expect(avatar.status()).toBe(200); expect(avatar.headers()['content-type']).toContain('image/png'); expect((await avatar.body()).subarray(1,4).toString()).toBe('PNG');
-      await page.keyboard.press('Escape');
       await expect(modal).toHaveCount(0);
-      await page.getByRole('button',{name:`Voice pipeline for ${renamed}`,exact:true}).click();
+      await openAgentAction(page, `Voice pipeline for ${renamed}`);
       await expectPipelineEnabled(voice, 'Live', false);
       await page.keyboard.press('Escape');
       await page.getByRole('button',{name:'Connect browser',exact:true}).click({timeout:5000});
       await expect(page.getByRole('button',{name:'Disconnect',exact:true})).toBeVisible();
       await page.getByRole('button',{name:'Collapse voice companion',exact:true}).click();
-      await page.getByRole('button',{name:`Voice pipeline for ${renamed}`,exact:true}).click();
+      await openAgentAction(page, `Voice pipeline for ${renamed}`);
       await voice.getByRole('button',{name:'Edit Text To Speech',exact:true}).click();
       const ttsPopover = page.getByRole('dialog',{name:'Text To Speech settings',exact:true});
       await ttsPopover.getByRole('radio',{name:'fixture_a',exact:true}).focus();
@@ -187,6 +181,11 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       expect(popoverBounds!.x).toBeGreaterThanOrEqual(0); expect(popoverBounds!.x+popoverBounds!.width).toBeLessThanOrEqual(width);
       await page.keyboard.press('Escape');
       await expect(voice.getByRole('button',{name:'Edit Text To Speech',exact:true})).toBeFocused();
+      const ttsLabel = voice.locator('.pipeline-output strong');
+      const labelBefore = await ttsLabel.boundingBox();
+      for (const label of await voice.locator('.pipeline-entity-label').all()) {
+        expect(await label.evaluate(el=>getComputedStyle(el).borderTopWidth)).toBe('0px');
+      }
       const before = readFileSync(resolve(server.data,'speech.json'),'utf8');
       const preview = page.waitForResponse(r => r.url().endsWith('/api/speech/preview') && r.request().method()==='POST');
       await page.getByRole('button',{name:'Test selected voice'}).click();
@@ -196,19 +195,20 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       expect(wav.subarray(0,4).toString()).toBe('RIFF'); expect(wav.subarray(8,12).toString()).toBe('WAVE');
       const offset = wav.indexOf(Buffer.from('data')); expect(offset).toBeGreaterThan(0);
       expect(wav.subarray(offset+8)).toEqual(peer.pcm);
+      expect(Math.abs((await ttsLabel.boundingBox())!.y - labelBefore!.y)).toBeLessThan(1);
       expect(peer.calls).toEqual([{text:'Hello! This is a preview of my voice.',voice:{name:'fixture_b'}}]);
       await expect.poll(() => page.evaluate(() => (window as any).decodedSamples.filter((s:any) => s.src.startsWith('blob:') && s.duration>0).length)).toBeGreaterThan(0);
       expect(readFileSync(resolve(server.data,'speech.json'),'utf8')).toBe(before);
       const bounds = await modal.evaluate(el => { const rect=el.getBoundingClientRect(); return {left:rect.left,right:rect.right,fields:[...el.querySelectorAll('select,input:not([type=file])')].map(f=>{const b=f.getBoundingClientRect();return {left:b.left,right:b.right};})}; });
       expect(bounds.left).toBeGreaterThanOrEqual(0); expect(bounds.right).toBeLessThanOrEqual(width);
       for (const field of bounds.fields) { expect(field.left).toBeGreaterThanOrEqual(bounds.left); expect(field.right).toBeLessThanOrEqual(bounds.right); }
-      await page.getByRole('button',{name:'Test selected voice'}).scrollIntoViewIfNeeded();
+      await page.getByRole('button',{name:'Stop voice sample'}).scrollIntoViewIfNeeded();
       mkdirSync(artifactDir,{recursive:true});
       await page.screenshot({path:resolve(artifactDir,`agent-editor-${width}-${theme}.png`)});
       await expect(voice).toBeVisible();
       await page.keyboard.press('Escape');
       const diagnosticsTrigger = page.getByRole('button',{name:`Runtime settings for ${renamed}`,exact:true});
-      await diagnosticsTrigger.focus(); await page.keyboard.press('Enter');
+      await openAgentAction(page, `Runtime settings for ${renamed}`);
       const diagnostics = page.getByRole('dialog',{name:'Agent runtime settings',exact:true});
       for (let n = 0; n < 6; n++) {
         await page.keyboard.press('Tab');

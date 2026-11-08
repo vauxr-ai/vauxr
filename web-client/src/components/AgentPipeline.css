@@ -66,9 +66,10 @@
   .pipeline-graph .pipeline-edit { padding:4px 6px; font-size:11px; max-width:100%; }
 }
 
-.pipeline-entity-button { display:flex; flex-direction:column; align-items:center; gap:8px; width:100%; min-height:44px; padding:10px 4px; border:1px solid transparent; border-radius:16px; color:inherit; background:transparent; cursor:pointer; }
-.pipeline-entity-button:hover { background:#8b5cf60d; border-color:#a78bfa55; }
-.pipeline-entity-button:focus-visible,.pipeline-state button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.pipeline-entity-label { display:inline-block; width:fit-content; max-width:100%; min-height:44px; padding:6px 2px; border:0; border-radius:0; color:var(--accent); font-size:11px; overflow-wrap:anywhere; background:transparent; text-decoration:underline; text-decoration-color:#a78bfa66; text-underline-offset:4px; cursor:pointer; }
+.pipeline-entity-label:hover { text-decoration-color:currentColor; }
+.pipeline-entity-label:focus-visible,.pipeline-state button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.pipeline-default-check { width:18px; height:18px; display:inline-block; margin-left:6px; vertical-align:middle; }
 .pipeline-state button { min-height:44px; border-radius:30px; padding:6px 12px; font-size:12px; border:1px solid #a78bfa55; cursor:pointer; }
 .agent-pipeline-settings,.agent-pipeline-editor { min-width:0; display:grid; gap:16px; }
 .pipeline-editor-toolbar { display:flex; gap:12px; align-items:center; justify-content:space-between; }
@@ -107,3 +108,9 @@
 .pipeline-sample-trigger:hover .pipeline-sample-tooltip,.pipeline-sample-trigger:focus-within .pipeline-sample-tooltip { visibility:visible; }
 .pipeline-sample-stop { min-height:44px; padding:6px; border-radius:10px; }
 .pipeline-sample-status { font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
+
+.pipeline-output .pipeline-entity:has(.pipeline-sample) { position:relative; padding-bottom:44px; }
+.pipeline-sample { display:contents; }
+.pipeline-sample-status { position:absolute; bottom:0; left:0; width:100%; min-height:32px; line-height:16px; }
+.pipeline-graph .pipeline-entity-label { border:0; border-radius:0; background:transparent; box-shadow:none; }
+.pipeline-graph .pipeline-entity-label:hover { border:0; background:transparent; box-shadow:none; }

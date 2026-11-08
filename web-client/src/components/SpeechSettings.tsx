@@ -105,8 +105,9 @@ export default function SpeechSettings({
   deviceId,
   agentId,
   onModeChange,
-  agentName, agentType, browserDeviceId, browserConnected = false, browserCredential,
+  onSaved, agentName, agentType, browserDeviceId, browserConnected = false, browserCredential,
 }: {
+  onSaved?: () => void;
   agentName?: string;
   agentType?: string;
   browserDeviceId?: string;
@@ -270,7 +271,7 @@ export default function SpeechSettings({
     {data?.error && <p role="alert">{data.error}</p>}
     {data?.policy?.conflict && <p role="alert">{data.policy.conflict}</p>}
     {!data && error && <RefreshButton label="Retry voice configuration" busy={busy} onClick={() => void update()}/>}
-    {data?.policy && defaults && <AgentPipelineEditor key={agentId} agentId={agentId} agentType={agentType} agentName={agentName || agentId}
+    {data?.policy && defaults && <AgentPipelineEditor onSaved={onSaved} key={agentId} agentId={agentId} agentType={agentType} agentName={agentName || agentId}
       policy={data.policy} defaults={defaults} backends={data.backends} hasProviderDraft={Object.keys(providerDraft).length > 0} saved={saved} busy={busy} mode={shownMode} onModeChange={setEditMode}
       onDraft={patch => void update(patch)} onSave={patch => update({...providerDraft, ...patch})} onRefresh={() => void update()}
       preview={<VoiceSample browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential} backend={selectedTts} voice={selectedVoice} mode={shownMode}/>}/>}

@@ -1,3 +1,4 @@
+import {openAgentAction} from "./auth-fixture";
 import { closeAgentDetail } from "./auth-fixture";
 import { test, expect, login } from "./auth-fixture";
 for (const width of [390, 1366])
@@ -19,24 +20,24 @@ for (const width of [390, 1366])
       .click();
     const create = page.getByRole("dialog", { name: "Add Agent", exact: true });
     await create
-      .getByLabel("Registered implementation")
-      .selectOption("household");
+      .getByRole("button", {name:"Choose Household assistant",exact:true})
+      .click();
     await create.getByLabel("Agent name").fill("Household assistant");
     await create
       .getByRole("button", { name: "Create agent", exact: true })
       .click();
     const detail = page.locator("dialog.agent-detail-modal");
     await expect(
-      detail.getByRole("heading", { name: "Household assistant", exact: true }),
+      page.getByRole("heading", { name: "Household assistant", level:3, exact: true }),
     ).toBeVisible();
     await expect(detail.getByRole("region", {name:"Agent voice", exact:true})).toHaveCount(0);
     await closeAgentDetail(page);
-    await page.getByRole("button", {name:"Voice pipeline for Household assistant",exact:true}).click();
+    await openAgentAction(page, "Voice pipeline for Household assistant");
     await expect(detail.getByRole("tab", {name:"Live / Realtime", exact:true})).toHaveCount(0);
     await expect(detail.getByRole("region", { name: "Agent model runtime", exact: true })).toHaveCount(0);
     await expect(detail.getByRole("button", { name: "Remove agent", exact: true })).toHaveCount(0);
     await closeAgentDetail(page);
-    await page.getByRole("button", { name: "Runtime settings for Household assistant", exact: true }).click();
+    await openAgentAction(page, "Runtime settings for Household assistant");
     const diagnostics = page.getByRole("dialog", { name: "Agent runtime settings", exact: true });
     await expect(diagnostics.getByRole("region", { name: "Agent model runtime", exact: true })).toContainText("Setup needed");
     console.log(
@@ -69,33 +70,16 @@ for (const width of [390, 1366])
     await companion
       .getByRole("button", { name: "Collapse voice companion", exact: true })
       .click();
-    await page.getByRole("button", {name:"Runtime settings for Household assistant",exact:true}).click();
-    await diagnostics
-      .getByRole("button", { name: "Remove agent", exact: true })
-      .click();
-    await expect(page.getByRole("alert")).toContainText("unassign all devices");
-    await closeAgentDetail(page);
-    await companion
-      .getByRole("button", { name: "Expand voice companion", exact: true })
-      .click();
-    await closeAgentDetail(page);
-    await companion
-      .getByLabel("Conversation agent", { exact: true })
-      .selectOption("vauxr-support");
-    await closeAgentDetail(page);
-    await companion
-      .getByRole("button", { name: "Collapse voice companion", exact: true })
-      .click();
-    await page.getByRole("button", {name:"Runtime settings for Household assistant",exact:true}).click();
-    await diagnostics
-      .getByRole("button", { name: "Remove agent", exact: true })
-      .click();
-    await expect(
-      page.getByRole("button", {
-        name: "View agent Household assistant",
-        exact: true,
-      }),
-    ).toHaveCount(0);
+    const menu=page.locator('details.agent-actions').filter({hasText:'Voice pipeline'}).filter({has:page.getByRole('button',{name:'Runtime settings for Household assistant',includeHidden:true})});
+    if(!await menu.evaluate(el=>(el as HTMLDetailsElement).open)) await menu.locator('summary').click();
+    await menu.getByRole('button',{name:'Delete agent',exact:true}).click();
+    const confirmation=page.getByRole('dialog',{name:'Delete agent',exact:true});
+    await expect(confirmation).toContainText('Household assistant');
+    await confirmation.getByRole('button',{name:'Delete agent',exact:true}).click();
+    await expect(confirmation).toHaveCount(0);
+    await expect(page.getByRole('heading',{name:'Household assistant', level:3, exact:true})).toHaveCount(0);
+    const speech=await (await page.request.get(server.origin+'/api/speech')).json();
+    expect(Object.values(speech.assignments || {})).not.toContain('Household assistant');
     console.log(
       `Registered agent ${width}: setup-needed text and guarded removal verified`,
     );

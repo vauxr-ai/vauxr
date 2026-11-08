@@ -400,8 +400,9 @@ async def create_agent(request: web.Request) -> web.Response:
 
 @_require_auth
 async def delete_agent(request: web.Request) -> web.Response:
-    # Replaced by the independently scoped enrollment/lifecycle packages.
-    return web.json_response({"error": "operation not implemented"}, status=501)
+    from vauxr.agents.removal import remove_agent
+
+    return await remove_agent(request, request.match_info["agent_id"])
 
 
 @_require_auth

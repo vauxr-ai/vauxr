@@ -1,3 +1,5 @@
+import {openAgentAction} from "./auth-fixture";
+import {savePipelineAndReopen} from "./pipeline-controls";
 import { pipelineMode, pipelineEnabled, expectPipelineEnabled, pipelineDefault, pipelineVoice } from "./pipeline-controls";
 import { closeAgentDetail } from "./auth-fixture";
 import { openIntegrations } from "./auth-fixture";
@@ -154,23 +156,15 @@ for (const width of [375, 390])
         await closeAgentDetail(page);
         await page.getByRole("button", {name:"Agents",exact:true}).click();
         await page.getByRole("button", {name: "Refresh agents", exact: true}).click();
-        await page
-          .getByRole("button", {
-            name: "Voice pipeline for Household agent with a long populated display name",
-          })
-          .click();
+        await openAgentAction(page, "Voice pipeline for Household agent with a long populated display name");
         const agent = page.getByRole("region", {
           name: "Agent voice",
           exact: true,
         });
-        await agent
-          .getByRole("button", { name: "Save pipeline configuration" })
-          .click();
+        await savePipelineAndReopen(agent);
         await expectPipelineEnabled(agent, "Live", true);
         await pipelineVoice(agent, "tts", "alternate_voice");
-        await agent
-          .getByRole("button", { name: "Save pipeline configuration" })
-          .click();
+        await savePipelineAndReopen(agent);
         await pipelineVoice(agent, "tts", "alternate_voice", false);
         await expect.poll(async () => {
           const response = await page.request.get(`${server.origin}/api/agents/${request.agent_id}/speech`);
@@ -185,9 +179,7 @@ for (const width of [375, 390])
         await agent
           .getByRole("tab", {name:"Live / Realtime",exact:true}).click();
         await pipelineVoice(agent, "realtime", "coral");
-        await agent
-          .getByRole("button", { name: "Save pipeline configuration" })
-          .click();
+        await savePipelineAndReopen(agent);
         await pipelineVoice(agent, "realtime", "coral", false);
         await expect(agent.locator(".pipeline-device .pipeline-entity")).toHaveCount(1);
         await expect(agent.locator(".pipeline-agent .pipeline-entity")).toHaveCount(1);
@@ -227,11 +219,7 @@ for (const width of [375, 390])
         await capture(page, `${width}-${theme}-device-overridden-live`, card);
         await closeAgentDetail(page);
         await page.getByRole("button", { name: "Agents", exact: true }).click();
-        await page
-          .getByRole("button", {
-            name: "Voice pipeline for Household agent with a long populated display name",
-          })
-          .click();
+        await openAgentAction(page, "Voice pipeline for Household agent with a long populated display name");
         await pipelineEnabled(agent, "Live", false);
         await agent
           .getByRole("button", { name: "Save pipeline configuration" })
@@ -259,22 +247,12 @@ for (const width of [375, 390])
         await card.getByRole("button", { name: "Reset voice overrides" }).click();
         await closeAgentDetail(page);
         await page.getByRole("button", { name: "Agents", exact: true }).click();
-        await page
-          .getByRole("button", {
-            name: "Voice pipeline for Household agent with a long populated display name",
-          })
-          .click();
+        await openAgentAction(page, "Voice pipeline for Household agent with a long populated display name");
         await pipelineEnabled(agent, "Live", false);
-        await agent
-          .getByRole("button", { name: "Save pipeline configuration" })
-          .click();
+        await savePipelineAndReopen(agent);
         await expectPipelineEnabled(agent, "Live", false);
         await page.reload();
-        await page
-          .getByRole("button", {
-            name: "Voice pipeline for Household agent with a long populated display name",
-          })
-          .click();
+        await openAgentAction(page, "Voice pipeline for Household agent with a long populated display name");
         await expectPipelineEnabled(agent, "Live", false);
         // Capability loss is learned on authenticated reconnect and cannot silently switch modes.
         await pipelineEnabled(agent, "Live", true);
@@ -288,9 +266,7 @@ for (const width of [375, 390])
             response.url().endsWith(`/api/agents/${request.agent_id}/speech`) &&
             response.request().method() === "PATCH",
         );
-        await agent
-          .getByRole("button", { name: "Save pipeline configuration" })
-          .click();
+        await savePipelineAndReopen(agent);
         const applied = await atomicSave;
         expect(applied.status()).toBe(200);
         expect(applied.request().postDataJSON()).toEqual({
@@ -319,16 +295,10 @@ for (const width of [375, 390])
         ).toContainText("Use agent default (ash)");
         await closeAgentDetail(page);
         await page.getByRole("button", { name: "Agents", exact: true }).click();
-        await page
-          .getByRole("button", {
-            name: "Voice pipeline for Household agent with a long populated display name",
-          })
-          .click();
+        await openAgentAction(page, "Voice pipeline for Household agent with a long populated display name");
         await pipelineEnabled(agent, "Standard", true);
         await pipelineDefault(agent, "Standard");
-        await agent
-          .getByRole("button", { name: "Save pipeline configuration" })
-          .click();
+        await savePipelineAndReopen(agent);
         await closeAgentDetail(page);
         await page
           .getByRole("button", { name: "Devices", exact: true })

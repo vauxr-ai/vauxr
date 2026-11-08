@@ -565,3 +565,19 @@ it("does not leave a saved confirmation on a newly changed graph policy", async 
   expect(screen.getByText("Unsaved pipeline changes.")).toBeVisible();
   expect(screen.queryByText(/Pipeline configuration saved/)).toBeNull();
 });
+
+it("signals modal success only after a completed save and keeps rejected edits open", async () => {
+  const onSaved=vi.fn();
+  let finish: (response: unknown)=>void = ()=>{};
+  vi.stubGlobal("fetch",vi.fn((_path,init)=>init?.method==="PATCH" ? new Promise(resolve=>{finish=resolve;}) : Promise.resolve({ok:true,json:async()=>({...view,policy:previewPolicy})})));
+  render(<SpeechSettings agentId="agent" onSaved={onSaved}/>);
+  fireEvent.click(await screen.findByRole("button",{name:"Save pipeline configuration"}));
+  expect(screen.getByText("Saving pipeline configuration…")).toBeVisible();
+  expect(onSaved).not.toHaveBeenCalled();
+  finish({ok:false,status:409,json:async()=>({error:"Assigned device requires Live"})});
+  expect(await screen.findByRole("alert")).toHaveTextContent("Assigned device requires Live");
+  expect(onSaved).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button",{name:"Save pipeline configuration"}));
+  finish({ok:true,json:async()=>({...view,policy:previewPolicy})});
+  await waitFor(()=>expect(onSaved).toHaveBeenCalledTimes(1));
+});

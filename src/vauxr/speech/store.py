@@ -376,6 +376,31 @@ class SpeechStore:
             if conflict:
                 raise VoiceConflict(f"{device_id}: {conflict}")
 
+    def detach_agent(self, agent_id: str) -> None:
+        """Return assigned devices to the default, preserving compatible voice overrides."""
+        def change(data: dict) -> dict:
+            candidate = object.__new__(SpeechStore)
+            candidate.path = self.path
+            candidate._load(json.loads(json.dumps(data)))
+            affected = [identity for identity, selected in candidate.assignments.items() if selected == agent_id]
+            for identity in affected:
+                candidate.assignments.pop(identity)
+                try:
+                    candidate._validate_device_effective(identity)
+                    conflict = candidate.conflict(identity)
+                except (KeyError, ValueError):
+                    conflict = "incompatible voice overrides"
+                if conflict:
+                    candidate.devices.pop(identity, None)
+                active = self._active_change(candidate, identity)
+                if active:
+                    raise VoiceConflict(f"{identity}: {active}")
+            candidate.agents.pop(agent_id, None)
+            return {**data, "version": 2, "assignments": candidate.assignments,
+                    "devices": candidate.devices, "agents": candidate.agents,
+                    "capabilities": candidate.capabilities}
+        self._load(update_json(self.path, change))
+
     def record_capabilities(self, device_id: str, caps: list[str]) -> None:
         verified = sorted(set(caps) & {"ws", "webrtc"})
         if self.capabilities.get(device_id) == verified:

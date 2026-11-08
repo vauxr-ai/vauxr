@@ -1,3 +1,4 @@
+import {openAgentAction} from "./auth-fixture";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test, expect, login, closeAgentDetail } from "./auth-fixture";
@@ -8,7 +9,7 @@ for (const width of [390, 1366]) test(`built-in Support is independent and hones
     navigator.mediaDevices.getUserMedia = async () => { (window as any).micCalls++; throw Error("Mic must stay off"); };
   });
   await login(page, server);
-  await page.getByRole("button", {name:"Runtime settings for Vauxr Support", exact:true}).click();
+  await openAgentAction(page, "Runtime settings for Vauxr Support");
   const diagnostics = page.getByRole("dialog", {name:"Agent runtime settings", exact:true});
   const setup = diagnostics.getByRole("region", {name:/^(Support runtime|Agent model runtime)$/, exact:true});
   await expect(setup).toContainText("Setup needed");
@@ -25,7 +26,7 @@ for (const width of [390, 1366]) test(`built-in Support is independent and hones
   await page.screenshot({path:`/tmp/vauxr-support-${width}.png`, fullPage:true});
   await server.restart();
   await page.reload();
-  await expect(page.getByRole("button", {name:"View agent Vauxr Support",exact:true})).toBeVisible();
+  await expect(page.getByRole("heading", {name:"Vauxr Support", level:3, exact:true})).toBeVisible();
 });
 
 
@@ -34,7 +35,7 @@ test("pipeline model radio selection persists through the authenticated runtime 
     {id:"pipeline-local", name:"Pipeline local model", provider:"ollama", endpoint:"http://127.0.0.1:1", model:"fixture-model", auth:"none"},
   ]}));
   await login(page, server);
-  await page.getByRole("button", {name:"Voice pipeline for Vauxr Support",exact:true}).click();
+  await openAgentAction(page, "Voice pipeline for Vauxr Support");
   await page.getByRole("button", {name:"Edit Vauxr Support",exact:true}).click();
   const entity = page.getByRole("dialog", {name:"Vauxr Support settings",exact:true});
   await entity.getByRole("radio", {name:/Pipeline local model/}).check();
@@ -43,10 +44,10 @@ test("pipeline model radio selection persists through the authenticated runtime 
   const runtimeWrite = page.waitForResponse(response => response.url().endsWith("/api/local-agents/vauxr-support/runtime") && response.request().method()==="POST");
   await page.getByRole("button", {name:"Save pipeline configuration",exact:true}).click();
   expect((await runtimeWrite).status()).toBe(200);
-  await expect(page.getByText(/Pipeline configuration saved/)).toBeVisible();
+  await expect(page.getByRole("dialog",{name:"Voice pipeline",exact:true})).toHaveCount(0);
   expect(await (await page.request.get(`${server.origin}/api/local-agents/vauxr-support/runtime`)).json()).toMatchObject({profile_id:"pipeline-local"});
   await server.restart(); await page.reload();
-  await page.getByRole("button", {name:"Voice pipeline for Vauxr Support",exact:true}).click();
+  await openAgentAction(page, "Voice pipeline for Vauxr Support");
   await page.getByRole("button", {name:"Edit Vauxr Support",exact:true}).click();
   await expect(entity.getByRole("radio", {name:/Pipeline local model/})).toBeChecked();
 });

@@ -63,7 +63,8 @@ function EntityPopover({anchor, title, children, onClose}: {anchor: HTMLButtonEl
   </div>, anchor.closest("dialog") || document.body);
 }
 
-export default function AgentPipelineEditor({agentId, agentType, agentName, policy, defaults, backends, busy, mode, onModeChange, onDraft, onSave, onRefresh, preview, hasProviderDraft, saved}: {
+export default function AgentPipelineEditor({agentId, agentType, agentName, policy, defaults, backends, busy, mode, onModeChange, onDraft, onSave, onRefresh, preview, hasProviderDraft, saved, onSaved}: {
+  onSaved?: () => void;
   hasProviderDraft: boolean; saved: string;
   agentId: string; agentType?: string; agentName: string; policy: Policy; defaults: Defaults; backends: Backend[]; busy: boolean; mode: string;
   onModeChange: (mode: string) => void; onDraft: (patch: Partial<Defaults>) => void; onSave: (patch: object) => Promise<boolean | undefined>; onRefresh: () => void; preview: ReactNode;
@@ -114,16 +115,17 @@ export default function AgentPipelineEditor({agentId, agentType, agentName, poli
       }
       if (await onSave({enabled_modes: enabled, default_mode: enabled.length ? defaultMode : null})) {
         setProfileDraft(null);
+        onSaved?.();
       } else if (runtimeSaved) setRuntimeError("The agent model profile was saved, but voice settings were not. Your voice edits are retained; retry Save pipeline configuration.");
     } catch (err) { setRuntimeError(`Agent model profile was not saved. Voice edits are retained. ${err instanceof Error ? err.message : "Try again."}`); }
     finally { setSaving(false); }
   }
-  return <div className="agent-pipeline-editor">
+  return <div className="agent-pipeline-editor" aria-busy={saving || busy}>
     <div className="pipeline-editor-toolbar"><div role="tablist" aria-label="Configure mode providers" className="pipeline-tabs">
       {policy.integration_modes.map((item, index, modes) => <button type="button" key={item} role="tab" id={`${id}-${item}`} aria-controls={`${id}-panel`} aria-selected={mode === item} tabIndex={mode === item ? 0 : -1} disabled={busy || saving} onClick={() => { setOpen(null); onModeChange(item); }} onKeyDown={event => {
         const next = event.key === "Home" ? 0 : event.key === "End" ? modes.length - 1 : event.key === "ArrowRight" ? (index + 1) % modes.length : event.key === "ArrowLeft" ? (index + modes.length - 1) % modes.length : -1;
         if (next >= 0) { event.preventDefault(); setOpen(null); onModeChange(modes[next]); document.getElementById(`${id}-${modes[next]}`)?.focus(); }
-      }}>{item === "realtime" ? "Live / Realtime" : "Standard"}</button>)}
+      }}>{item === "realtime" ? "Live / Realtime" : "Standard"}{enabled.includes(item) && defaultMode === item && <svg className="pipeline-default-check" aria-hidden="true" viewBox="0 0 20 20"><path d="m4 10 4 4 8-8" fill="none" stroke="currentColor" strokeWidth="2"/></svg>}</button>)}
     </div><RefreshButton label="Discard pipeline edits and refresh" busy={busy || saving} onClick={() => { setProfileDraft(null); setOpen(null); onRefresh(); }}/></div>
     <fieldset disabled={busy || saving} className="pipeline-editor-content" role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${mode}`}>
       <AgentPipeline ttsIcon={preview} mode={mode} agentName={agentName} stt={defaults.stt_backend} tts={defaults.tts_backend} realtime={defaults.realtime_backend}
@@ -133,6 +135,7 @@ export default function AgentPipelineEditor({agentId, agentType, agentName, poli
     {!enabled.length && <p role="status">Chat-only · No voice modes enabled.</p>}
     {runtimeError && <p role="alert">{runtimeError}</p>}
     {dirty ? <p role="status">Unsaved pipeline changes.</p> : saved && <p role="status">{saved}</p>}
+    {saving && <p role="status">Saving pipeline configuration…</p>}
     <footer className="pipeline-save"><button type="button" className="button-primary" disabled={busy || saving || !!enabled.length && !enabled.includes(defaultMode || "")} onClick={() => void save()}>{saving ? "Saving…" : "Save pipeline configuration"}</button></footer>
     {open && <EntityPopover anchor={open.anchor} title={`${titles[open.kind]} settings`} onClose={() => setOpen(null)}>
       {open.kind === "agent" ? !local ? <p>This agent’s model is managed by its enrolled integration. Model choices are configured there.</p> : <>

@@ -1,3 +1,4 @@
+import {openAgentAction} from "./auth-fixture";
 import { closeAgentDetail } from "./auth-fixture";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -23,13 +24,9 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await page.getByLabel("Appearance").selectOption(theme);
     await closeAgentDetail(page);
     await page.getByRole("button", { name: "Agents", exact: true }).click();
-    await page.getByRole("button", { name: "View agent Household integration" }).click();
-    const editor = page.getByRole("dialog", { name: "Household integration", exact: true });
-    await expect(editor.getByRole("region", { name: "Integration configuration" })).toHaveCount(0);
-    await expect(editor.getByText(/Agent ID:|This route is shared|Registered route/)).toHaveCount(0);
-    await expect(editor.getByRole("region", {name:"Agent voice",exact:true})).toHaveCount(0);
-    await closeAgentDetail(page);
-    await page.getByRole("button", { name: "Runtime settings for Household integration", exact: true }).click();
+    await expect(page.getByRole("heading",{name:"Household integration", level:3, exact:true})).toBeVisible();
+    await expect(page.locator("dialog")).toHaveCount(0);
+    await openAgentAction(page, "Runtime settings for Household integration");
     const diagnostics = page.getByRole("dialog", { name: "Agent runtime settings", exact: true });
     await expect(diagnostics).toHaveClass(/agent-diagnostics-modal/);
     const metadata = diagnostics.getByRole("region", { name: "Integration configuration" });
@@ -47,18 +44,16 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
       await page.screenshot({ path: resolve(artifacts, `integration-metadata-${width}-${theme}.png`) });
     }
     await closeAgentDetail(page);
-    await page.getByRole("button", { name: "View agent Household integration", exact: true }).click();
-    await page.getByRole("button", {name:"Edit agent name"}).click();
+    await page.locator('main li[data-agent-id="fixture-route"]').getByRole("button", {name:"Edit agent name"}).click();
     await page.getByLabel("Agent name", { exact: true }).fill("Renamed household");
     await page.getByRole("button", { name: "Save name", exact: true }).click();
     await expect(page.getByText("Agent name saved.")).toBeVisible();
     await page.reload();
     await closeAgentDetail(page);
     await page.getByRole("button", { name: "Agents", exact: true }).click();
-    await page.getByRole("button", { name: "View agent Renamed household" }).click();
     await expect(page.getByRole("region", { name: "Integration configuration" })).toHaveCount(0);
     await closeAgentDetail(page);
-    await page.getByRole("button", { name: "Runtime settings for Renamed household", exact: true }).click();
+    await openAgentAction(page, "Runtime settings for Renamed household");
     await expect(metadata.getByText(/does not prove connectivity/)).toBeVisible();
   });
 }

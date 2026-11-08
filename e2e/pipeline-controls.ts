@@ -1,3 +1,4 @@
+import {openAgentAction} from "./auth-fixture";
 import { expect, type Locator } from "@playwright/test";
 
 export async function pipelineMode(card: Locator, mode: string) {
@@ -24,4 +25,14 @@ export async function pipelineVoice(card: Locator, kind: "tts" | "realtime", voi
   if (select) await radio.check();
   await expect(radio).toBeChecked();
   await popover.getByRole("button", {name: "Close entity settings"}).click();
+}
+
+/** Successful saves close the modal; explicitly reopen when inspecting persisted state. */
+export async function savePipelineAndReopen(card: Locator) {
+  const dialog = card.locator('xpath=ancestor::dialog');
+  const agentName = await dialog.locator('.modal-body > h3').innerText();
+  await card.getByRole('button', {name:'Save pipeline configuration',exact:true}).click();
+  await expect(dialog).toHaveCount(0);
+  await openAgentAction(card.page(), `Voice pipeline for ${agentName}`);
+  await expect(card).toBeVisible();
 }

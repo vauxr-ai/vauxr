@@ -29,7 +29,6 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await client(server, "ack", { ...secret, credential: delivery.credential, saved: true });
     await page.getByRole("button", {name:"Agents",exact:true}).click();
     await page.getByRole("button", {name: "Refresh agents", exact: true}).click();
-    await page.getByRole("button", { name: "View agent Household companion with a long visible name" }).click();
     let sockets = 0;
     page.on("websocket", () => sockets++);
     await closeAgentDetail(page);
@@ -38,8 +37,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await expect(companion.getByLabel("Conversation agent")).toBeEnabled();
     await companion.getByLabel("Conversation agent").selectOption(`int_${request.request_id}`);
     await companion.getByRole("button", { name: "Collapse voice companion", exact: true }).click();
-    await page.getByRole("button", { name: "View agent Household companion with a long visible name", exact: true }).click();
-    const detail = page.locator("dialog.agent-detail-modal");
+    const detail = page.locator(`main li[data-agent-id="${request.agent_id}"]`);
     await detail.getByRole("button", { name: "Edit agent name", exact: true }).click();
     await detail.getByLabel("Agent name", { exact: true }).fill("Kitchen helper");
     const geometry = await detail.evaluate(element => {
@@ -72,7 +70,6 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await page.getByRole("button", { name: "Agents", exact: true }).click();
     expect(sockets).toBe(1);
     expect(await page.evaluate(() => (window as any).micCalls)).toBe(0);
-    await page.getByRole("button", { name: "View agent Kitchen helper" }).click();
     if (artifacts) await page.screenshot({ path: resolve(artifacts, `companion-${width}-${theme}-saved.png`) });
     await closeAgentDetail(page);
     await page.getByRole("button", { name: "Expand voice companion", exact: true }).click();

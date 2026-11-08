@@ -77,20 +77,9 @@ def attach_local_agents(
                 return web.json_response({"error": "Registered LangChain agent not found"}, status=404)
             path = Path(get_config().data_dir) / "local-agent-models.json"
             if request.method == "DELETE":
-                if agent.builtin:
-                    return web.json_response({"error": "Default bundled agent cannot be removed"}, status=409)
-                from vauxr.speech.store import get_store
+                from vauxr.agents.removal import remove_agent
 
-                store = get_store()
-                if agent.active or agent_id in store.assignments.values():
-                    return web.json_response(
-                        {"error": "Choose another fallback and unassign all devices before removal"},
-                        status=409,
-                    )
-                registry.remove(agent_id)
-                if path.exists():
-                    update_json(path, lambda current: {k: v for k, v in current.items() if k != agent_id})
-                return web.json_response({"removed": True})
+                return await remove_agent(request, agent_id)
             if request.method == "POST":
                 config = validate(body)
                 if agent_id == "vauxr-support":

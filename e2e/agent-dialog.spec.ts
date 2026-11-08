@@ -45,14 +45,13 @@ for (const width of [390, 1366])
         .getByRole("button", { name: "Create agent", exact: true })
         .click();
       await expect(modal).toHaveCount(0);
-      await expect(page.locator("dialog.agent-detail-modal")).toBeVisible();
-      await page.keyboard.press("Escape");
+      await expect(page.getByRole("heading",{name:"Design fixture", level:3, exact:true})).toBeVisible();
+      await expect(page.locator("dialog.agent-detail-modal")).toHaveCount(0);
       await expect(trigger).toBeFocused();
       await page.reload();
       await expect(
-        page.getByRole("button", {
-          name: "View agent Design fixture",
-          exact: true,
+        page.getByRole("heading", {
+          name: "Design fixture", level:3, exact: true,
         }),
       ).toBeVisible();
       await page.screenshot({

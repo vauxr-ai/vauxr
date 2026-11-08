@@ -6,8 +6,13 @@ function Entity({kind, title, detail, onEdit, icon}: {kind: string; title: strin
     {!icon && <span className="pipeline-icon"><svg aria-hidden="true" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       {kind === "device" ? <><rect x="8" y="3" width="16" height="26" rx="5"/><path d="M13 7h6M14 25h4M12 14v4m4-7v10m4-7v4"/></> : kind === "agent" ? <><path d="m16 3 12 7v13l-12 7-12-7V10Z"/><path d="m4 10 12 7 12-7M16 17v13M10 7l12 7"/><circle cx="16" cy="10" r="2"/></> : kind === "stt" ? <><rect x="3" y="4" width="26" height="24" rx="7"/><path d="M9 10v8m-3-5v2m6-3v4m5-5h7m-7 5h5M9 23h14"/></> : kind === "tts" ? <><path d="M16 6 8 12H3v8h5l8 6ZM21 11c3 3 3 7 0 10m4-14c6 5 6 13 0 18"/></> : <><rect x="3" y="5" width="26" height="22" rx="7"/><path d="M8 14v4m4-8v12m4-9v6m4-10v14m4-9v4"/></>}
     </svg></span>}
-    <strong>{title}</strong><small>{detail || "Not configured"}</small></>;
-  return <div className="pipeline-entity">{icon}{onEdit ? <button type="button" className="pipeline-entity-button" onClick={onEdit} aria-label={`Edit ${title}`} aria-haspopup="dialog">{content}</button> : content}{kind === "device" && <details className="pipeline-device-info"><summary className="pipeline-edit" aria-label="Voice Device details">Details</summary><small>Set microphone, speaker and voice overrides for individual devices in Devices.</small></details>}
+    </>;
+  const label = kind === "agent" ? title : detail || "Not configured";
+  return <div className="pipeline-entity">{icon || content}
+    {kind !== "agent" && <strong>{title}</strong>}
+    {onEdit ? <button type="button" className="pipeline-entity-label" onClick={onEdit} aria-label={`Edit ${title}`} aria-haspopup="dialog">{label}</button> : kind === "agent" ? <strong>{title}</strong> : <small>{label}</small>}
+    {kind === "agent" && <small>Agent</small>}
+    {kind === "device" && <details className="pipeline-device-info"><summary className="pipeline-edit" aria-label="Voice Device details">Details</summary><small>Set microphone, speaker and voice overrides for individual devices in Devices.</small></details>}
   </div>;
 }
 export type PipelineGraphProps = {

@@ -1,4 +1,4 @@
-import { ownerFetch, jsonResponse } from "../auth/api";
+import { ownerFetch } from "../auth/api";
 import SupportSettings from "./SupportSettings";
 import IntegrationMetadata from "./IntegrationMetadata";
 import AddAgent from "./AddAgent";
@@ -20,7 +20,10 @@ export default function AgentsPanel({
   onSelection?: (selection: { id: string; name: string } | null) => void;
 }) {
   const api = useAgents();
-  const returnFocus = useRef<HTMLButtonElement>(null);
+  const deleteReturnFocus = useRef<HTMLButtonElement>(null);
+  const [deleteId,setDeleteId]=useState("");
+  const [deleteError,setDeleteError]=useState("");
+  const [deleting,setDeleting]=useState(false);
   const voiceReturnFocus = useRef<HTMLButtonElement>(null);
   const [voiceId, setVoiceId] = useState("");
   const avatarReturnFocus = useRef<HTMLButtonElement>(null);
@@ -40,6 +43,7 @@ export default function AgentsPanel({
   const [saved, setSaved] = useState("");
   const voiceAgent = agents.find(agent => agent.id === voiceId);
   const diagnostics = agents.find(agent => agent.id === diagnosticsId);
+  const deletingAgent = agents.find(agent=>agent.id === deleteId);
   const selected = agents.find((agent) => agent.id === selectedId);
   useEffect(() => {
     onContext?.(selected?.name || "Agents");
@@ -123,9 +127,8 @@ export default function AgentsPanel({
         <AddAgent
           onCreated={async (created) => {
             await refresh();
-            (returnFocus as {current: HTMLButtonElement | null}).current = document.querySelector(".agent-create-action > button");
             setEditingName(false);
-            setSelectedId(created.id);
+            setSelectedId("");
             setNameDraft(created.name);
           }}
         />
@@ -141,7 +144,7 @@ export default function AgentsPanel({
           </div>
           <RefreshButton label="Refresh agents" busy={loading || busy} onClick={refresh} />
         </div>
-        {error && !selectedId && !diagnosticsId && !voiceId && (
+        {error && !diagnosticsId && !voiceId && (
           <p role="alert" className="p-5 text-red-300">
             {error}
           </p>
@@ -162,24 +165,29 @@ export default function AgentsPanel({
         ) : (
           <ul className="agent-list">
             {agents.map((agent) => (
-              <li key={agent.id}>
-                <AgentAvatar agentId={agent.id} revision={avatarRevision} />
+              <li key={agent.id} data-agent-id={agent.id}>
+                <button className="agent-avatar-edit" aria-label={`Edit avatar for ${agent.name}`} title="Edit agent avatar" onClick={event => {
+                  (avatarReturnFocus as {current:HTMLButtonElement|null}).current=event.currentTarget;
+                  setSelectedId(agent.id); setAvatarError(""); setAvatarOpen(true);
+                }}><AgentAvatar agentId={agent.id} revision={avatarRevision}/><span className="avatar-edit-badge" aria-hidden="true">✎</span></button>
                 <div className="agent-name">
-                  <h3>
-                    <button
-                      className="agent-open"
-                      aria-label={`View agent ${agent.name}`}
-                      onClick={(event) => {
-                        (returnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget;
-                        setEditingName(false); setAvatarError("");
-                        setSelectedId(agent.id);
-                        setNameDraft(agent.name);
-                        setSaved("");
-                      }}
-                    >
-                      {agent.name}
-                    </button>
-                  </h3>
+                  <div className="agent-inline-title">
+                    {editingName && selectedId === agent.id ? <form id="rename-agent" onSubmit={async event => {
+            event.preventDefault(); if (!selected) return; setBusy(true); setError(""); setSaved("");
+            try {const renamed = await api.renameAgent(selected.id, nameDraft.trim());
+              setAgents(current => current.map(agent => agent.id === renamed.id ? {...agent, name:renamed.name} : agent));
+              setNameDraft(renamed.name); setEditingName(false); setSaved("Agent name saved.");
+              window.dispatchEvent(new Event("agent-route-changed"));
+            } catch (failure) {setError(failure instanceof Error ? failure.message : "Unable to save the agent name.");}
+            finally {setBusy(false);}
+          }}><label className="sr-only" htmlFor="agent-name-edit">Agent name</label>
+            <input id="agent-name-edit" value={nameDraft} maxLength={120} required disabled={busy} autoFocus
+              onChange={event => setNameDraft(event.target.value)} />
+            <div className="name-edit-actions"><button type="submit" disabled={busy || !nameDraft.trim()}>Save name</button>
+            <button type="button" disabled={busy} onClick={() => {setNameDraft(selected?.name || ""); setEditingName(false); setError("");}}>Cancel name edit</button></div>
+          </form> : <h3 aria-label={agent.name}>{agent.name}<button type="button" aria-label="Edit agent name" title="Edit agent name"
+            onClick={() => {setSelectedId(agent.id); setNameDraft(agent.name); setEditingName(true); setSaved(""); setError("");}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L5 15Z" /></svg></button></h3>}
+                  </div>
                   <p>
                     {agent.type === "langchain"
                       ? "LangChain · registered"
@@ -206,58 +214,39 @@ export default function AgentsPanel({
                 >
                   {agent.active ? "Default" : "Set as default"}
                 </button>
+                <details className="agent-actions"><summary aria-label={`Actions for ${agent.name}`}>⋯</summary><div className="agent-actions-list">
                 <button className="agent-route-action" aria-label={`Voice pipeline for ${agent.name}`}
                   onClick={event => {(voiceReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setVoiceId(agent.id);}}>Voice pipeline</button>
                 <button className="agent-route-action" aria-label={`Runtime settings for ${agent.name}`} title="Agent runtime settings"
                   onClick={event => { (diagnosticsReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setError(""); setDiagnosticsId(agent.id); }}>Runtime settings</button>
+                <button type="button" disabled={agent.active || agent.builtin || busy} title={agent.active ? "Set another agent as default first" : agent.builtin ? "Bundled agent cannot be deleted" : "Delete agent"} onClick={event => {
+                  (deleteReturnFocus as {current:HTMLButtonElement|null}).current=event.currentTarget; setDeleteId(agent.id); setDeleteError("");
+                }}>Delete agent</button>
+                {agent.active && <small>Set another agent as default before deleting.</small>}
+                {!agent.active && agent.builtin && <small>Bundled agent cannot be deleted.</small>}
+                </div></details>
               </li>
             ))}
           </ul>
         )}
       </section>
-      {selectedId && (
-        <Modal title={selected?.name || "Agent detail"} className="agent-detail-modal agent-detail agent-identity-modal"
-          returnFocus={returnFocus} onClose={() => {setSelectedId(""); setEditingName(false);}}
-          titleContent={editingName ? <form id="rename-agent" onSubmit={async event => {
-            event.preventDefault(); if (!selected) return; setBusy(true); setError(""); setSaved("");
-            try {const renamed = await api.renameAgent(selected.id, nameDraft.trim());
-              setAgents(current => current.map(agent => agent.id === renamed.id ? {...agent, name:renamed.name} : agent));
-              setNameDraft(renamed.name); setEditingName(false); setSaved("Agent name saved.");
-              window.dispatchEvent(new Event("agent-route-changed"));
-            } catch (failure) {setError(failure instanceof Error ? failure.message : "Unable to save the agent name.");}
-            finally {setBusy(false);}
-          }}><label className="sr-only" htmlFor="agent-name-edit">Agent name</label>
-            <input id="agent-name-edit" value={nameDraft} maxLength={120} required disabled={busy} autoFocus
-              onChange={event => setNameDraft(event.target.value)} />
-            <div className="name-edit-actions"><button type="submit" disabled={busy || !nameDraft.trim()}>Save name</button>
-            <button type="button" disabled={busy} onClick={() => {setNameDraft(selected?.name || ""); setEditingName(false); setError("");}}>Cancel name edit</button></div>
-          </form> : undefined}
-          headerAction={!editingName && selected ? <button type="button" aria-label="Edit agent name" title="Edit agent name"
-            onClick={() => {setNameDraft(selected.name); setEditingName(true); setSaved("");}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L5 15Z" /></svg></button> : undefined}>
-          {error && <p role="alert">{error}</p>}
-          {saved && <p role="status">{saved}</p>}
-          {selected ? (
-            <>
-              <div className="agent-profile">
-                <button ref={avatarReturnFocus} className="agent-avatar-edit" aria-label="Edit agent avatar" title="Edit agent avatar"
-                  onClick={() => {setAvatarError(""); setAvatarOpen(true);}}>
-                  <AgentAvatar agentId={selected.id} revision={avatarRevision} />
-                  <span aria-hidden="true" className="avatar-edit-badge">✎</span>
-                </button>
-              </div>
-
-            </>
-          ) : (
-            <p role="status">
-              This agent is no longer available. Refresh the agent list.
-            </p>
-          )}
-        </Modal>
-      )}
+      {saved && <p role="status">{saved}</p>}
+      {deletingAgent && <Modal title="Delete agent" returnFocus={deleteReturnFocus} onClose={()=>{if(!deleting)setDeleteId("");}}>
+        <p>Delete <strong>{deletingAgent.name}</strong>? Assigned devices will use the default agent.</p>
+        {deleteError && <p role="alert">{deleteError}</p>}
+        {deleting && <p role="status">Deleting agent…</p>}
+        <button type="button" disabled={deleting} onClick={()=>setDeleteId("")}>Cancel</button>
+        <button type="button" className="button-primary" disabled={deleting} onClick={async()=>{
+          setDeleting(true);setDeleteError("");
+          try { await api.deleteAgent(deletingAgent.id); await refresh(); setDeleteId("");setSelectedId("");setDiagnosticsId(""); window.dispatchEvent(new Event("agent-route-changed")); document.querySelector<HTMLButtonElement>('.agent-create-action > button')?.focus(); }
+          catch(err){setDeleteError(err instanceof Error?err.message:"Unable to delete agent. Refresh and retry.");}
+          finally {setDeleting(false);}
+        }}>{deleting?"Deleting…":"Delete agent"}</button>
+      </Modal>}
       {voiceAgent && <Modal title="Voice pipeline" className="agent-detail-modal agent-detail agent-voice-modal"
         returnFocus={voiceReturnFocus} onClose={() => setVoiceId("")}>
         <h3>{voiceAgent.name}</h3>
-        <SpeechSettings key={`voice-${voiceAgent.id}`} agentId={voiceAgent.id} agentName={voiceAgent.name} agentType={voiceAgent.type}
+        <SpeechSettings onSaved={() => setVoiceId("")} key={`voice-${voiceAgent.id}`} agentId={voiceAgent.id} agentName={voiceAgent.name} agentType={voiceAgent.type}
           browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential} />
       </Modal>}
       {avatarOpen && selected && <Modal title="Edit agent avatar" className="avatar-editor-modal" returnFocus={avatarReturnFocus}
@@ -309,50 +298,7 @@ export default function AgentsPanel({
           ready; check the agent’s voice pipeline and device diagnostics.
         </p>
         <IntegrationMetadata metadata={diagnostics.integration_metadata} />
-        {diagnostics.type === "support" && <SupportSettings />}
-        {(diagnostics.type === "langgraph" ||
-          diagnostics.type === "langchain") && (
-          <SupportSettings
-            key={`runtime-${diagnostics.id}`}
-            agentId={diagnostics.id}
-          />
-        )}
-        {(diagnostics.type === "langgraph" ||
-          diagnostics.type === "langchain") &&
-          !diagnostics.builtin &&
-          diagnostics.id !== "vauxr-support" && (
-            <button
-              disabled={busy || diagnostics.active}
-              onClick={async () => {
-                setBusy(true);
-                setError("");
-                try {
-                  const response = await ownerFetch(
-                    `/api/local-agents/${encodeURIComponent(diagnostics.id)}`,
-                    { method: "DELETE" },
-                  );
-                  if (response.status === 409)
-                    throw new Error(
-                      "Choose another fallback and unassign all devices before removal.",
-                    );
-                  await jsonResponse(response);
-                  setDiagnosticsId("");
-                  await refresh();
-                  window.dispatchEvent(new Event("agent-route-changed"));
-                } catch (error) {
-                  setError(
-                    error instanceof Error
-                      ? error.message
-                      : "Removal unavailable; refresh before retrying.",
-                  );
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              Remove agent
-            </button>
-          )}
+        {diagnostics.type === "support" ? <SupportSettings /> : diagnostics.type === "langchain" ? <SupportSettings agentId={diagnostics.id} /> : null}
       </Modal>}
       <p className="text-sm text-zinc-400">
         Connect external agents in Settings → Apps &amp; Integrations.

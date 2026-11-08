@@ -320,14 +320,11 @@ test("agent names persist independently of shared routing and credentials", asyn
     .filter({ hasText: "Household helper" })
     .getByText("Set as default", { exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "View agent Household helper" })
-    .click();
-  const detail = page.locator("dialog.agent-detail-modal");
+  const detail = page.locator(`main li[data-agent-id="${request.agent_id}"]`);
   await detail.getByRole("button", {name:"Edit agent name"}).click();
   await detail.getByLabel("Agent name").fill("Kitchen guide");
   await detail.getByRole("button", { name: "Save name" }).click();
-  await expect(detail.getByRole("status").filter({ hasText: "Agent name saved." })).toHaveText("Agent name saved.");
+  await expect(page.getByRole("status").filter({ hasText: "Agent name saved." })).toHaveText("Agent name saved.");
   await expect(page.locator(".companion-header h2")).toHaveText(
     "Kitchen guide",
   );
@@ -403,8 +400,7 @@ test("agent names persist independently of shared routing and credentials", asyn
     await server.restart();
     await page.reload();
     await expect(page.getByRole("main")).toBeVisible();
-    await page.getByRole("button", { name: "View agent Remote guide" }).click();
-    await expect(detail.getByRole("heading", {name:"Remote guide"})).toBeVisible();
+    await expect(page.getByRole("heading", {name:"Remote guide", level:3, exact:true})).toBeVisible();
   } finally {
     speaker.ws.close();
   }
