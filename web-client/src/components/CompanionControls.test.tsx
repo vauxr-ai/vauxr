@@ -13,8 +13,6 @@ function setup() {
     const body = JSON.parse(String(init?.body || "{}"));
     const response = path.endsWith("/speech") ? { policy: { agent_id: "agent" } }
       : path.endsWith("/context") ? { ...body, revision: `revision-${++revision}` }
-      : path.endsWith("/propose") ? { proposal_id: "proposal", revision: body.revision,
-          resource_id: "agent", old_value: "Household", new_value: body.new_value }
       : {};
     return new Response(JSON.stringify(response), { status: 200 });
   });
@@ -26,24 +24,19 @@ const props = { browserId: "B1", credential, epoch: 1, route: "agents",
 
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
-test("exact owner proposal preview, confirmation and navigation invalidation", async () => {
+test("saves display name directly with browser and CSRF proof, without confirmation", async () => {
   const fetcher = setup(); const user = userEvent.setup();
   const mounted = render(<CompanionControls {...props} />);
-  await waitFor(() => expect(screen.getByLabelText("Proposed display name")).toBeEnabled());
-  await user.type(screen.getByLabelText("Proposed display name"), "Kitchen");
-  await user.click(screen.getByText("Review name change"));
-  await screen.findByRole("group", { name: "Confirm display name change" });
-  expect(screen.getByText("Household", { selector: "strong" })).toBeVisible();
-  expect(screen.getByText("Kitchen", { selector: "strong" })).toBeVisible();
-  expect(fetcher.mock.calls.filter(([path]) => path.endsWith("/confirm"))).toHaveLength(0);
-  mounted.rerender(<CompanionControls {...props} route="settings" selection={null} />);
+  await waitFor(() => expect(screen.getByLabelText("Display name")).toBeEnabled());
+  await user.type(screen.getByLabelText("Display name"), "Kitchen");
+  await user.click(screen.getByText("Save display name"));
+  await waitFor(() => expect(fetcher.mock.calls.some(([path]) => path === "/api/agents/agent")).toBe(true));
+  const call = fetcher.mock.calls.find(([path]) => path === "/api/agents/agent")!;
+  expect(call[1]?.method).toBe("PATCH");
+  expect(JSON.parse(String(call[1]?.body))).toEqual({ name: "Kitchen" });
   expect(screen.queryByRole("group")).not.toBeInTheDocument();
-  mounted.rerender(<CompanionControls {...props} />);
-  await waitFor(() => expect(screen.getByLabelText("Proposed display name")).toBeEnabled());
-  await user.type(screen.getByLabelText("Proposed display name"), "Kitchen");
-  await user.click(screen.getByText("Review name change"));
-  await user.click(await screen.findByRole("button", { name: "Confirm display name change" }));
-  await waitFor(() => expect(fetcher.mock.calls.some(([path]) => path.endsWith("/confirm"))).toBe(true));
+  mounted.rerender(<CompanionControls {...props} route="settings" selection={null} />);
+  expect(screen.queryByLabelText("Display name")).not.toBeInTheDocument();
   for (const [path, init] of fetcher.mock.calls.filter(([path]) => path.includes("/companion/"))) {
     const headers = new Headers(init?.headers);
     expect(headers.get("X-Vauxr-Browser")).toBe("browser-private");
@@ -89,5 +82,5 @@ test("sends real text operation with browser proof, shows response and never req
   expect(new Headers(call[1]?.headers).get("X-Vauxr-Browser")).toBe("browser-private");
   expect(getUserMedia).not.toHaveBeenCalled();
   expect(props.onSwitch).not.toHaveBeenCalled();
-  expect(screen.getByText(/You enter this proposal; integration-generated UI proposals are not connected/)).toBeVisible();
+  expect(screen.queryByText(/confirm/i)).not.toBeInTheDocument();
 });

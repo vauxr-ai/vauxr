@@ -1,4 +1,4 @@
-"""Owner confirmation and exact browser credential boundary."""
+"""Owner operations with the existing exact browser credential boundary."""
 from __future__ import annotations
 
 import asyncio
@@ -68,10 +68,6 @@ def attach_companion(app: web.Application, boundary: Callable[[Handler], Handler
                 except ChatError as error:
                     return web.json_response({"error": str(error)}, status=409)
                 result = {"request_id": body["request_id"], "text": reply}
-            elif action == "propose":
-                result = companion.propose(browser, body)
-            elif action == "confirm":
-                result = companion.confirm(browser, body)
             else:
                 raise web.HTTPNotFound()
             return web.json_response(result, headers={"Cache-Control": "no-store"})

@@ -4,7 +4,7 @@ import { test, expect, login, requestIntegration, client } from "./auth-fixture"
 
 const artifacts = process.env.VAUXR_COMPANION_ARTIFACT_DIR;
 for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
-  test(`bounded companion owner confirmation ${width} ${theme}`, async ({ page, server }) => {
+  test(`direct companion settings ${width} ${theme}`, async ({ page, server }) => {
     test.setTimeout(60000);
     await page.setViewportSize({ width, height: 844 });
     await page.addInitScript(() => {
@@ -32,14 +32,10 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await page.getByRole("button", { name: "Connect browser", exact: true }).click();
     const companion = page.locator("#voice-companion");
     await expect(companion.getByLabel("Conversation agent")).toBeEnabled();
-    await expect(companion.getByLabel("Proposed display name")).toBeEnabled();
+    await expect(companion.getByLabel("Display name")).toBeEnabled();
     await companion.getByLabel("Conversation agent").selectOption(`int_${request.request_id}`);
-    await expect(companion.getByLabel("Proposed display name")).toBeEnabled();
-    await companion.getByLabel("Proposed display name").fill("Kitchen helper");
-    await companion.getByRole("button", { name: "Review name change" }).click();
-    const confirmation = companion.getByRole("group", { name: "Confirm display name change" });
-    await expect(confirmation).toContainText("Household companion with a long visible name");
-    await expect(confirmation).toContainText("Kitchen helper");
+    await expect(companion.getByLabel("Display name")).toBeEnabled();
+    await companion.getByLabel("Display name").fill("Kitchen helper");
     const geometry = await companion.evaluate(element => {
       const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
       return { left: rect.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft),
@@ -52,7 +48,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
       expect(field.left).toBeGreaterThanOrEqual(geometry.left - 1);
       expect(field.right).toBeLessThanOrEqual(geometry.right + 1);
     }
-    const button = confirmation.getByRole("button", { name: "Confirm display name change" });
+    const button = companion.getByRole("button", { name: "Save display name" });
     await button.scrollIntoViewIfNeeded();
     expect(await button.evaluate(element => {
       const rect = element.getBoundingClientRect();
@@ -60,7 +56,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     })).toBe(true);
     if (artifacts) {
       mkdirSync(artifacts, { recursive: true });
-      await page.screenshot({ path: resolve(artifacts, `companion-${width}-${theme}-confirmation.png`) });
+      await page.screenshot({ path: resolve(artifacts, `companion-${width}-${theme}-edit.png`) });
     }
     await button.click();
     await expect(companion.getByText("Selected agent: Kitchen helper · Display name")).toBeVisible();
@@ -74,7 +70,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     if (artifacts) await page.screenshot({ path: resolve(artifacts, `companion-${width}-${theme}-saved.png`) });
     await page.getByRole("button", { name: "Disconnect", exact: true }).click();
     await page.getByRole("button", { name: "Connect browser", exact: true }).click();
-    await expect(companion.getByLabel("Proposed display name")).toBeEnabled();
+    await expect(companion.getByLabel("Display name")).toBeEnabled();
     await expect.poll(() => sockets).toBe(2);
     expect(await page.evaluate(() => (window as any).micCalls)).toBe(0);
   });
