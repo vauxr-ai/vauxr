@@ -231,14 +231,21 @@ export default function AgentsPanel({
                 </button>
                 <details className="agent-actions"><summary aria-label={`Actions for ${agent.name}`}>⋯</summary><div className="agent-actions-list">
                 <button className="agent-route-action" aria-label={`Voice pipeline for ${agent.name}`}
-                  onClick={event => {(voiceReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setVoiceId(agent.id);}}>Voice pipeline</button>
+                  onClick={event => {(voiceReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setVoiceId(agent.id);}}><Icon name="agents" size={20}/>Voice pipeline</button>
                 <button className="agent-route-action" aria-label={`Runtime settings for ${agent.name}`} title="Agent runtime settings"
-                  onClick={event => { (diagnosticsReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setError(""); setDiagnosticsId(agent.id); }}>Runtime settings</button>
-                <button type="button" disabled={agent.active || agent.builtin || busy} title={agent.active ? "Set another agent as default first" : agent.builtin ? "Bundled agent cannot be deleted" : "Delete agent"} onClick={event => {
-                  (deleteReturnFocus as {current:HTMLButtonElement|null}).current=event.currentTarget; setDeleteId(agent.id); setDeleteError("");
-                }}>Delete agent</button>
-                {agent.active && <small>Set another agent as default before deleting.</small>}
-                {!agent.active && agent.builtin && <small>Bundled agent cannot be deleted.</small>}
+                  onClick={event => { (diagnosticsReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setError(""); setDiagnosticsId(agent.id); }}><Icon name="settings" size={20}/>Runtime settings</button>
+                <span className="agent-action-tooltip-trigger"
+                  tabIndex={agent.active || agent.builtin ? 0 : undefined}
+                  aria-label={agent.active || agent.builtin ? `Delete ${agent.name} unavailable` : undefined}
+                  aria-describedby={agent.active || agent.builtin ? `delete-reason-${agent.id}` : undefined}
+                  onPointerDown={event => { if (agent.active || agent.builtin) event.currentTarget.focus(); }}>
+                  <button type="button" className="agent-delete-action" disabled={agent.active || agent.builtin || busy} onClick={event => {
+                    (deleteReturnFocus as {current:HTMLButtonElement|null}).current=event.currentTarget; setDeleteId(agent.id); setDeleteError("");
+                  }}><Icon name="trash" size={20}/>Delete agent</button>
+                  {(agent.active || agent.builtin) && <span role="tooltip" className="agent-action-tooltip" id={`delete-reason-${agent.id}`}>
+                    {agent.active ? "Set another agent as default first" : "Bundled agent cannot be deleted"}
+                  </span>}
+                </span>
                 </div></details>
               </li>
             ))}
