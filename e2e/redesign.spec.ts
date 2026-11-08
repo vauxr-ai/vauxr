@@ -193,6 +193,27 @@ test("B2 themes, reserved desktop companion, phone focus and authenticated scree
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
 
+test("phone access panel wraps long device identities without horizontal scrolling", async ({
+  page,
+  server,
+}) => {
+  await login(page, server);
+  const deviceId = "device_" + "0123456789abcdef".repeat(4);
+  await page.route("**/api/devices", (route) => route.fulfill({
+    json: [{ id: deviceId, name: "Living room speaker", state: "connected" }],
+  }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const panel = page.locator(".auth-panel").filter({
+    has: page.getByRole("heading", { name: "Pairing and access", exact: true }),
+  });
+  await expect(panel.getByText(deviceId, { exact: false })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "recover device", exact: true })).toBeVisible();
+  for (const region of [page.getByRole("main"), panel]) {
+    expect(await region.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  }
+});
+
 test("Settings manages real webhook configuration without voice", async ({
   page,
   server,
