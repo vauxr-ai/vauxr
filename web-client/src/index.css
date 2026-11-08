@@ -949,3 +949,4 @@ button.refresh-button:hover:not(:disabled) { color:var(--accent); background:var
 .avatar-dropzone:focus-within { outline:2px solid var(--accent); outline-offset:3px; }
 
 @media(min-width:761px){.agent-identity-modal { width:min(600px,calc(100% - 48px)); }}
+.space-y-5 > dialog.agent-identity-modal[open] { width:min(600px,calc(100% - 32px)); height:auto; max-height:calc(100dvh - 32px); margin:auto; border:1px solid var(--line); border-radius:24px; }
