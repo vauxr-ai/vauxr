@@ -579,11 +579,13 @@ function AgentModePolicy({
     >
       <fieldset disabled={busy} className="speech-fields">
         <legend>Enabled voice modes</legend>
-        {policy.integration_modes.map((mode) => (
+        {["standard", "realtime"].map((mode) => (
           <label key={mode} className="speech-check">
             <input
               type="checkbox"
-              checked={enabled.includes(mode)}
+              aria-label={mode === "realtime" ? "Enable Live" : "Enable Standard"}
+              checked={policy.integration_modes.includes(mode) && enabled.includes(mode)}
+              disabled={!policy.integration_modes.includes(mode)}
               onChange={(event) => {
                 const next = event.target.checked ? [...enabled, mode] : enabled.filter(item => item !== mode);
                 setEnabled(next);
@@ -592,6 +594,7 @@ function AgentModePolicy({
               }}
             />{" "}
             {mode === "realtime" ? "Enable Live" : "Enable Standard"}
+            {!policy.integration_modes.includes(mode) && <span> (unavailable for this agent)</span>}
           </label>
         ))}
         <SpeechSelect

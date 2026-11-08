@@ -43,7 +43,7 @@ async def test_owner_catalog_and_download_boundary(monkeypatch, tmp_path):
             response = await client.get("/api/plugins", headers=headers)
             assert response.status == 200
             entries = await response.json()
-            assert [p["id"] for p in entries] == ["support", "openclaw"]
+            assert [p["id"] for p in entries] == ["support", "openclaw", "langgraph"]
             archive = await client.get(entries[1]["download"], headers=headers)
             assert archive.status == 200
             assert await archive.read() == plugins.package()

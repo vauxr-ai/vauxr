@@ -87,7 +87,10 @@ async def run_chat(
     listener = {"on_delta": delta, "on_end": end, "on_error": error}
     try:
         async with asyncio.timeout(120):
-            if agent.type == "support":
+            if agent.type == "langgraph":
+                from vauxr.agents.langgraph import answer
+                response = await answer(agent.id, device_id, text)
+            elif agent.type == "support":
                 from vauxr.agents.support import answer
                 response = await answer(device_id, text)
             elif agent.type == "openclaw-direct":

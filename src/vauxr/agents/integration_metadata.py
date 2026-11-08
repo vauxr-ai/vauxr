@@ -6,16 +6,16 @@ from vauxr.agents.registry import Agent
 
 
 class IntegrationMetadata(TypedDict):
-    framework: Literal["openclaw", "support"]
-    configuration: Literal["enrolled", "operator-managed", "registered", "builtin"]
+    framework: Literal["openclaw", "support", "langgraph"]
+    configuration: Literal["enrolled", "operator-managed", "registered", "builtin", "local"]
 
 
 def public_metadata(agent: Agent) -> IntegrationMetadata:
     """Describe configuration provenance without inferring connection health."""
     return {
-        "framework": "support" if agent.type == "support" else "openclaw",
+        "framework": agent.type if agent.type in ("support", "langgraph") else "openclaw",
         "configuration": (
-            "builtin" if agent.type == "support" else "operator-managed" if agent.type == "openclaw-direct"
+            "local" if agent.type == "langgraph" else "builtin" if agent.type == "support" else "operator-managed" if agent.type == "openclaw-direct"
             else "enrolled" if agent.integration else "registered"
         ),
     }

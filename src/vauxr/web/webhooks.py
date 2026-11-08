@@ -246,3 +246,23 @@ def public_dict(hook: Webhook) -> dict[str, Any]:
         "has_authorization": bool(hook.authorization),
         "has_body": bool(hook.body),
     }
+
+
+async def execute_named(webhook_id: str, device_id: str) -> dict[str, object]:
+    """Execute only a server-configured action; never expose its URL, auth or response body."""
+    import aiohttp
+
+    hook = get(webhook_id)
+    if hook is None:
+        return {"error": "Household action unavailable; configure named webhooks in Settings"}
+    headers = {"Content-Type": "application/json"}
+    if hook.authorization:
+        headers["Authorization"] = hook.authorization
+    payload = hook.body if hook.body else {"type":"vauxr.agent_action", "device_id":device_id}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5), trust_env=False) as session:
+            async with session.post(hook.url, json=payload, headers=headers, allow_redirects=False) as response:
+                return {"delivered":200 <= response.status < 300,"http_status":response.status,
+                        "external_state_verified":False}
+    except (aiohttp.ClientError, TimeoutError):
+        return {"error":"Delivery outcome uncertain; check external action state before retrying"}

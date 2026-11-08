@@ -129,7 +129,7 @@ class AgentServer:
         active = agent_registry.get_active()
         if active is None:
             return False
-        if active.type in ("openclaw-direct", "support"):
+        if active.type in ("openclaw-direct", "support", "langgraph"):
             return True
         conn = self._connections.get(active.id)
         return conn is not None and not conn.ws.closed and current(conn.principal)
@@ -141,7 +141,7 @@ class AgentServer:
         if active is None:
             log.warning("No active agent — dropping transcript")
             return False
-        if active.type == "support":
+        if active.type in ("support", "langgraph"):
             from vauxr.agents.support import answer
 
             target = listener or self._response_listeners.get(device_id)
@@ -150,7 +150,11 @@ class AgentServer:
 
             async def respond() -> None:
                 try:
-                    reply = await answer(device_id, text)
+                    if active.type == "langgraph":
+                        from vauxr.agents.langgraph import answer as graph_answer
+                        reply = await graph_answer(active.id, device_id, text)
+                    else:
+                        reply = await answer(device_id, text)
                     selected = agent_registry.get_for_device(device_id)
                     if (selected is not None and selected.id == active.id
                             and self._response_listeners.get(device_id) is target):
