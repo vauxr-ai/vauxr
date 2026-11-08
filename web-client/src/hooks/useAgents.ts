@@ -4,12 +4,6 @@ import { useCallback } from "react";
 export interface IntegrationMetadata {
   framework: "openclaw";
   configuration: "enrolled" | "operator-managed" | "registered";
-  capabilities: {
-    id: "ui.context.read" | "ui.agent.name.propose";
-    supported: boolean;
-    available: boolean;
-    reason: "transport_unavailable";
-  }[];
 }
 
 export interface ApiAgent {

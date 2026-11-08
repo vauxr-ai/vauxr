@@ -1,4 +1,4 @@
-import AgentCapabilities from "./AgentCapabilities";
+import IntegrationMetadata from "./IntegrationMetadata";
 import IntegrationEnrollment from "./IntegrationEnrollment";
 import { useEffect, useState } from "react";
 import { useAgents, type ApiAgent } from "../hooks/useAgents";
@@ -159,8 +159,8 @@ export default function AgentsPanel({
               <p>
                 Agent ID: <code>{selected.id}</code>
               </p>
-              <p>{selected.active ? "Fallback for unassigned devices only. Explicit device assignments and your independent companion selection are unchanged." : "Inactive as the shared fallback. Explicit assignments and integration permissions are separate."} Route activation does not prove the integration is online or ready; check effective voice configuration below and device diagnostics.</p>
-              <AgentCapabilities metadata={selected.integration_metadata} />
+              <p>{selected.active ? "Fallback for unassigned devices only. Explicit device assignments and your independent companion selection are unchanged." : "Inactive as the shared fallback. Explicit device assignments remain separate."} Route activation does not prove the integration is online or ready; check effective voice configuration below and device diagnostics.</p>
+              <IntegrationMetadata metadata={selected.integration_metadata} />
               <SpeechSettings key={selected.id} agentId={selected.id} />
               <form
                 onSubmit={async (event) => {
