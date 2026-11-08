@@ -77,9 +77,9 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
     deviceAgent.ws.close();
     expect((await native(server, "/api/speech", undefined, device.device_token)).status).toBe(403);
     await page.getByText("Refresh agents", { exact: true }).click();
-    const route = page.locator("div").filter({ hasText: /^Synthetic OpenClaw — openclaw — Inactive route/ }).last();
+    const route = page.locator("li").filter({ hasText: "Synthetic OpenClaw" });
     await route.getByRole("button", { name: "Activate", exact: true }).click();
-    await expect(page.getByText(/Synthetic OpenClaw — openclaw — Active route/)).toBeVisible();
+    await expect(route.getByText("Active route", { exact: true })).toBeVisible();
     // PR58 settings run against the actual connected device projection and real speech API.
     await page.getByRole("button", { name: "Devices", exact: true }).click();
     await page.getByText(device.device_id, { exact: true }).first().click();
@@ -90,7 +90,7 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
     await speech.getByRole("button", { name: "Reset to defaults" }).click();
     await expect(speech.getByLabel("TTS backend")).toHaveValue("");
     // Owner lifecycle is public metadata only; native client alone delivers and saves the replacement.
-    await page.getByRole("button", { name: "Connection", exact: true }).click();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByText("Refresh pairing and identities").click();
     const access = page.locator("div").filter({ hasText: `Synthetic OpenClaw — ${request.agent_id}` })
       .filter({ has: page.getByRole("button", { name: "rotate integration", exact: true }) }).last();

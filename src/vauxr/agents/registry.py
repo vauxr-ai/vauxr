@@ -238,6 +238,32 @@ def activate(agent_id: str) -> bool:
     return _active_agent == agent_id
 
 
+def rename(agent_id: str, name: str) -> bool:
+    """Persist only the display name, retaining identity, credentials and selection."""
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
+        raise ValueError("name must contain 1 to 120 characters")
+    name = name.strip()
+    if any(ord(character) < 32 or ord(character) == 127 for character in name):
+        raise ValueError("name must not contain control characters")
+    if get_by_id(agent_id) is None:
+        return False
+    renamed = False
+
+    def change(data: dict) -> dict:
+        nonlocal renamed
+        agents, active = _decode(data, _path())
+        target = next((agent for agent in agents if agent.id == agent_id), None)
+        if target is None or not _valid(target):
+            return data
+        renamed = True
+        return _encode([
+            replace(agent, name=name) if agent.id == agent_id else agent for agent in agents
+        ], active)
+
+    _commit(change)
+    return renamed
+
+
 def remove(agent_id: str) -> bool:
     """Remove ordinary routing metadata; builtin agents cannot be deleted."""
     agent = get_by_id(agent_id)

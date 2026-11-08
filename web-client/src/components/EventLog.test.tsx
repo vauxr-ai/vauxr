@@ -25,7 +25,9 @@ describe("EventLog", () => {
 
   it("renders empty-state message when there are no entries", () => {
     render(<EventLog entries={[]} />);
-    expect(screen.getByText(/no events yet/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/no events recorded in this browser session/i),
+    ).toBeInTheDocument();
   });
 
   it("renders TX/RX/SYS prefixes for entries", () => {
@@ -49,7 +51,9 @@ describe("EventLog", () => {
   it("hides the Clear button when there are no entries", () => {
     const onClear = vi.fn();
     render(<EventLog entries={[]} onClear={onClear} />);
-    expect(screen.queryByRole("button", { name: /clear/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /clear/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the Clear button only when there are entries and onClear is provided", () => {
@@ -60,7 +64,9 @@ describe("EventLog", () => {
 
   it("does not render Clear if onClear is omitted", () => {
     render(<EventLog entries={makeEntries()} />);
-    expect(screen.queryByRole("button", { name: /clear/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /clear/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("calls onClear when Clear is clicked", async () => {

@@ -93,7 +93,9 @@ function renderPanel(
 async function waitForDevices() {
   await waitFor(() => {
     expect(screen.getByRole("list")).toBeInTheDocument();
-    expect(within(screen.getByRole("list")).getAllByRole("listitem").length).toBeGreaterThan(0);
+    expect(
+      within(screen.getByRole("list")).getAllByRole("listitem").length,
+    ).toBeGreaterThan(0);
   });
 }
 
@@ -101,7 +103,9 @@ describe("DevicesPanel", () => {
   describe("rendering", () => {
     it("renders a connect-prompt placeholder when wsState === 'disconnected'", () => {
       renderPanel({ wsState: "disconnected" });
-      expect(screen.getByText(/connect to a server to manage devices/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/connect to a server to manage devices/i),
+      ).toBeInTheDocument();
       expect(screen.queryByText(/^Devices$/)).not.toBeInTheDocument();
     });
 
@@ -120,7 +124,9 @@ describe("DevicesPanel", () => {
     });
 
     it("shows error inline when refresh fails", async () => {
-      fetchSpy.mockResolvedValueOnce(jsonResponse({ error: "Network down" }, false, 500));
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse({ error: "Network down" }, false, 500),
+      );
       renderPanel();
       await waitFor(() => {
         expect(screen.getByText("Network down")).toBeInTheDocument();
@@ -158,7 +164,9 @@ describe("DevicesPanel", () => {
       const toggle = within(items[0]).getByRole("button", { expanded: false });
       await user.click(toggle);
 
-      expect(within(items[0]).getByRole("button", { expanded: true })).toBeInTheDocument();
+      expect(
+        within(items[0]).getByRole("button", { expanded: true }),
+      ).toBeInTheDocument();
       expect(within(items[0]).getByText(/^Config$/)).toBeInTheDocument();
       expect(within(items[0]).getByText(/^Announce$/)).toBeInTheDocument();
       expect(within(items[0]).getByText(/^Control$/)).toBeInTheDocument();
@@ -174,7 +182,9 @@ describe("DevicesPanel", () => {
       await user.click(toggle);
       expect(within(items[0]).getByText(/^Config$/)).toBeInTheDocument();
 
-      const expandedToggle = within(items[0]).getByRole("button", { expanded: true });
+      const expandedToggle = within(items[0]).getByRole("button", {
+        expanded: true,
+      });
       await user.click(expandedToggle);
       expect(within(items[0]).queryByText(/^Config$/)).not.toBeInTheDocument();
     });
@@ -185,7 +195,9 @@ describe("DevicesPanel", () => {
       await waitForDevices();
 
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[0]).getByRole("button", { expanded: false }),
+      );
 
       expect(within(items[0]).getByText(/^Config$/)).toBeInTheDocument();
       expect(within(items[1]).queryByText(/^Config$/)).not.toBeInTheDocument();
@@ -196,7 +208,9 @@ describe("DevicesPanel", () => {
     async function expandFirstCard(user: ReturnType<typeof userEvent.setup>) {
       await waitForDevices();
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[0]).getByRole("button", { expanded: false }),
+      );
       return items[0];
     }
 
@@ -218,15 +232,23 @@ describe("DevicesPanel", () => {
 
       await waitFor(() => {
         const patchCall = fetchSpy.mock.calls.find(
-          (c) => typeof c[0] === "string" && (c[0] as string).endsWith("/api/devices/d1"),
+          (c) =>
+            typeof c[0] === "string" &&
+            (c[0] as string).endsWith("/api/devices/d1"),
         );
         expect(patchCall).toBeDefined();
         const init = patchCall![1] as RequestInit;
         expect(init.method).toBe("PATCH");
-        expect(JSON.parse(init.body as string)).toEqual({ follow_up_mode: "never" });
+        expect(JSON.parse(init.body as string)).toEqual({
+          follow_up_mode: "never",
+        });
       });
       await waitFor(() => {
-        expect(addLog).toHaveBeenCalledWith("sys", expect.stringContaining("follow_up_mode → never"));
+        expect(addLog).toHaveBeenCalledWith(
+          "sys",
+          expect.stringContaining("follow_up_mode → never"),
+          "d1",
+        );
       });
     });
 
@@ -248,7 +270,9 @@ describe("DevicesPanel", () => {
 
       await waitFor(() => {
         const patchCall = fetchSpy.mock.calls.find(
-          (c) => typeof c[0] === "string" && (c[0] as string).endsWith("/api/devices/d1"),
+          (c) =>
+            typeof c[0] === "string" &&
+            (c[0] as string).endsWith("/api/devices/d1"),
         );
         expect(patchCall).toBeDefined();
         const init = patchCall![1] as RequestInit;
@@ -256,7 +280,11 @@ describe("DevicesPanel", () => {
         expect(JSON.parse(init.body as string)).toEqual({ barge_in: false });
       });
       await waitFor(() => {
-        expect(addLog).toHaveBeenCalledWith("sys", expect.stringContaining("barge_in → off"));
+        expect(addLog).toHaveBeenCalledWith(
+          "sys",
+          expect.stringContaining("barge_in → off"),
+          "d1",
+        );
       });
     });
 
@@ -266,12 +294,16 @@ describe("DevicesPanel", () => {
         ...DEVICES[0],
         config: {
           ...DEVICES[0].config,
-          button_actions: { double_press: { kind: "announce", text: "Goodnight" } },
+          button_actions: {
+            double_press: { kind: "announce", text: "Goodnight" },
+          },
         },
       };
       fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
-        if (String(url).includes("/api/webhooks")) return Promise.resolve(jsonResponse([]));
-        if (init?.method === "PATCH") return Promise.resolve(jsonResponse(updated));
+        if (String(url).includes("/api/webhooks"))
+          return Promise.resolve(jsonResponse([]));
+        if (init?.method === "PATCH")
+          return Promise.resolve(jsonResponse(updated));
         return Promise.resolve(jsonResponse(DEVICES));
       });
 
@@ -295,7 +327,9 @@ describe("DevicesPanel", () => {
         expect(patchCall).toBeDefined();
         const init = patchCall![1] as RequestInit;
         expect(JSON.parse(init.body as string)).toEqual({
-          button_actions: { double_press: { kind: "announce", text: "Goodnight" } },
+          button_actions: {
+            double_press: { kind: "announce", text: "Goodnight" },
+          },
         });
       });
     });
@@ -303,17 +337,32 @@ describe("DevicesPanel", () => {
     it("selecting a webhook mapping keeps the chosen webhook after save", async () => {
       const user = userEvent.setup();
       const hooks = [
-        { id: "wh_1", name: "Lights", has_url: true, has_authorization: false, has_body: false },
-        { id: "wh_2", name: "Goodnight", has_url: true, has_authorization: false, has_body: false },
+        {
+          id: "wh_1",
+          name: "Lights",
+          has_url: true,
+          has_authorization: false,
+          has_body: false,
+        },
+        {
+          id: "wh_2",
+          name: "Goodnight",
+          has_url: true,
+          has_authorization: false,
+          has_body: false,
+        },
       ];
       fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
-        if (String(url).includes("/api/webhooks")) return Promise.resolve(jsonResponse(hooks));
+        if (String(url).includes("/api/webhooks"))
+          return Promise.resolve(jsonResponse(hooks));
         if (init?.method === "PATCH") {
           const patch = JSON.parse(String(init.body));
-          return Promise.resolve(jsonResponse({
-            ...DEVICES[0],
-            config: { ...DEVICES[0].config, ...patch },
-          }));
+          return Promise.resolve(
+            jsonResponse({
+              ...DEVICES[0],
+              config: { ...DEVICES[0].config, ...patch },
+            }),
+          );
         }
         return Promise.resolve(jsonResponse(DEVICES));
       });
@@ -321,46 +370,69 @@ describe("DevicesPanel", () => {
       renderPanel();
       const card = await expandFirstCard(user);
       await waitFor(() => {
-        expect(within(card).getByLabelText(/double press action/i)).toBeEnabled();
+        expect(
+          within(card).getByLabelText(/double press action/i),
+        ).toBeEnabled();
       });
 
-      await user.selectOptions(within(card).getByLabelText(/double press action/i), "webhook");
-      const webhookSelect = await waitFor(() => within(card).getByLabelText(/double press webhook/i));
+      await user.selectOptions(
+        within(card).getByLabelText(/double press action/i),
+        "webhook",
+      );
+      const webhookSelect = await waitFor(() =>
+        within(card).getByLabelText(/double press webhook/i),
+      );
       await user.selectOptions(webhookSelect, "wh_2");
 
       await waitFor(() => {
-        expect((within(card).getByLabelText(/double press webhook/i) as HTMLSelectElement).value).toBe("wh_2");
+        expect(
+          (
+            within(card).getByLabelText(
+              /double press webhook/i,
+            ) as HTMLSelectElement
+          ).value,
+        ).toBe("wh_2");
       });
       const patchBodies = fetchSpy.mock.calls
         .filter((c) => (c[1] as RequestInit | undefined)?.method === "PATCH")
         .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
       expect(patchBodies).toContainEqual({
-        button_actions: { double_press: { kind: "webhook", webhook_id: "wh_2" } },
+        button_actions: {
+          double_press: { kind: "webhook", webhook_id: "wh_2" },
+        },
       });
     });
 
     it("name input saves on blur if changed", async () => {
       const user = userEvent.setup();
       fetchSpy.mockResolvedValueOnce(jsonResponse(DEVICES));
-      fetchSpy.mockResolvedValueOnce(jsonResponse({
-        ...DEVICES[0],
-        config: { ...DEVICES[0].config, name: "Den" },
-      }));
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse({
+          ...DEVICES[0],
+          config: { ...DEVICES[0].config, name: "Den" },
+        }),
+      );
 
       renderPanel();
       const card = await expandFirstCard(user);
 
-      const nameInput = within(card).getByLabelText(/name/i) as HTMLInputElement;
+      const nameInput = within(card).getByLabelText(
+        /name/i,
+      ) as HTMLInputElement;
       await user.clear(nameInput);
       await user.type(nameInput, "Den");
       nameInput.blur();
 
       await waitFor(() => {
         const patchCall = fetchSpy.mock.calls.find(
-          (c) => typeof c[0] === "string" && (c[0] as string).endsWith("/api/devices/d1"),
+          (c) =>
+            typeof c[0] === "string" &&
+            (c[0] as string).endsWith("/api/devices/d1"),
         );
         expect(patchCall).toBeDefined();
-        expect(JSON.parse((patchCall![1] as RequestInit).body as string)).toEqual({ name: "Den" });
+        expect(
+          JSON.parse((patchCall![1] as RequestInit).body as string),
+        ).toEqual({ name: "Den" });
       });
     });
   });
@@ -371,10 +443,14 @@ describe("DevicesPanel", () => {
       renderPanel();
       await waitForDevices();
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[0]).getByRole("button", { expanded: false }),
+      );
 
       const card = items[0];
-      const text = within(card).getByPlaceholderText(/hello from the browser/i) as HTMLInputElement;
+      const text = within(card).getByPlaceholderText(
+        /hello from the browser/i,
+      ) as HTMLInputElement;
       expect(text.value).toBe("hello world");
     });
 
@@ -385,7 +461,9 @@ describe("DevicesPanel", () => {
       renderPanel({ addLog });
       await waitForDevices();
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[1]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[1]).getByRole("button", { expanded: false }),
+      );
 
       const card = items[1];
       const text = within(card).getByPlaceholderText(/hello from the browser/i);
@@ -397,7 +475,11 @@ describe("DevicesPanel", () => {
 
       await waitFor(() => {
         expect(mockAnnounce).toHaveBeenCalledWith("d2", "Test");
-        expect(addLog).toHaveBeenCalledWith("sys", expect.stringContaining("Announce sent to d2"));
+        expect(addLog).toHaveBeenCalledWith(
+          "sys",
+          expect.stringContaining("Announce sent to d2"),
+          "d2",
+        );
       });
     });
 
@@ -407,10 +489,14 @@ describe("DevicesPanel", () => {
       renderPanel();
       await waitForDevices();
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[0]).getByRole("button", { expanded: false }),
+      );
 
       const card = items[0];
-      const text = within(card).getByPlaceholderText(/hello from the browser/i) as HTMLInputElement;
+      const text = within(card).getByPlaceholderText(
+        /hello from the browser/i,
+      ) as HTMLInputElement;
       await user.clear(text);
       await user.type(text, "Hello");
       expect(text.value).toBe("Hello");
@@ -428,10 +514,14 @@ describe("DevicesPanel", () => {
       renderPanel({ addLog });
       await waitForDevices();
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[0]).getByRole("button", { expanded: false }),
+      );
 
       const card = items[0];
-      const text = within(card).getByPlaceholderText(/hello from the browser/i) as HTMLInputElement;
+      const text = within(card).getByPlaceholderText(
+        /hello from the browser/i,
+      ) as HTMLInputElement;
       await user.clear(text);
       expect(text.value).toBe("");
 
@@ -450,7 +540,9 @@ describe("DevicesPanel", () => {
       renderPanel({ addLog });
       await waitForDevices();
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[0]).getByRole("button", { expanded: false }),
+      );
 
       const card = items[0];
       const text = within(card).getByPlaceholderText(/hello from the browser/i);
@@ -461,7 +553,11 @@ describe("DevicesPanel", () => {
 
       await waitFor(() => {
         expect(within(card).getByText("Device offline")).toBeInTheDocument();
-        expect(addLog).toHaveBeenCalledWith("sys", expect.stringContaining("Device offline"));
+        expect(addLog).toHaveBeenCalledWith(
+          "sys",
+          expect.stringContaining("Device offline"),
+          "d1",
+        );
       });
     });
   });
@@ -474,7 +570,9 @@ describe("DevicesPanel", () => {
       renderPanel({ addLog });
       await waitForDevices();
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[0]).getByRole("button", { expanded: false }),
+      );
 
       const card = items[0];
       const sendButtons = within(card).getAllByRole("button", { name: "Send" });
@@ -482,8 +580,14 @@ describe("DevicesPanel", () => {
       await user.click(sendButtons[sendButtons.length - 1]);
 
       await waitFor(() => {
-        expect(mockCommand).toHaveBeenCalledWith("d1", "set_volume", { volume: 50 });
-        expect(addLog).toHaveBeenCalledWith("sys", expect.stringContaining("Command set_volume sent to d1"));
+        expect(mockCommand).toHaveBeenCalledWith("d1", "set_volume", {
+          volume: 50,
+        });
+        expect(addLog).toHaveBeenCalledWith(
+          "sys",
+          expect.stringContaining("Command set_volume sent to d1"),
+          "d1",
+        );
       });
     });
 
@@ -493,7 +597,9 @@ describe("DevicesPanel", () => {
       renderPanel();
       await waitForDevices();
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[0]).getByRole("button", { expanded: false }),
+      );
 
       const card = items[0];
       const cmdSelect = within(card).getByLabelText(/command/i);
@@ -514,7 +620,9 @@ describe("DevicesPanel", () => {
       renderPanel();
       await waitForDevices();
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[0]).getByRole("button", { expanded: false }),
+      );
 
       const card = items[0];
       const cmdSelect = within(card).getByLabelText(/command/i);
@@ -539,7 +647,9 @@ describe("DevicesPanel", () => {
       renderPanel();
       await waitForDevices();
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[0]).getByRole("button", { expanded: false }),
+      );
 
       const card = items[0];
       const cmdSelect = within(card).getByLabelText(/command/i);
@@ -551,7 +661,9 @@ describe("DevicesPanel", () => {
       await user.click(sendButtons[sendButtons.length - 1]);
 
       await waitFor(() => {
-        expect(mockCommand).toHaveBeenCalledWith("d1", "set_barge_in", { enabled: false });
+        expect(mockCommand).toHaveBeenCalledWith("d1", "set_barge_in", {
+          enabled: false,
+        });
       });
     });
 
@@ -561,7 +673,9 @@ describe("DevicesPanel", () => {
       renderPanel();
       await waitForDevices();
       const items = within(screen.getByRole("list")).getAllByRole("listitem");
-      await user.click(within(items[0]).getByRole("button", { expanded: false }));
+      await user.click(
+        within(items[0]).getByRole("button", { expanded: false }),
+      );
 
       const card = items[0];
       const sendButtons = within(card).getAllByRole("button", { name: "Send" });
@@ -580,14 +694,17 @@ describe("DevicesPanel", () => {
       await waitForDevices();
 
       const refreshCallsBefore = fetchSpy.mock.calls.filter(
-        (c) => typeof c[0] === "string" && (c[0] as string).endsWith("/api/devices"),
+        (c) =>
+          typeof c[0] === "string" && (c[0] as string).endsWith("/api/devices"),
       ).length;
 
       await user.click(screen.getByRole("button", { name: /refresh/i }));
 
       await waitFor(() => {
         const after = fetchSpy.mock.calls.filter(
-          (c) => typeof c[0] === "string" && (c[0] as string).endsWith("/api/devices"),
+          (c) =>
+            typeof c[0] === "string" &&
+            (c[0] as string).endsWith("/api/devices"),
         ).length;
         expect(after).toBeGreaterThan(refreshCallsBefore);
       });
@@ -596,7 +713,9 @@ describe("DevicesPanel", () => {
     it("renders only one Refresh button in the panel", async () => {
       renderPanel();
       await waitForDevices();
-      expect(screen.getAllByRole("button", { name: /refresh/i })).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: /refresh/i })).toHaveLength(
+        1,
+      );
     });
   });
 });
@@ -609,33 +728,104 @@ it("defaults to WebRTC Standard and saves explicit Realtime mode", async () => {
   const select = screen.getByRole("combobox", { name: "Voice mode" });
   expect(select).toHaveValue("webrtc");
   await user.selectOptions(select, "realtime");
-  await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith(
-    expect.stringContaining("/api/devices/d1"),
-    expect.objectContaining({ method: "PATCH", body: JSON.stringify({ voice_mode: "realtime" }) }),
-  ));
+  await waitFor(() =>
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining("/api/devices/d1"),
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ voice_mode: "realtime" }),
+      }),
+    ),
+  );
 });
 
 it("shows barge-in only for WebRTC Standard", async () => {
   fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
     if (init?.method === "PATCH") {
-      return Promise.resolve(jsonResponse({
-        ...DEVICES[0],
-        config: { ...DEVICES[0].config, voice_mode: "websocket" },
-      }));
+      return Promise.resolve(
+        jsonResponse({
+          ...DEVICES[0],
+          config: { ...DEVICES[0].config, voice_mode: "websocket" },
+        }),
+      );
     }
-    if (String(url).includes("/api/webhooks")) return Promise.resolve(jsonResponse([]));
+    if (String(url).includes("/api/webhooks"))
+      return Promise.resolve(jsonResponse([]));
     return Promise.resolve(jsonResponse(DEVICES));
   });
   const user = userEvent.setup();
   renderPanel();
   await waitForDevices();
   await user.click(screen.getByRole("button", { name: /Living Room/ }));
-  expect(screen.getByRole("combobox", { name: "Barge-in" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("combobox", { name: "Barge-in" }),
+  ).toBeInTheDocument();
 
   const select = screen.getByRole("combobox", { name: "Voice mode" });
   await user.selectOptions(select, "websocket");
   await waitFor(() => {
-    expect(screen.queryByRole("combobox", { name: "Barge-in" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "Barge-in" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(/does not support barge-in/i)).toBeInTheDocument();
   });
+});
+
+it("attributes diagnostics by exact device identity rather than message substrings", async () => {
+  render(
+    <DevicesPanel
+      wsUrl=""
+      token=""
+      wsState="connected"
+      addLog={vi.fn()}
+      logs={[
+        { ts: 1, dir: "sys", text: "Own event", deviceId: "d1" },
+        { ts: 2, dir: "sys", text: "Device d10 mentions d1", deviceId: "d10" },
+        { ts: 3, dir: "sys", text: "Unattributed text containing d1" },
+      ]}
+    />,
+  );
+  await userEvent.click(await screen.findByText("Living Room"));
+  await userEvent.click(screen.getByText("Device diagnostics"));
+  expect(screen.getByText("Own event")).toBeVisible();
+  expect(screen.queryByText("Device d10 mentions d1")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("Unattributed text containing d1"),
+  ).not.toBeInTheDocument();
+});
+
+it("updates viewing context on rename, removal and collapse", async () => {
+  let devices = structuredClone(DEVICES);
+  fetchSpy.mockImplementation(async (url: string) =>
+    jsonResponse(
+      String(url).includes("/api/webhooks") ? [] : structuredClone(devices),
+    ),
+  );
+  const onContext = vi.fn();
+  render(
+    <DevicesPanel
+      wsUrl=""
+      token=""
+      wsState="connected"
+      addLog={vi.fn()}
+      onContext={onContext}
+    />,
+  );
+  await userEvent.click(await screen.findByText("Living Room"));
+  expect(onContext).toHaveBeenLastCalledWith("Living Room");
+  devices[0].config.name = "Renamed room";
+  await userEvent.click(
+    screen.getByRole("button", { name: "Refresh", exact: true }),
+  );
+  await waitFor(() =>
+    expect(onContext).toHaveBeenLastCalledWith("Renamed room"),
+  );
+  await userEvent.click(screen.getByText("Renamed room"));
+  expect(onContext).toHaveBeenLastCalledWith("Devices");
+  await userEvent.click(screen.getByText("Renamed room"));
+  devices = devices.slice(1);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Refresh", exact: true }),
+  );
+  await waitFor(() => expect(onContext).toHaveBeenLastCalledWith("Devices"));
 });

@@ -1,6 +1,17 @@
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
+import type { Page } from "@playwright/test";
 // Synthetic oscillator input; real Chromium AudioContext, worklet and PCM conversion.
 // Local WS response stub avoids any speech inference or paid provider.
 import { test, expect, login } from "./auth-fixture";
+
+// Optional authenticated state captures; automatic auth snapshots remain disabled.
+async function capture(page: Page, state: string) {
+  const directory = process.env.VAUXR_B2_ARTIFACT_DIR;
+  if (!directory) return;
+  mkdirSync(directory, { recursive: true });
+  await page.screenshot({ path: resolve(directory, `voice-${state}.png`) });
+}
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -55,16 +66,38 @@ test("Talk segments real worklet PCM, barges in, persists modes and keeps button
   await expect(talk.getByRole("button", { name: "Stop listening" })).toBeEnabled();
   expect((await talk.getByRole("button", { name: "Stop listening" }).boundingBox())?.width).toBe(box?.width);
   const tone = (value: number) => page.evaluate(v => { (window as any).voiceTest.gain.gain.value = v; }, value);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  // Keep real capture active while navigating the companion's phone compositions.
+  await expect.poll(() => page.evaluate(() => !!(window as any).voiceTest.gain)).toBe(true);
+  for (const theme of ["dark", "light"]) {
+    await page.getByLabel("Appearance").selectOption(theme);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator(".companion-header [role=status]")).toHaveText("Listening");
+    await capture(page, `phone-${theme}-listening`);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".companion-header [role=status]")).toHaveText("Listening");
+    await expect(page.getByRole("button", { name: "Stop listening", exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.getByRole("button", { name: "Expand voice companion" }).click();
+  }
+  await talk.getByRole("button", { name: "Mute output" }).click();
+  await expect(page.locator(".companion-header [role=status]")).toHaveText("Listening · Output muted");
+  await talk.getByRole("button", { name: "Unmute output" }).click();
+
   await expect.poll(() => page.evaluate(() => !!(window as any).voiceTest.gain)).toBe(true);
   await tone(0.2);
   await expect.poll(() => messages.filter(x => x === "voice.start").length).toBe(1);
+  await capture(page, "listening");
   await expect.poll(() => frames).toBeGreaterThan(2);
   await tone(0);
   await expect.poll(() => messages.filter(x => x === "voice.end").length).toBe(1);
+  await expect(page.locator(".companion-header [role=status]")).toHaveText("Thinking");
+  await capture(page, "thinking");
   socket.send(JSON.stringify({ type: "audio.start", sample_rate: 16000 }));
   const playback = Buffer.alloc(32003); playback[0] = 2;
   socket.send(playback);
-  await expect(page.getByText("Speaking", { exact: true })).toBeVisible();
+  await expect(page.locator(".companion-header [role=status]")).toHaveText("Speaking");
+  await capture(page, "speaking");
   expect(nonzeroPcm).toBe(true);
   const playbackIndex = await page.evaluate(() => (window as any).voiceTest.all.length - 1);
   await tone(0.2);
@@ -121,7 +154,7 @@ test("Talk segments real worklet PCM, barges in, persists modes and keeps button
   await expect(settings.getByRole("combobox", { name: "Voice", exact: true })).toHaveValue(standardVoice);
   await start.click();
   await expect.poll(() => page.evaluate(() => (window as any).voiceTest.tracks.length)).toBe(1);
-  await page.getByRole("button", { name: "Connection", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).voiceTest.tracks[0].readyState)).toBe("ended");
 });

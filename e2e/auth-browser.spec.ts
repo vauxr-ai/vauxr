@@ -67,9 +67,13 @@ test.beforeEach(async () => {
     .toBe(200);
 });
 test.afterEach(async () => {
-  server?.kill("SIGTERM");
-  if (server && server.exitCode === null)
-    await new Promise((r) => server.once("exit", r));
+  if (server && server.exitCode === null && server.signalCode === null) {
+    server.kill("SIGTERM");
+    await new Promise<void>(resolve => {
+      const timer = setTimeout(() => server.kill("SIGKILL"), 5000);
+      server.once("exit", () => { clearTimeout(timer); resolve(); });
+    });
+  }
   rmSync(data, { recursive: true, force: true });
 });
 test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and logout", async ({
@@ -168,6 +172,7 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
     request_id: challenge.request_id,
     signature: signed("prove"),
   });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByText("Refresh pairing and identities").click();
   const row = page
     .locator("div.border-t")
@@ -213,6 +218,8 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
       if (typeof frame.payload === "string") frames.push(frame.payload);
     }),
   );
+  await page.getByRole("button", { name: "Expand voice companion" }).click();
+  await page.getByText("Browser voice connection", { exact: true }).click();
   await page.getByLabel("Voice WebSocket URL").fill("ws://localhost:18080/ws");
   await page.getByText("Connect browser voice", { exact: true }).click();
   await expect(
@@ -265,6 +272,8 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
   ).toBe(403);
   const tab = await context.newPage();
   await tab.goto("/");
+  await tab.getByRole("button", { name: "Expand voice companion" }).click();
+  await tab.getByText("Browser voice connection", { exact: true }).click();
   await tab.getByLabel("Voice WebSocket URL").fill("ws://localhost:18080/ws");
   await tab.getByText("Connect browser voice", { exact: true }).click();
   await expect(tab.getByRole("alert")).toContainText("another tab");
@@ -280,6 +289,7 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
   expect(frames.some((f) => JSON.parse(f).type === "voice.start")).toBe(false);
   await page.getByRole("button", { name: "Disconnect", exact: true }).click();
   // Offline rotation UI: retain queued state, then connect to deliver/save/ACK.
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByText("Known offline identity").click();
   await page.getByLabel("Subject ID").fill(identity.deviceId);
   page.once("dialog", (dialog) => dialog.accept());
@@ -310,7 +320,9 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
   await page.getByText("Connect browser voice", { exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Request failed");
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByText("Recover browser identity", { exact: true }).click();
+  await page.getByRole("button", { name: "Expand voice companion" }).click();
+  await page.getByText("Browser voice connection", { exact: true }).click();
+  await page.getByText("Re-enroll this browser", { exact: true }).click();
   await expect(
     page.getByText("Connected", { exact: true }).first(),
   ).toBeVisible();
@@ -427,6 +439,7 @@ test("non-loopback HTTP administration works while browser microphone remains re
   await page.getByText("Log in with saved operator token").click();
   await expect(page.getByRole("main")).toBeVisible();
   expect(await page.evaluate(() => isSecureContext)).toBe(false);
+  await page.getByRole("button", { name: "Expand voice companion" }).click();
   await expect(
     page.getByText("Microphone unavailable.", { exact: true }),
   ).toBeVisible();
@@ -436,7 +449,7 @@ test("non-loopback HTTP administration works while browser microphone remains re
   );
   await page.getByRole("button", { name: "Devices", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Devices", exact: true }),
+    page.getByRole("heading", { name: "Devices", exact: true, level: 1 }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(

@@ -4,6 +4,11 @@ const STATUS_CONFIG: Record<
   ConnectionState,
   { label: string; pillClass: string; dotClass: string }
 > = {
+  connecting: {
+    label: "Connecting",
+    pillClass: "border-zinc-700/50 text-zinc-400",
+    dotClass: "bg-zinc-500",
+  },
   disconnected: {
     label: "Disconnected",
     pillClass: "border-zinc-700/50 bg-zinc-800/40 text-zinc-400",
@@ -42,7 +47,10 @@ export default function StatusBar({
   return (
     <div className="flex items-center gap-3 px-1 py-1.5">
       <span className={`pill ${cfg.pillClass}`}>
-        <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${cfg.dotClass}`} />
+        <span
+          aria-hidden
+          className={`h-1.5 w-1.5 rounded-full ${cfg.dotClass}`}
+        />
         {cfg.label}
       </span>
       {transcript ? (

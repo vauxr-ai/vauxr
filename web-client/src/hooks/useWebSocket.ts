@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
 export type ConnectionState =
+  | "connecting"
   | "disconnected"
   | "connected"
   | "listening"
@@ -11,10 +12,16 @@ export interface LogEntry {
   ts: number;
   dir: "tx" | "rx" | "sys";
   text: string;
+  deviceId?: string;
 }
 
 interface UseWebSocketOpts {
-  onControl?: (message: { type: string; message?: string; role?: string; text?: string }) => void;
+  onControl?: (message: {
+    type: string;
+    message?: string;
+    role?: string;
+    text?: string;
+  }) => void;
   onReady: () => void;
   onTranscript: (text: string) => void;
   onAudioStart: (sampleRate: number) => void;
@@ -30,11 +37,18 @@ export function useWebSocket(opts: UseWebSocketOpts) {
   const deviceIdRef = useRef("");
   const tokenRef = useRef("");
   const [state, setState] = useState<ConnectionState>("disconnected");
+  const [connectionError, setConnectionError] = useState("");
   const [log, setLog] = useState<LogEntry[]>([]);
 
-  const addLog = useCallback((dir: LogEntry["dir"], text: string) => {
-    setLog((prev) => [...prev, { ts: Date.now(), dir, text }]);
-  }, []);
+  const addLog = useCallback(
+    (dir: LogEntry["dir"], text: string, deviceId?: string) => {
+      setLog((prev) => [
+        ...prev,
+        { ts: Date.now(), dir, text, ...(deviceId ? { deviceId } : {}) },
+      ]);
+    },
+    [],
+  );
 
   const clearLog = useCallback(() => {
     setLog([]);
@@ -43,8 +57,10 @@ export function useWebSocket(opts: UseWebSocketOpts) {
   const connect = useCallback(
     (url: string, deviceId: string, token: string) => {
       if (wsRef.current) return;
+      setConnectionError("");
       addLog("sys", `Connecting to ${url}`);
       const ws = new WebSocket(url);
+      setState("connecting");
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 
@@ -52,8 +68,18 @@ export function useWebSocket(opts: UseWebSocketOpts) {
       tokenRef.current = token;
 
       ws.onopen = () => {
-        if (wsRef.current !== ws) { ws.close(); return; }
-        ws.send(JSON.stringify({ type: "hello", device_id: deviceId, token, caps: [] }));
+        if (wsRef.current !== ws) {
+          ws.close();
+          return;
+        }
+        ws.send(
+          JSON.stringify({
+            type: "hello",
+            device_id: deviceId,
+            token,
+            caps: [],
+          }),
+        );
         addLog("sys", "WebSocket open; authenticating scoped browser device");
       };
 
@@ -67,7 +93,10 @@ export function useWebSocket(opts: UseWebSocketOpts) {
             rxAudioFrames.current++;
             const label = frameType === 0x03 ? "push" : "tts";
             if (rxAudioFrames.current === 1) {
-              addLog("rx", `First ${label} audio frame, ${payload.byteLength} bytes`);
+              addLog(
+                "rx",
+                `First ${label} audio frame, ${payload.byteLength} bytes`,
+              );
             }
             opts.onAudioFrame(payload);
           }
@@ -75,7 +104,10 @@ export function useWebSocket(opts: UseWebSocketOpts) {
         }
         try {
           const msg = JSON.parse(ev.data as string);
-          addLog("rx", `Server message: ${typeof msg.type === "string" ? msg.type.replace(/[^a-zA-Z._-]/g, "").slice(0, 40) : "unknown"}`);
+          addLog(
+            "rx",
+            `Server message: ${typeof msg.type === "string" ? msg.type.replace(/[^a-zA-Z._-]/g, "").slice(0, 40) : "unknown"}`,
+          );
           opts.onControl?.(msg);
           switch (msg.type) {
             case "hello":
@@ -94,7 +126,10 @@ export function useWebSocket(opts: UseWebSocketOpts) {
               break;
             case "audio.end": {
               const followUp = msg.follow_up === true;
-              addLog("sys", `Playback done, ${rxAudioFrames.current} audio frames received${followUp ? " (follow-up)" : ""}`);
+              addLog(
+                "sys",
+                `Playback done, ${rxAudioFrames.current} audio frames received${followUp ? " (follow-up)" : ""}`,
+              );
               rxAudioFrames.current = 0;
               setState("connected");
               opts.onAudioEnd(followUp);
@@ -113,10 +148,17 @@ export function useWebSocket(opts: UseWebSocketOpts) {
         if (wsRef.current !== ws) return;
         setState("disconnected");
         addLog("sys", "WebSocket closed");
-        if (wsRef.current === ws) { wsRef.current = null; tokenRef.current = ""; }
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+          tokenRef.current = "";
+        }
       };
 
       ws.onerror = () => {
+        if (wsRef.current !== ws) return;
+        setConnectionError(
+          "Browser voice connection failed. Disconnect before retrying.",
+        );
         addLog("sys", "WebSocket error");
       };
     },
@@ -128,32 +170,36 @@ export function useWebSocket(opts: UseWebSocketOpts) {
     wsRef.current = null;
     tokenRef.current = "";
     setState("disconnected");
+    setConnectionError("");
   }, []);
 
   const sendVoiceStart = useCallback(() => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     seqRef.current = 0;
-    const msg = { type: "voice.start", device_id: deviceIdRef.current, token: tokenRef.current };
+    const msg = {
+      type: "voice.start",
+      device_id: deviceIdRef.current,
+      token: tokenRef.current,
+    };
     ws.send(JSON.stringify(msg));
     addLog("tx", `voice.start device_id=${deviceIdRef.current}`);
   }, [addLog]);
 
-  const sendAudioFrame = useCallback(
-    (pcm: Int16Array) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      const seq = seqRef.current++;
-      if (seq === 0) addLog("tx", `First audio frame, ${pcm.length} samples`);
-      const buf = new ArrayBuffer(3 + pcm.byteLength);
-      const view = new DataView(buf);
-      view.setUint8(0, 0x01);
-      view.setUint16(1, seq & 0xffff, false); // big-endian
-      new Uint8Array(buf, 3).set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength));
-      ws.send(buf);
-    },
-    [],
-  );
+  const sendAudioFrame = useCallback((pcm: Int16Array) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const seq = seqRef.current++;
+    if (seq === 0) addLog("tx", `First audio frame, ${pcm.length} samples`);
+    const buf = new ArrayBuffer(3 + pcm.byteLength);
+    const view = new DataView(buf);
+    view.setUint8(0, 0x01);
+    view.setUint16(1, seq & 0xffff, false); // big-endian
+    new Uint8Array(buf, 3).set(
+      new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength),
+    );
+    ws.send(buf);
+  }, []);
 
   const sendJson = useCallback(
     (msg: Record<string, unknown>) => {
@@ -167,6 +213,7 @@ export function useWebSocket(opts: UseWebSocketOpts) {
 
   return {
     state,
+    connectionError,
     setState,
     log,
     addLog,

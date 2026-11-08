@@ -1,20 +1,18 @@
 import type { ReactNode } from "react";
-
 interface Props {
   sidebar: ReactNode;
   main: ReactNode;
   talk: ReactNode;
+  expanded?: boolean;
 }
-
-/**
- * Three-column app shell: 15% sidebar / 70% main content / 15% talk panel.
- * Each column owns its own scroll; the shell never scrolls.
- */
-export default function Layout({ sidebar, main, talk }: Props) {
+/** Management and the stable voice owner occupy separate desktop space. */
+export default function Layout({ sidebar, main, talk, expanded }: Props) {
   return (
-    <div className="grid h-screen w-screen grid-cols-[15%_minmax(0,1fr)_15%] overflow-hidden bg-bg text-zinc-200">
+    <div className={`app-shell ${expanded ? "companion-expanded" : ""}`}>
       {sidebar}
-      <main className="flex min-w-0 flex-col overflow-hidden">{main}</main>
+      <main id="management" className="management">
+        {main}
+      </main>
       {talk}
     </div>
   );

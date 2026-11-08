@@ -358,3 +358,16 @@ describe("useWebSocket", () => {
     });
   });
 });
+
+it("exposes connecting and transport failure separately from disconnected idle", () => {
+  const opts = { onReady: vi.fn(), onTranscript: vi.fn(), onAudioStart: vi.fn(), onAudioFrame: vi.fn(), onAudioEnd: vi.fn(), onError: vi.fn() };
+  const { result } = renderHook(() => useWebSocket(opts));
+  act(() => result.current.connect("ws://localhost/ws", "device", "token"));
+  expect(result.current.state).toBe("connecting");
+  const socket = MockWebSocket.instances.at(-1)!;
+  act(() => socket.onerror?.({}));
+  expect(result.current.connectionError).toContain("connection failed");
+  act(() => result.current.disconnect());
+  expect(result.current.state).toBe("disconnected");
+  expect(result.current.connectionError).toBe("");
+});

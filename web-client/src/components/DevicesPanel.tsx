@@ -1,3 +1,4 @@
+import EventLog from "./EventLog";
 import SpeechSettings from "./SpeechSettings";
 import { ownerFetch } from "../auth/api";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -55,7 +56,14 @@ const STATE_DOT: Record<string, string> = {
 };
 
 const FOLLOW_UP_OPTIONS: FollowUpMode[] = ["auto", "always", "never"];
-const COMMANDS = ["set_volume", "mute", "unmute", "reboot", "ota", "set_barge_in"] as const;
+const COMMANDS = [
+  "set_volume",
+  "mute",
+  "unmute",
+  "reboot",
+  "ota",
+  "set_barge_in",
+] as const;
 const GESTURE_ROWS: { id: GestureId; label: string }[] = [
   { id: "double_press", label: "Double press" },
   { id: "triple_press", label: "Triple press" },
@@ -76,16 +84,18 @@ interface SaveStatus {
 }
 
 interface Props {
+  logs?: LogEntry[];
+  onContext?: (context: string) => void;
   wsUrl: string;
   token: string;
   wsState: ConnectionState;
-  addLog: (dir: LogEntry["dir"], text: string) => void;
+  addLog: (dir: LogEntry["dir"], text: string, deviceId?: string) => void;
 }
 
 const POLL_INTERVAL_MS = 5_000;
 
 const inputClass =
-  "rounded-md border border-white/5 bg-zinc-900/80 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-60";
+  "rounded-md border border-white/5 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-60";
 
 const primaryBtn =
   "focus-ring rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50";
@@ -93,8 +103,7 @@ const primaryBtn =
 const ghostBtn =
   "focus-ring inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:bg-white/5 hover:text-zinc-200";
 
-const labelClass =
-  "flex flex-col gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500";
+const labelClass = "flex flex-col gap-1.5 text-xs font-medium text-zinc-400";
 
 function formatLastSeen(iso: string): string {
   const date = new Date(iso);
@@ -102,7 +111,14 @@ function formatLastSeen(iso: string): string {
   return date.toLocaleTimeString();
 }
 
-export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
+export default function DevicesPanel({
+  wsUrl,
+  token,
+  wsState,
+  addLog,
+  onContext,
+  logs = [],
+}: Props) {
   // Device administration is owner-session based, not contingent on a voice socket.
   const baseUrl = wsUrl ? deriveHttpUrl(wsUrl) : window.location.origin;
   const api = useHttpApi(baseUrl, token);
@@ -111,6 +127,7 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
   const [devices, setDevices] = useState<ApiDeviceWithConfig[]>([]);
   const [webhooks, setWebhooks] = useState<ApiWebhook[]>([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<Record<string, SaveStatus>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
@@ -122,11 +139,15 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
         try {
           const body = await res.json();
           if (body.error) msg = body.error;
-        } catch { /* fall through */ }
+        } catch {
+          /* fall through */
+        }
         throw new Error(msg);
       }
       const body = await res.json();
-      const list: ApiDeviceWithConfig[] = Array.isArray(body) ? body : (body.devices ?? []);
+      const list: ApiDeviceWithConfig[] = Array.isArray(body)
+        ? body
+        : (body.devices ?? []);
       setDevices(list);
       try {
         setWebhooks(await listWebhooks());
@@ -136,6 +157,8 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
     }
   }, [listWebhooks]);
 
@@ -150,32 +173,43 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
     async (deviceId: string, patch: Partial<DeviceConfig>, label: string) => {
       setSaveStatus((s) => ({ ...s, [deviceId]: { status: "saving" } }));
       try {
-        const res = await ownerFetch(`/api/devices/${encodeURIComponent(deviceId)}`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
+        const res = await ownerFetch(
+          `/api/devices/${encodeURIComponent(deviceId)}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(patch),
           },
-          body: JSON.stringify(patch),
-        });
+        );
         if (!res.ok) {
           let msg = res.statusText;
           try {
             const body = await res.json();
             if (body.error) msg = body.error;
-          } catch { /* fall through */ }
+          } catch {
+            /* fall through */
+          }
           throw new Error(msg);
         }
-        const updated = await res.json() as ApiDeviceWithConfig;
-        setDevices((list) => list.map((d) => {
-          if (d.id !== deviceId) return d;
-          const config = { ...d.config, ...(updated.config ?? {}) };
-          if (updated.config && !("button_actions" in updated.config) && d.config?.button_actions) {
-            config.button_actions = d.config.button_actions;
-          }
-          return { ...d, ...updated, config };
-        }));
+        const updated = (await res.json()) as ApiDeviceWithConfig;
+        setDevices((list) =>
+          list.map((d) => {
+            if (d.id !== deviceId) return d;
+            const config = { ...d.config, ...(updated.config ?? {}) };
+            if (
+              updated.config &&
+              !("button_actions" in updated.config) &&
+              d.config?.button_actions
+            ) {
+              config.button_actions = d.config.button_actions;
+            }
+            return { ...d, ...updated, config };
+          }),
+        );
         setSaveStatus((s) => ({ ...s, [deviceId]: { status: "saved" } }));
-        addLog("sys", `Device ${deviceId}: ${label}`);
+        addLog("sys", `Device ${deviceId}: ${label}`, deviceId);
         setTimeout(() => {
           setSaveStatus((s) => {
             if (s[deviceId]?.status !== "saved") return s;
@@ -185,16 +219,28 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
         }, 1500);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setSaveStatus((s) => ({ ...s, [deviceId]: { status: "error", message: msg } }));
-        addLog("sys", `Device ${deviceId} update error: ${msg}`);
+        setSaveStatus((s) => ({
+          ...s,
+          [deviceId]: { status: "error", message: msg },
+        }));
+        addLog("sys", `Device ${deviceId} update error: ${msg}`, deviceId);
       }
     },
     [addLog],
   );
 
   const toggleExpanded = useCallback((id: string) => {
-    setExpanded((e) => ({ ...e, [id]: !e[id] }));
+    setExpanded((e) => ({ [id]: !e[id] }));
   }, []);
+
+  useEffect(() => {
+    const selected = devices.find((device) => expanded[device.id]);
+    onContext?.(
+      selected
+        ? selected.config?.name || selected.name || selected.id
+        : "Devices",
+    );
+  }, [devices, expanded, onContext]);
 
   if (wsState === "disconnected") {
     return (
@@ -221,11 +267,18 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
 
       <div className="px-5 py-4">
         {error && (
-          <p className="mb-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          <p
+            role="alert"
+            className="mb-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300"
+          >
             {error}
           </p>
         )}
-        {devices.length === 0 && !error ? (
+        {loading ? (
+          <p role="status" className="text-sm text-zinc-400">
+            Loading devices…
+          </p>
+        ) : devices.length === 0 && !error ? (
           <p className="text-xs text-zinc-500">No devices yet</p>
         ) : (
           <ul className="space-y-2">
@@ -240,6 +293,7 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
                 api={api}
                 addLog={addLog}
                 httpBase={baseUrl}
+                logs={logs}
                 webhooks={webhooks}
               />
             ))}
@@ -251,18 +305,20 @@ export default function DevicesPanel({ wsUrl, token, wsState, addLog }: Props) {
 }
 
 interface DeviceCardProps {
+  logs: LogEntry[];
   device: ApiDeviceWithConfig;
   expanded: boolean;
   onToggle: () => void;
   onPatch: (id: string, patch: Partial<DeviceConfig>, label: string) => void;
   saveStatus?: SaveStatus;
   api: ReturnType<typeof useHttpApi>;
-  addLog: (dir: LogEntry["dir"], text: string) => void;
+  addLog: (dir: LogEntry["dir"], text: string, deviceId?: string) => void;
   httpBase: string;
   webhooks: ApiWebhook[];
 }
 
 function DeviceCard({
+  logs,
   device,
   expanded,
   onToggle,
@@ -280,7 +336,9 @@ function DeviceCard({
   const bargeIn = device.config?.barge_in !== false;
   const sampleRate = device.config?.output_sample_rate;
 
-  const [nameDraft, setNameDraft] = useState(device.config?.name ?? device.name ?? "");
+  const [nameDraft, setNameDraft] = useState(
+    device.config?.name ?? device.name ?? "",
+  );
   // Keep nameDraft in sync if the canonical name changes server-side and
   // we're not actively editing.
   const lastServerNameRef = useRef(device.config?.name ?? device.name ?? "");
@@ -307,12 +365,12 @@ function DeviceCard({
     const text = annText.trim() === "" ? "hello world" : annText;
     try {
       await api.announce(device.id, text);
-      addLog("sys", `Announce sent to ${device.id}: "${text}"`);
+      addLog("sys", `Announce sent to ${device.id}: "${text}"`, device.id);
       setAnnText("hello world");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setAnnError(msg);
-      addLog("sys", `Announce error: ${msg}`);
+      addLog("sys", `Announce error: ${msg}`, device.id);
     }
   };
 
@@ -328,11 +386,11 @@ function DeviceCard({
               ? { enabled: ctlBargeIn === "true" }
               : undefined;
       await api.command(device.id, ctlCommand, params);
-      addLog("sys", `Command ${ctlCommand} sent to ${device.id}`);
+      addLog("sys", `Command ${ctlCommand} sent to ${device.id}`, device.id);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setCtlError(msg);
-      addLog("sys", `Command error: ${msg}`);
+      addLog("sys", `Command error: ${msg}`, device.id);
     }
   };
 
@@ -385,8 +443,22 @@ function DeviceCard({
       </button>
 
       {expanded && (
-        <div id={panelId} className="space-y-4 border-t border-white/5 px-3 py-3">
+        <div
+          id={panelId}
+          className="space-y-4 border-t border-white/5 px-3 py-3"
+        >
           <SpeechSettings deviceId={device.id} />
+          <details className="card p-3 text-sm">
+            <summary>Device diagnostics</summary>
+            <p className="my-2 text-zinc-400">
+              Actions recorded for this device in this browser session.
+            </p>
+            <div className="h-48">
+              <EventLog
+                entries={logs.filter((entry) => entry.deviceId === device.id)}
+              />
+            </div>
+          </details>
           <section aria-label="Device configuration" className="space-y-3">
             <div className="card-section-title">Config</div>
             <div className="flex flex-wrap items-end gap-3">
@@ -402,12 +474,29 @@ function DeviceCard({
               </label>
               <label className={labelClass}>
                 Voice mode
-                <select className={inputClass} value={voiceMode}
+                <select
+                  className={inputClass}
+                  value={voiceMode}
                   disabled={saving}
-                  onChange={(e) => onPatch(device.id,
-                    { voice_mode: e.target.value as "websocket" | "webrtc" | "realtime" }, `Voice mode → ${e.target.value}`)}>
-                  <option value="websocket">WebSocket only · no barge-in</option>
-                  <option value="webrtc">WebRTC Standard · optional barge-in</option>
+                  onChange={(e) =>
+                    onPatch(
+                      device.id,
+                      {
+                        voice_mode: e.target.value as
+                          | "websocket"
+                          | "webrtc"
+                          | "realtime",
+                      },
+                      `Voice mode → ${e.target.value}`,
+                    )
+                  }
+                >
+                  <option value="websocket">
+                    WebSocket only · no barge-in
+                  </option>
+                  <option value="webrtc">
+                    WebRTC Standard · optional barge-in
+                  </option>
                   <option value="realtime">WebRTC Realtime</option>
                 </select>
               </label>
@@ -417,7 +506,11 @@ function DeviceCard({
                   className={inputClass}
                   value={mode}
                   onChange={(e) =>
-                    onPatch(device.id, { follow_up_mode: e.target.value as FollowUpMode }, `follow_up_mode → ${e.target.value}`)
+                    onPatch(
+                      device.id,
+                      { follow_up_mode: e.target.value as FollowUpMode },
+                      `follow_up_mode → ${e.target.value}`,
+                    )
                   }
                   disabled={saving}
                 >
@@ -459,7 +552,11 @@ function DeviceCard({
                       val === ""
                         ? { output_sample_rate: undefined }
                         : { output_sample_rate: parseInt(val, 10) };
-                    onPatch(device.id, patch, `output_sample_rate → ${val || "default"}`);
+                    onPatch(
+                      device.id,
+                      patch,
+                      `output_sample_rate → ${val || "default"}`,
+                    );
                   }}
                   disabled={saving}
                 >
@@ -527,7 +624,11 @@ function DeviceCard({
                   placeholder="Hello from the browser"
                 />
               </label>
-              <button className={primaryBtn} onClick={handleAnnounce} type="button">
+              <button
+                className={primaryBtn}
+                onClick={handleAnnounce}
+                type="button"
+              >
                 Send
               </button>
             </div>
@@ -594,7 +695,11 @@ function DeviceCard({
                   </select>
                 </label>
               )}
-              <button className={primaryBtn} onClick={handleCommand} type="button">
+              <button
+                className={primaryBtn}
+                onClick={handleCommand}
+                type="button"
+              >
                 Send
               </button>
             </div>
@@ -623,7 +728,9 @@ function GestureRow({
   disabled: boolean;
   onChange: (next: ButtonAction | undefined) => void;
 }) {
-  const [kindDraft, setKindDraft] = useState<ActionKind>(action?.kind ?? "none");
+  const [kindDraft, setKindDraft] = useState<ActionKind>(
+    action?.kind ?? "none",
+  );
   const [textDraft, setTextDraft] = useState(action?.text ?? "");
   useEffect(() => {
     setKindDraft(action?.kind ?? "none");
@@ -692,7 +799,11 @@ function GestureRow({
             aria-label={`${label} text`}
             onChange={(e) => setTextDraft(e.target.value)}
             onBlur={commitText}
-            placeholder={kindDraft === "prompt" ? "turn off the kitchen lights" : "Goodnight"}
+            placeholder={
+              kindDraft === "prompt"
+                ? "turn off the kitchen lights"
+                : "Goodnight"
+            }
           />
         </label>
       )}
@@ -708,7 +819,11 @@ function GestureRow({
               onChange={(e) => {
                 const command = e.target.value;
                 if (command === "set_volume") {
-                  onChange({ kind: "command", command, volume: action?.volume ?? 50 });
+                  onChange({
+                    kind: "command",
+                    command,
+                    volume: action?.volume ?? 50,
+                  });
                 } else {
                   onChange({ kind: "command", command });
                 }
@@ -752,7 +867,9 @@ function GestureRow({
             value={action?.webhook_id ?? ""}
             disabled={disabled || webhooks.length === 0}
             aria-label={`${label} webhook`}
-            onChange={(e) => onChange({ kind: "webhook", webhook_id: e.target.value })}
+            onChange={(e) =>
+              onChange({ kind: "webhook", webhook_id: e.target.value })
+            }
           >
             {webhooks.length === 0 ? (
               <option value="">Add a webhook in Settings</option>
@@ -772,8 +889,10 @@ function GestureRow({
 
 function SaveBadge({ status }: { status?: SaveStatus }) {
   if (!status) return null;
-  if (status.status === "saving") return <span className="text-[11px] text-zinc-400">Saving…</span>;
-  if (status.status === "saved") return <span className="text-[11px] text-emerald-400">Saved</span>;
+  if (status.status === "saving")
+    return <span className="text-[11px] text-zinc-400">Saving…</span>;
+  if (status.status === "saved")
+    return <span className="text-[11px] text-emerald-400">Saved</span>;
   return (
     <span className="text-[11px] text-red-400" title={status.message}>
       Error

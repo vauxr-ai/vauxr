@@ -3,10 +3,12 @@ import userEvent from "@testing-library/user-event";
 import Sidebar from "./Sidebar";
 
 describe("Sidebar", () => {
-  function renderSidebar(overrides: Partial<React.ComponentProps<typeof Sidebar>> = {}) {
+  function renderSidebar(
+    overrides: Partial<React.ComponentProps<typeof Sidebar>> = {},
+  ) {
     const onSelect = vi.fn();
     const props = {
-      active: "connection" as const,
+      active: "agents" as const,
       onSelect,
       connectionState: "disconnected" as const,
       deviceId: "",
@@ -16,17 +18,25 @@ describe("Sidebar", () => {
     return { onSelect };
   }
 
-  it("renders all four nav items", () => {
+  it("renders the three management destinations", () => {
     renderSidebar();
-    expect(screen.getByRole("button", { name: /connection/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^connection$/i }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /agents/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /devices/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /settings/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /devices/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /settings/i }),
+    ).toBeInTheDocument();
   });
 
   it("does not render an 'HTTP API' nav entry", () => {
     renderSidebar();
-    expect(screen.queryByRole("button", { name: /http api/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /http api/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("marks the active item with aria-current=page", () => {
@@ -34,7 +44,7 @@ describe("Sidebar", () => {
     const agents = screen.getByRole("button", { name: /agents/i });
     expect(agents).toHaveAttribute("aria-current", "page");
 
-    const connection = screen.getByRole("button", { name: /connection/i });
+    const connection = screen.getByRole("button", { name: /devices/i });
     expect(connection).not.toHaveAttribute("aria-current");
   });
 
@@ -65,7 +75,7 @@ describe("Sidebar", () => {
     for (const state of ["listening", "processing", "speaking"] as const) {
       const { unmount } = render(
         <Sidebar
-          active="connection"
+          active="agents"
           onSelect={() => {}}
           connectionState={state}
           deviceId="dev"

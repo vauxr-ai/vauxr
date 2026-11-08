@@ -4,9 +4,21 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: "#0f0f0f",
-        surface: "#15151a",
-        "surface-2": "#1a1a20",
+        zinc: Object.fromEntries(
+          [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map((n) => [
+            n,
+            `rgb(var(--neutral-${n}) / <alpha-value>)`,
+          ]),
+        ),
+        indigo: Object.fromEntries(
+          [100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map((n) => [
+            n,
+            `rgb(var(--accent-${n}) / <alpha-value>)`,
+          ]),
+        ),
+        bg: "var(--canvas)",
+        surface: "var(--panel)",
+        "surface-2": "var(--panel-raised)",
         "surface-3": "#22222a",
         "border-subtle": "rgba(255,255,255,0.06)",
         "border-soft": "rgba(255,255,255,0.10)",

@@ -32,7 +32,7 @@ export default function EventLog({ entries, onClear }: Props) {
     >
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-1 font-mono text-[11px] leading-5">
         {entries.length === 0 ? (
-          <p className="text-zinc-600">No events yet. Connect a server to begin.</p>
+          <p className="text-zinc-600">No events recorded in this browser session.</p>
         ) : (
           entries.map((e, i) => (
             <div key={i} className="flex gap-3 whitespace-pre-wrap break-all">
