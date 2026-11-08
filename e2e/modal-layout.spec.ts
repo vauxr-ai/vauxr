@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { test, expect, login, openAgentAction, seedRealtimeAgent } from './auth-fixture';
+import { test, expect, login, openAgentAction, seedRealtimeAgent, requestIntegration, client } from './auth-fixture';
 import type { Locator, Page } from '@playwright/test';
 
 // Check real geometry, including hidden clipping: overflow:hidden is not a fix.
@@ -42,11 +42,27 @@ for (const width of [390,1366]) for (const theme of ['light','dark']) test(`ever
   await page.getByLabel('Appearance').selectOption(theme);
   const shot=async(name:string)=>{mkdirSync('/tmp/vauxr-modal-fit-screenshots',{recursive:true});await page.screenshot({path:`/tmp/vauxr-modal-fit-screenshots/${name}-${width}-${theme}.png`});};
   const close=async(dialog:Locator)=>{await dialog.getByRole('button',{name:'Close dialog',exact:true}).click();await page.keyboard.press('Escape');};
+  const pending = await requestIntegration(server,'Pending OpenClaw');
+  const second = await requestIntegration(server,'Second OpenClaw');
   await page.getByRole('button',{name:'+ Add Agent',exact:true}).click();
   const add=page.getByRole('dialog',{name:'Add Agent',exact:true});
   await expect(add.getByRole('button',{name:'Choose Vauxr Support',exact:true})).toBeVisible();
   await fits(add,page);
-  for(const type of ['OpenClaw','Vauxr Support']) {await add.getByRole('button',{name:`Choose ${type}`,exact:true}).click();await fits(add,page);}
+  await add.getByRole('button',{name:'Choose OpenClaw',exact:true}).click();
+  await add.getByRole('button',{name:'Refresh integration requests',exact:true}).click();
+  const requestRow=add.getByRole('region',{name:/^Integration request /});await expect(requestRow).toHaveCount(1);
+  for(let step=0;step<5;step++) {
+    await fits(add,page);await shot(`enrollment-${step}`);
+    if(step<4) await add.getByRole('navigation',{name:'Enrollment setup steps',exact:true}).getByRole('button',{name:'Next',exact:true}).click();
+  }
+  const shownId=(await requestRow.getAttribute('aria-label'))!.replace('Integration request ','');
+  const selected=[pending,second].find(item=>item.request.request_id===shownId)!;
+  await requestRow.getByLabel('Integration matching code').fill(selected.request.user_code);await requestRow.getByRole('checkbox').check();
+  await requestRow.getByRole('button',{name:'Approve matching integration',exact:true}).click();
+  const delivery=await client(server,'deliver',selected.secret);await client(server,'ack',{...selected.secret,credential:delivery.credential,saved:true});
+  await fits(add,page);
+  await add.getByRole('navigation',{name:'Integration requests',exact:true}).getByRole('button',{name:'Next request',exact:true}).click();await fits(add,page);
+  await add.getByRole('button',{name:'Choose Vauxr Support',exact:true}).click();await fits(add,page);
   await shot('create'); await close(add);
   await page.getByRole('button',{name:'Edit avatar for Vauxr Support',exact:true}).click();
   const avatar=page.getByRole('dialog',{name:'Edit agent avatar',exact:true});await fits(avatar,page);await shot('avatar');await close(avatar);

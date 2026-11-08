@@ -78,7 +78,7 @@ export default function AddAgent({
               <strong>{d.name}</strong><small>{d.supported_modes.includes("standard") ? "Voice & text" : "Text agent"}</small>
             </button>)}
           </div>
-          {selected === "@openclaw" ? <IntegrationEnrollment/> : !!definitions?.length && (
+          {selected === "@openclaw" ? <IntegrationEnrollment compact/> : !!definitions?.length && (
             <form
               className="grid gap-3" aria-busy={busy}
               onSubmit={async (e) => {

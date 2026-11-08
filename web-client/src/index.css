@@ -1087,3 +1087,11 @@ dialog.modal.agent-diagnostics-modal[open] { height:min(720px,calc(100dvh - 24px
  .companion.is-open .diagnostics { padding:6px; }
  .companion.is-open .voice-connection > details { margin-top:0; padding-top:6px; }
 }
+.enrollment-pages { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.enrollment-pages strong,.enrollment-pages span { font-size:11px; text-align:center; }
+.enrollment-pages button { min-height:44px; font-size:12px; flex:none; }
+.agent-create-modal:has(.is-connecting) .modal-body > .refresh-button { display:none; }
+.agent-create-modal .is-connecting ~ section > h3 { font-size:14px; }
+.agent-create-modal .is-connecting ~ section { font-size:12px; line-height:1.35; }
+.agent-create-modal .is-connecting ~ section > section { padding-block:8px; }
+.agent-create-modal:has(.is-connecting) .modal-body > p:first-child { display:none; }
