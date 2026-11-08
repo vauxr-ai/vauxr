@@ -28,7 +28,8 @@ export default function Modal({
     <dialog
       ref={dialog}
       className={`modal auth-panel ${className}`}
-      aria-labelledby={titleId}
+      aria-labelledby={titleContent ? undefined : titleId}
+      aria-label={titleContent ? title : undefined}
       onKeyDown={(event) => {
         if (event.key !== "Tab") return;
         const controls = Array.from(

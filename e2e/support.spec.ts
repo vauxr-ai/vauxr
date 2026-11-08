@@ -6,8 +6,8 @@ for (const width of [390, 1366]) test(`built-in Support is independent and hones
     navigator.mediaDevices.getUserMedia = async () => { (window as any).micCalls++; throw Error("Mic must stay off"); };
   });
   await login(page, server);
-  await page.getByRole("button", {name:"Runtime diagnostics for Vauxr Support", exact:true}).click();
-  const diagnostics = page.getByRole("dialog", {name:"Agent runtime diagnostics", exact:true});
+  await page.getByRole("button", {name:"Runtime settings for Vauxr Support", exact:true}).click();
+  const diagnostics = page.getByRole("dialog", {name:"Agent runtime settings", exact:true});
   const setup = diagnostics.getByRole("region", {name:/^(Support runtime|Agent model runtime)$/, exact:true});
   await expect(setup).toContainText("Setup needed");
   await expect(setup.getByRole("combobox")).toHaveValue("");

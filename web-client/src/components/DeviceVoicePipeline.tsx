@@ -68,7 +68,7 @@ export default function DeviceVoicePipeline({ deviceId, onModeChange, transport 
     {error && <p role="alert">{error}</p>}
     {data && <>
       <label className="device-field"><span className="sr-only">Assigned agent</span><select aria-label="Assigned agent" disabled={busy} value={data.policy.assigned ? data.policy.agent_id : ""} onChange={event => save({ agent_id: event.target.value || null })}>
-        <option value="">Use default agent ({data.policy.fallback_agent || "none"})</option>
+        <option value="">Use default agent ({data.policy.agents.find(a => a.id === data.policy.fallback_agent)?.name || data.policy.fallback_agent || "none"})</option>
         {data.policy.assigned && !agent && <option value={data.policy.agent_id}>Unavailable agent ({data.policy.agent_id})</option>}
         {data.policy.agents.map(a => <option value={a.id} key={a.id}>{a.name}</option>)}
       </select></label>

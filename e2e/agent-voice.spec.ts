@@ -155,7 +155,7 @@ for (const width of [375, 390])
         await page.getByRole("button", {name: "Refresh agents", exact: true}).click();
         await page
           .getByRole("button", {
-            name: "View agent Household agent with a long populated display name",
+            name: "Voice pipeline for Household agent with a long populated display name",
           })
           .click();
         const agent = page.getByRole("region", {
@@ -228,7 +228,7 @@ for (const width of [375, 390])
         await page.getByRole("button", { name: "Agents", exact: true }).click();
         await page
           .getByRole("button", {
-            name: "View agent Household agent with a long populated display name",
+            name: "Voice pipeline for Household agent with a long populated display name",
           })
           .click();
         await agent.getByLabel("Enable Live").uncheck();
@@ -260,7 +260,7 @@ for (const width of [375, 390])
         await page.getByRole("button", { name: "Agents", exact: true }).click();
         await page
           .getByRole("button", {
-            name: "View agent Household agent with a long populated display name",
+            name: "Voice pipeline for Household agent with a long populated display name",
           })
           .click();
         await agent.getByLabel("Enable Live").uncheck();
@@ -271,7 +271,7 @@ for (const width of [375, 390])
         await page.reload();
         await page
           .getByRole("button", {
-            name: "View agent Household agent with a long populated display name",
+            name: "Voice pipeline for Household agent with a long populated display name",
           })
           .click();
         await expect(agent.getByLabel("Enable Live")).not.toBeChecked();
@@ -320,7 +320,7 @@ for (const width of [375, 390])
         await page.getByRole("button", { name: "Agents", exact: true }).click();
         await page
           .getByRole("button", {
-            name: "View agent Household agent with a long populated display name",
+            name: "Voice pipeline for Household agent with a long populated display name",
           })
           .click();
         await agent.getByLabel("Enable Standard").check();

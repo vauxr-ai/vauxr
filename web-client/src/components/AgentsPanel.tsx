@@ -21,6 +21,8 @@ export default function AgentsPanel({
 }) {
   const api = useAgents();
   const returnFocus = useRef<HTMLButtonElement>(null);
+  const voiceReturnFocus = useRef<HTMLButtonElement>(null);
+  const [voiceId, setVoiceId] = useState("");
   const avatarReturnFocus = useRef<HTMLButtonElement>(null);
   const diagnosticsReturnFocus = useRef<HTMLButtonElement>(null);
   const [avatarOpen, setAvatarOpen] = useState(false);
@@ -36,6 +38,7 @@ export default function AgentsPanel({
   const [selectedId, setSelectedId] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [saved, setSaved] = useState("");
+  const voiceAgent = agents.find(agent => agent.id === voiceId);
   const diagnostics = agents.find(agent => agent.id === diagnosticsId);
   const selected = agents.find((agent) => agent.id === selectedId);
   useEffect(() => {
@@ -138,7 +141,7 @@ export default function AgentsPanel({
           </div>
           <RefreshButton label="Refresh agents" busy={loading || busy} onClick={refresh} />
         </div>
-        {error && !selectedId && (
+        {error && !selectedId && !diagnosticsId && !voiceId && (
           <p role="alert" className="p-5 text-red-300">
             {error}
           </p>
@@ -203,15 +206,17 @@ export default function AgentsPanel({
                 >
                   {agent.active ? "Default" : "Set as default"}
                 </button>
-                <button className="agent-route-action agent-diagnostics-action" aria-label={`Runtime diagnostics for ${agent.name}`} title="Agent runtime diagnostics"
-                  onClick={event => { (diagnosticsReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setError(""); setDiagnosticsId(agent.id); }}>⋯</button>
+                <button className="agent-route-action" aria-label={`Voice pipeline for ${agent.name}`}
+                  onClick={event => {(voiceReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setVoiceId(agent.id);}}>Voice pipeline</button>
+                <button className="agent-route-action" aria-label={`Runtime settings for ${agent.name}`} title="Agent runtime settings"
+                  onClick={event => { (diagnosticsReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setError(""); setDiagnosticsId(agent.id); }}>Runtime settings</button>
               </li>
             ))}
           </ul>
         )}
       </section>
       {selectedId && (
-        <Modal title={selected?.name || "Agent detail"} className="agent-detail-modal agent-detail"
+        <Modal title={selected?.name || "Agent detail"} className="agent-detail-modal agent-detail agent-identity-modal"
           returnFocus={returnFocus} onClose={() => {setSelectedId(""); setEditingName(false);}}
           titleContent={editingName ? <form id="rename-agent" onSubmit={async event => {
             event.preventDefault(); if (!selected) return; setBusy(true); setError(""); setSaved("");
@@ -240,10 +245,7 @@ export default function AgentsPanel({
                   <span aria-hidden="true" className="avatar-edit-badge">✎</span>
                 </button>
               </div>
-              <SpeechSettings
-                key={`voice-${selected.id}`}
-                agentId={selected.id} agentName={selected.name} browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential}
-              />
+
             </>
           ) : (
             <p role="status">
@@ -252,6 +254,16 @@ export default function AgentsPanel({
           )}
         </Modal>
       )}
+      {voiceAgent && <Modal title="Voice pipeline" className="agent-detail-modal agent-detail agent-voice-modal"
+        returnFocus={voiceReturnFocus} onClose={() => setVoiceId("")}>
+        <h3>{voiceAgent.name}</h3>
+        <SpeechSettings key={`voice-${voiceAgent.id}`} agentId={voiceAgent.id} agentName={voiceAgent.name}
+          browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential}
+          onEditAgent={() => {
+            (returnFocus as {current: HTMLButtonElement | null}).current = voiceReturnFocus.current;
+            setVoiceId(""); setSelectedId(voiceAgent.id); setNameDraft(voiceAgent.name); setEditingName(true);
+          }} />
+      </Modal>}
       {avatarOpen && selected && <Modal title="Edit agent avatar" className="avatar-editor-modal" returnFocus={avatarReturnFocus}
         onClose={() => {if (!avatarBusy) setAvatarOpen(false);}}>
         <p>Choose a PNG, JPEG or WebP image up to 1 MB.</p>
@@ -266,9 +278,12 @@ export default function AgentsPanel({
         {avatarError && <p role="alert">{avatarError}</p>}
         <button disabled={avatarBusy} onClick={() => setAvatarOpen(false)}>Cancel</button>
       </Modal>}
-      {diagnostics && <Modal title="Agent runtime diagnostics" className="agent-detail-modal agent-detail agent-diagnostics-modal"
+      {diagnostics && <Modal title="Agent runtime settings" className="agent-detail-modal agent-detail agent-diagnostics-modal"
         returnFocus={diagnosticsReturnFocus} onClose={() => setDiagnosticsId("")}>
         <h3>{diagnostics.name}</h3>
+        <button disabled={diagnostics.active || busy} onClick={() => void activate(diagnostics)}>
+          {diagnostics.active ? "Default" : "Set as default"}
+        </button>
         <p>Provider changes apply to new turns. Reconnect WebRTC after changing providers. Readiness checks availability, not model inference; unavailable providers do not fall back automatically.</p>
         {error && <p role="alert">{error}</p>}
         <p>

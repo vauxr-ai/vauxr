@@ -104,9 +104,10 @@ export default function SpeechSettings({
   deviceId,
   agentId,
   onModeChange,
-  agentName, browserDeviceId, browserConnected = false, browserCredential,
+  agentName, browserDeviceId, browserConnected = false, browserCredential, onEditAgent,
 }: {
   agentName?: string;
+  onEditAgent?: () => void;
   browserDeviceId?: string;
   browserConnected?: boolean;
   browserCredential?: () => string | null;
@@ -427,7 +428,7 @@ export default function SpeechSettings({
           </> : null}
           <div role={agentId ? "tabpanel" : undefined} id={`${tabsId}-panel`} aria-labelledby={agentId ? `${tabsId}-${shownMode}` : undefined} className={agentId ? "pipeline-editor" : "speech-provider-fields"}>
           {agentId ? <>
-            <AgentPipeline onEdit={(kind) => {
+            <AgentPipeline onEditAgent={onEditAgent} onEdit={(kind) => {
               const labels: Record<string, string> = {stt: "STT backend", tts: "TTS backend", realtime: "Realtime provider / model"};
               const target = labels[kind];
               if (target) Array.from(document.querySelectorAll<HTMLSelectElement>(".agent-detail-modal select")).find(el => Array.from(el.labels || []).some(label => label.textContent === target))?.focus();

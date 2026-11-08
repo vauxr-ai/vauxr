@@ -947,4 +947,6 @@ button.refresh-button:hover:not(:disabled) { color:var(--accent); background:var
 .avatar-dropzone { position:relative; display:flex; flex-direction:column; align-items:center; gap:18px; text-align:center; padding:36px 20px; border:2px dashed var(--line); border-radius:20px; cursor:pointer; background:var(--panel); }
 .avatar-dropzone input { max-width:100%; }
 .avatar-dropzone:focus-within { outline:2px solid var(--accent); outline-offset:3px; }
-.agent-diagnostics-action { min-width:44px; min-height:44px; font-size:24px; }
+
+@media(min-width:761px){.agent-identity-modal { width:min(600px,calc(100% - 48px)); }}
+.space-y-5 > dialog.agent-identity-modal[open] { width:min(600px,calc(100% - 32px)); height:fit-content; max-height:calc(100dvh - 32px); margin:auto; border:1px solid var(--line); border-radius:24px; }
