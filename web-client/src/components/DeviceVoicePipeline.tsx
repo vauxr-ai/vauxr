@@ -86,7 +86,7 @@ export default function DeviceVoicePipeline({ deviceId, onModeChange, transport 
         <h4>Voice pipeline</h4>
         <p className="device-muted">{Object.keys(data.overrides).length ? "This device has custom voice settings." : "Using the assigned agent’s voice defaults."}</p>
         <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "Hide voice pipeline overrides" : "Override agent voice pipeline defaults"}</button>
-        {expanded && <fieldset disabled={busy} className="device-voice-overrides speech-fields">
+        {expanded && <fieldset disabled={busy} className="device-voice-overrides">
           {data.policy.chat_only ? <p>Chat-only agent. Select a voice-enabled agent to use this device’s microphone and speaker.</p> : <>
             <PipelineGraph mode={mode} agentName={agent?.name || data.policy.fallback_agent || "Agent"} stt={data.effective?.stt_backend} tts={data.effective?.tts_backend} realtime={data.voice?.realtime_backend} />
             {data.effective && mode !== "realtime" && <p className="device-muted">Effective: {data.effective.stt_backend} / {data.effective.tts_backend} / {data.effective.voice_id}</p>}
