@@ -262,17 +262,11 @@ export default function DevicesPanel({
 
   return (
     <div className="card overflow-hidden">
-      <div className="p-4"><button onClick={()=>setAddingDevice(!addingDevice)} aria-expanded={addingDevice}>{addingDevice ? "Close Add Device" : "+ Add Device"}</button></div>
-      {addingDevice && <AccessPanel mode="pairing"/>}
-      <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
-        <div>
-          <h2 className="text-base font-semibold text-zinc-100">Devices</h2>
-          <p className="text-xs text-zinc-500">
-            Connected hardware, per-device settings, and actions.
-          </p>
-        </div>
+      <div className="flex items-center justify-end gap-3 border-b border-white/5 px-5 py-3">
+        <button onClick={()=>setAddingDevice(!addingDevice)} aria-expanded={addingDevice}>{addingDevice ? "Close Add Device" : "+ Add Device"}</button>
         <RefreshButton label="Refresh" onClick={refresh} />
       </div>
+      {addingDevice && <AccessPanel mode="pairing"/>}
 
       <div className="px-5 py-4">
         {error && (
