@@ -83,8 +83,8 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
     await page.getByRole("button", {name:"Agents",exact:true}).click();
     await page.getByText("Refresh agents", { exact: true }).click();
     const route = page.locator("li").filter({ hasText: "Synthetic OpenClaw" });
-    await route.getByRole("button", { name: "Activate", exact: true }).click();
-    await expect(route.getByText("Active route", { exact: true })).toBeVisible();
+    await route.getByRole("button", { name: "Set as default", exact: true }).click();
+    await expect(route.getByRole("button", { name: "Default", exact: true })).toBeDisabled();
     // PR58 settings run against the actual connected device projection and real speech API.
     await page.getByRole("button", { name: "Devices", exact: true }).click();
     await page.getByText(device.device_id, { exact: true }).first().click();

@@ -301,7 +301,7 @@ test("agent names persist independently of shared routing and credentials", asyn
   await page
     .locator("main li")
     .filter({ hasText: "Household helper" })
-    .getByText("Activate", { exact: true })
+    .getByText("Set as default", { exact: true })
     .click();
   await page
     .getByRole("button", { name: "View agent Household helper" })

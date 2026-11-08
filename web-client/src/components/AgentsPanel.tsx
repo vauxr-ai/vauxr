@@ -58,7 +58,7 @@ export default function AgentsPanel({
   async function activate(agent: ApiAgent) {
     if (
       !window.confirm(
-        `Make ${agent.name} the active fallback route for unassigned devices? This changes server routing, not just your companion.`,
+        `Make ${agent.name} the default fallback route for unassigned devices? This changes server routing, not just your companion.`,
       )
     )
       return;
@@ -71,7 +71,7 @@ export default function AgentsPanel({
       setError(
         error instanceof Error
           ? error.message
-          : "Agent activation failed. Refresh before retrying.",
+          : "Unable to set the default agent. Refresh before retrying.",
       );
     } finally {
       setBusy(false);
@@ -85,7 +85,7 @@ export default function AgentsPanel({
           <div>
             <h2>Routing agents</h2>
             <p>
-              The active route serves devices that have no explicit agent
+              The default agent serves devices that have no explicit agent
               assignment.
             </p>
           </div>
@@ -147,14 +147,14 @@ export default function AgentsPanel({
                   {agent.chat_only
                     ? "Chat-only · no voice"
                     : agent.active
-                      ? "Active route"
-                      : "Inactive route"}
+                      ? "Default"
+                      : "Not default"}
                 </span>
                 <button
                   disabled={agent.active || busy}
                   onClick={() => void activate(agent)}
                 >
-                  {agent.active ? "Active" : "Activate"}
+                  {agent.active ? "Default" : "Set as default"}
                 </button>
               </li>
             ))}
@@ -179,7 +179,7 @@ export default function AgentsPanel({
                       : selected.type === "openclaw-direct"
                         ? "OpenClaw direct"
                         : "OpenClaw connection"}{" "}
-                · {selected.active ? "Active route" : "Inactive route"}
+                · {selected.active ? "Default" : "Not default"}
               </p>
               <p>
                 This route is shared by devices. Changing its display name does
@@ -191,8 +191,8 @@ export default function AgentsPanel({
               <p>
                 {selected.active
                   ? "Fallback for unassigned devices only. Explicit device assignments and your independent companion selection are unchanged."
-                  : "Inactive as the shared fallback. Explicit device assignments remain separate."}{" "}
-                Route activation does not prove the integration is online or
+                  : "Not the shared default. Explicit device assignments remain separate."}{" "}
+                Setting the default does not prove the integration is online or
                 ready; check effective voice configuration below and device
                 diagnostics.
               </p>
