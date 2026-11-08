@@ -104,6 +104,31 @@ export default function Companion({
     };
   }, [open]);
 
+  useEffect(() => {
+    const element = panel.current;
+    const shell = element?.closest<HTMLElement>(".app-shell");
+    if (!element || !shell) return;
+    const property = "--voice-dock-reserve";
+    const previous = shell.style.getPropertyValue(property);
+    const measure = () => {
+      // Reserve the dock's real height and bottom offset, including wrapped states.
+      const reserve = open
+        ? 0
+        : Math.max(0, window.innerHeight - element.getBoundingClientRect().top);
+      shell.style.setProperty(property, `${Math.ceil(reserve)}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+      if (previous) shell.style.setProperty(property, previous);
+      else shell.style.removeProperty(property);
+    };
+  }, [open]);
+
   return (
     <section
       id="voice-companion"

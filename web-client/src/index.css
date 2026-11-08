@@ -169,9 +169,11 @@
 .management {
   min-width: 0;
   overflow-y: auto;
+  scroll-padding-bottom: calc(var(--voice-dock-reserve, 186px) + 24px);
 }
 .resource-page {
-  padding: 36px clamp(20px, 3vw, 48px) 210px;
+  padding: 36px clamp(20px, 3vw, 48px)
+    calc(var(--voice-dock-reserve, 186px) + 24px);
   max-width: 1440px;
   margin: auto;
 }
@@ -484,7 +486,7 @@
     flex: 1;
   }
   .resource-page {
-    padding: 24px 16px 210px;
+    padding: 24px 16px calc(var(--voice-dock-reserve, 186px) + 24px);
   }
   .page-heading h1 {
     font-size: 27px;
@@ -714,4 +716,44 @@
   text-align: left;
   font-size: inherit;
   font-weight: inherit;
+}
+
+/* Fieldsets and native selects otherwise keep the longest option's min-content width. */
+.speech-settings,
+.speech-fields,
+.speech-field {
+  min-width: 0;
+  min-inline-size: 0;
+  max-width: 100%;
+}
+.speech-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  align-items: start;
+  gap: 12px;
+  width: 100%;
+}
+.speech-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.speech-field select {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+.speech-selection {
+  overflow-wrap: anywhere;
+}
+.speech-actions,
+.speech-note {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.speech-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }

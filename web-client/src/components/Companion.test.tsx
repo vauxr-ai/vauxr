@@ -97,3 +97,54 @@ it("does not trap focus on controls inside collapsed advanced details", async ()
   rectangles.mockRestore();
   vi.unstubAllGlobals();
 });
+
+it("reserves the measured dock height as it grows and restores its owned style on cleanup", () => {
+  vi.stubGlobal("innerHeight", 844);
+  let top = 700;
+  const rectangle = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockImplementation(() => ({ top }) as DOMRect);
+  const resizeCallbacks: ResizeObserverCallback[] = [];
+  const disconnect = vi.fn();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback);
+      }
+      observe() {}
+      disconnect = disconnect;
+    },
+  );
+  const shell = document.createElement("div");
+  shell.className = "app-shell";
+  shell.style.setProperty("--voice-dock-reserve", "72px");
+  const host = document.createElement("div");
+  shell.append(host);
+  document.body.append(shell);
+  const props = {
+    onOpen: vi.fn(),
+    context: "Devices",
+    route: "Agent",
+    state: "Ready",
+    connection: <button>Disconnect</button>,
+    children: <button>Talk</button>,
+  };
+  const view = render(<Companion {...props} open={false} />, {
+    container: host,
+  });
+  expect(shell.style.getPropertyValue("--voice-dock-reserve")).toBe("144px");
+  act(() => {
+    top = 620;
+    resizeCallbacks[0]([], {} as ResizeObserver);
+  });
+  expect(shell.style.getPropertyValue("--voice-dock-reserve")).toBe("224px");
+  view.rerender(<Companion {...props} open />);
+  expect(shell.style.getPropertyValue("--voice-dock-reserve")).toBe("0px");
+  view.unmount();
+  expect(shell.style.getPropertyValue("--voice-dock-reserve")).toBe("72px");
+  expect(disconnect).toHaveBeenCalled();
+  rectangle.mockRestore();
+  shell.remove();
+  vi.unstubAllGlobals();
+});
