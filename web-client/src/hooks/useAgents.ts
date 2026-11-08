@@ -8,6 +8,7 @@ export interface ApiAgent {
   active: boolean;
   createdAt: string;
   builtin?: boolean;
+  chat_only?: boolean;
 }
 
 export function useAgents(_baseUrl = "", _token = "") {

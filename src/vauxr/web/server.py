@@ -136,12 +136,15 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
 
 
 def _device_dict(d) -> dict[str, Any]:
+    from vauxr.speech.store import get_store as voice_store
+    chat_only = voice_store().chat_only(d.id)
     out: dict[str, Any] = {
         "id": d.id,
         "name": d.name,
+        **({"chat_only": True} if chat_only else {}),
         "state": d.state,
         "lastSeen": d.last_seen.isoformat().replace("+00:00", "Z"),
-        "config": {"pipeline_mode": pipeline_mode(registry.get_config_for(d.id)), "voice_mode": voice_mode(registry.get_config_for(d.id)),
+        "config": {"pipeline_mode": None if chat_only else pipeline_mode(registry.get_config_for(d.id)), "voice_mode": None if chat_only else voice_mode(registry.get_config_for(d.id)),
                    **{k: v for k, v in d.config.items()
                    if k in {"name", "voice", "follow_up_mode", "barge_in", "output_sample_rate",
                             "button_actions"}}},
@@ -255,6 +258,9 @@ async def announce(request: web.Request) -> web.Response:
     if not isinstance(body, dict) or not isinstance(body.get("text"), str) or not body["text"]:
         return web.json_response({"error": "missing text"}, status=400)
 
+    from vauxr.speech.store import get_store as voice_store
+    if voice_store().chat_only(device_id):
+        return web.json_response({"error": voice_store().no_voice_message()}, status=409)
     text: str = body["text"]
     log.info("announce: synthesizing")
     from vauxr.buttons import announce_to_device
@@ -316,10 +322,13 @@ async def device_command(request: web.Request) -> web.Response:
 
 @_require_auth
 async def list_agents(_request: web.Request) -> web.Response:
+    from vauxr.speech.store import get_store as voice_store
+
     agents = [
         {
             "id": c.id,
             "name": c.name,
+            "chat_only": voice_store().chat_only_agent(c.id),
             "type": c.type,
             "active": c.active,
             "createdAt": c.createdAt,

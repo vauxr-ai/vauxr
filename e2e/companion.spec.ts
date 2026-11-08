@@ -29,7 +29,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await page.getByRole("button", { name: "View agent Household companion with a long visible name" }).click();
     let sockets = 0;
     page.on("websocket", () => sockets++);
-    await page.getByRole("button", { name: "Connect browser voice", exact: true }).click();
+    await page.getByRole("button", { name: "Connect browser", exact: true }).click();
     const companion = page.locator("#voice-companion");
     await expect(companion.getByLabel("Conversation agent")).toBeEnabled();
     await expect(companion.getByLabel("Proposed display name")).toBeEnabled();
@@ -73,7 +73,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await page.getByRole("button", { name: "View agent Kitchen helper" }).click();
     if (artifacts) await page.screenshot({ path: resolve(artifacts, `companion-${width}-${theme}-saved.png`) });
     await page.getByRole("button", { name: "Disconnect", exact: true }).click();
-    await page.getByRole("button", { name: "Connect browser voice", exact: true }).click();
+    await page.getByRole("button", { name: "Connect browser", exact: true }).click();
     await expect(companion.getByLabel("Proposed display name")).toBeEnabled();
     await expect.poll(() => sockets).toBe(2);
     expect(await page.evaluate(() => (window as any).micCalls)).toBe(0);

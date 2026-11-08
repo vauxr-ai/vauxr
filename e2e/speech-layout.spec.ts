@@ -168,7 +168,7 @@ for (const width of [375, 390]) {
       await page.getByLabel("Appearance").selectOption(theme);
       await page.setViewportSize({ width, height: 844 });
       await page
-        .getByRole("button", { name: "Connect browser voice", exact: true })
+        .getByRole("button", { name: "Connect browser", exact: true })
         .click();
       await expect(
         page.getByRole("radio", { name: "Standard push-to-talk" }),

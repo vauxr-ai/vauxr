@@ -41,7 +41,7 @@ test("B2 keeps administration independent, browser ownership stable, and microph
   let sockets = 0;
   page.on("websocket", () => sockets++);
   await page
-    .getByRole("button", { name: "Connect browser voice", exact: true })
+    .getByRole("button", { name: "Connect browser", exact: true })
     .click();
   const talk = page.getByRole("complementary", { name: "Talk panel" });
   await expect(
@@ -156,7 +156,7 @@ test("B2 themes, reserved desktop companion, phone focus and authenticated scree
   }
   await page.setViewportSize({ width: 1366, height: 900 });
   await page
-    .getByRole("button", { name: "Connect browser voice", exact: true })
+    .getByRole("button", { name: "Connect browser", exact: true })
     .click();
   await page.getByRole("button", { name: "Devices", exact: true }).click();
   await page.locator("main li").first().getByRole("button").first().click();
@@ -252,7 +252,7 @@ test("Settings manages real webhook configuration without voice", async ({
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.locator("main li")).toHaveCount(1);
   await expect(
-    page.getByRole("button", { name: "Connect browser voice", exact: true }),
+    page.getByRole("button", { name: "Connect browser", exact: true }),
   ).toBeVisible();
 });
 
@@ -394,7 +394,7 @@ test("collapsed voice dock reports pending transport and explicit cancellation",
   });
   await login(page, server);
   await page
-    .getByRole("button", { name: "Connect browser voice", exact: true })
+    .getByRole("button", { name: "Connect browser", exact: true })
     .click();
   await expect(page.locator(".companion-header [role=status]")).toHaveText(
     "Connecting · Mic off",
@@ -412,6 +412,6 @@ test("collapsed voice dock reports pending transport and explicit cancellation",
   ).toBeEnabled();
   await page.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Connect browser voice", exact: true }),
+    page.getByRole("button", { name: "Connect browser", exact: true }),
   ).toBeVisible();
 });

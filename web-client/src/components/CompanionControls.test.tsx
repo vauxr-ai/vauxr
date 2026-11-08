@@ -68,3 +68,26 @@ test("switch affects only proven browser and reconnect republishes context witho
   await waitFor(() => expect(fetcher.mock.calls.filter(([path]) => path.endsWith("/context")).length).toBeGreaterThan(before));
   expect(getUserMedia).not.toHaveBeenCalled();
 });
+
+test("sends real text operation with browser proof, shows response and never requests voice", async () => {
+  const fetcher = setup();
+  fetcher.mockImplementation(async (path: string, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}"));
+    return new Response(JSON.stringify(path.endsWith("/chat")
+      ? { request_id: body.request_id, text: "Text-only response" }
+      : path.endsWith("/speech") ? { policy: { agent_id: "agent" } } : { revision: "r" }), { status: 200 });
+  });
+  const user = userEvent.setup();
+  const getUserMedia = vi.fn();
+  vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+  render(<CompanionControls {...props} />);
+  await user.type(screen.getByLabelText("Text message"), "Explain the name");
+  await user.click(screen.getByRole("button", { name: "Send text" }));
+  expect(await screen.findByLabelText("Agent text response")).toHaveTextContent("Text-only response");
+  const call = fetcher.mock.calls.find(([path]) => path.endsWith("/chat"))!;
+  expect(JSON.parse(String(call[1]?.body))).toEqual({ browser_id: "B1", request_id: expect.stringMatching(/^[a-f0-9]{32}$/), text: "Explain the name" });
+  expect(new Headers(call[1]?.headers).get("X-Vauxr-Browser")).toBe("browser-private");
+  expect(getUserMedia).not.toHaveBeenCalled();
+  expect(props.onSwitch).not.toHaveBeenCalled();
+  expect(screen.getByText(/You enter this proposal; integration-generated UI proposals are not connected/)).toBeVisible();
+});

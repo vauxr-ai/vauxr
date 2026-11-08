@@ -169,3 +169,22 @@ it("ignores unrelated device settings and preserves capture on unchanged effecti
   expect(mocks.audio.stopCapture).toHaveBeenCalledTimes(stops + 1);
   expect(screen.getByRole("radio", { name: "Realtime" })).toHaveAttribute("aria-checked", "true");
 });
+
+it("chat-only policy removes microphone and output controls without starting capture or choosing a fallback mode", async () => {
+  await setup();
+  const starts = mocks.audio.startCapture.mock.calls.length;
+  const modeWrites = vi.mocked(localStorage.setItem).mock.calls.length;
+  mocks.request.mockResolvedValueOnce({ ok: true, json: async () => ({
+    voice: { mode: null }, policy: { chat_only: true, configured: true, available_modes: [], conflict: null },
+  }) });
+  await act(async () => { window.dispatchEvent(new CustomEvent("speech-settings-changed", { detail: { scope: "global" } })); });
+  expect(screen.getByText("Chat-only · Voice unavailable")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Hold to Talk|Start listening/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("radio", { name: "Realtime" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("slider", { name: "Output volume" })).not.toBeInTheDocument();
+  fireEvent.keyDown(window, { key: " ", code: "Space" });
+  fireEvent.keyUp(window, { key: " ", code: "Space" });
+  expect(mocks.audio.startCapture).toHaveBeenCalledTimes(starts);
+  expect(localStorage.setItem).toHaveBeenCalledTimes(modeWrites);
+  expect(screen.getByLabelText("Text message")).toBeEnabled();
+});

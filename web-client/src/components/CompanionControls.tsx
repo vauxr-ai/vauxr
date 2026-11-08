@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ownerFetch, jsonResponse } from "../auth/api";
+import { ownerFetch, jsonResponse, randomId } from "../auth/api";
 import { useAgents, type ApiAgent } from "../hooks/useAgents";
 
 export interface Selection { id: string; name: string }
@@ -25,6 +25,10 @@ export default function CompanionControls({ browserId, credential, epoch, route,
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [chatBusy, setChatBusy] = useState(false);
+  const [text, setText] = useState("");
+  const [reply, setReply] = useState("");
+  const [chatError, setChatError] = useState("");
   const generation = useRef(0);
   const queue = useRef(Promise.resolve());
   const [refresh, setRefresh] = useState(0);
@@ -68,20 +72,39 @@ export default function CompanionControls({ browserId, credential, epoch, route,
   };
   return <div className="companion-controls auth-panel space-y-3">
     <label>Conversation agent
-      <select aria-describedby="companion-selected-agent" aria-label="Conversation agent" value={agentId} disabled={!browserId || busy}
+      <select aria-describedby="companion-selected-agent" aria-label="Conversation agent" value={agentId} disabled={!browserId || busy || chatBusy}
         onChange={event => { const value = event.target.value; void run(async () => {
+          setReply(""); setChatError("");
           onSwitch();
           await request("select", { agent_id: value }); setAgentId(value); setRefresh(n => n + 1);
           window.dispatchEvent(new Event("agent-route-changed"));
         }, "Unable to switch. Resolve browser voice override conflicts in Devices, then retry."); }}>
         <option value="" disabled>{browserId ? "Choose agent" : "Connect this browser first"}</option>
-        {agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+        {agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}{agent.chat_only ? " · Chat-only" : ""}</option>)}
       </select>
     </label>
     <p id="companion-selected-agent" className="text-xs">{agents.find(agent => agent.id === agentId)?.name || "Select a conversation agent for this browser."}</p>
+    <form className="companion-text" onSubmit={event => {
+      event.preventDefault();
+      if (!browserId || !text.trim() || busy || chatBusy) return;
+      const message = text.trim();
+      setChatBusy(true); setChatError(""); setReply("");
+      void request("chat", { request_id: randomId(), text: message }).then(result => {
+        setReply(result.text); setText("");
+      }).catch(() => setChatError("Text request failed or its outcome is uncertain. Check action status before sending again."))
+        .finally(() => setChatBusy(false));
+    }}>
+      <label>Text message
+        <textarea aria-label="Text message" maxLength={2000} rows={2}
+          value={text} disabled={!browserId || chatBusy} onChange={event => setText(event.target.value)} />
+      </label>
+      <button disabled={!browserId || !text.trim() || busy || chatBusy}>{chatBusy ? "Waiting for agent…" : "Send text"}</button>
+      {chatError && <p role="alert">{chatError}</p>}
+      {reply && <p className="companion-reply" role="status" aria-label="Agent text response">{reply}</p>}
+    </form>
     {selection && <div className="companion-proposal">
       <p>Selected agent: {selection.name} · Display name</p>
-      <p className="text-xs">Context is untrusted page data. Changes require your confirmation.</p>
+      <p className="text-xs">Context is untrusted page data. You enter this proposal; integration-generated UI proposals are not connected. Changes require your confirmation.</p>
       <label>Proposed display name
         <input aria-label="Proposed display name" maxLength={120} value={draft}
           disabled={!revision || busy} onChange={event => { setDraft(event.target.value); setProposal(null); }} />

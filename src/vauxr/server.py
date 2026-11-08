@@ -236,7 +236,7 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
             ctx.output_sample_rate = rate
 
     realtime_policy: dict[str, Any] = {"enabled": False, "transport": "ws"}
-    if webrtc_ok and not conflict:
+    if webrtc_ok and not conflict and not store.chat_only(device_key):
         # offer_url must be same-origin with the device's trusted signaling
         # origin (owner_auth.configured_origin) so firmware's credential guard
         # accepts it — REALTIME_HOST is for ICE candidate host munging only and
@@ -260,7 +260,9 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
         caps_list,
         realtime_policy.get("transport"),
     )
-    await send_json(ws, {"type": "hello", "pipeline_mode": mode, "realtime": realtime_policy})
+    chat_only = store.chat_only(device_key)
+    await send_json(ws, {"type": "hello", "pipeline_mode": None if chat_only else mode,
+                         "chat_only": chat_only, "voice_enabled": not chat_only, "realtime": realtime_policy})
     if conflict:
         await send_json(ws, {"type": "error", "code": "VOICE_CONFLICT", "message": conflict})
 
@@ -292,10 +294,15 @@ async def _voice_start(
     state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]
 ) -> None:
     device_id = ctx.device_id
+    from vauxr.chat import is_active
+    if is_active(device_id):
+        await send_json(ws, {"type": "error", "code": "VOICE_CONFLICT",
+                             "message": "A text request is active; wait for its result before starting voice"})
+        return
     from vauxr.speech.store import get_store as voice_store
     store = voice_store()
     if store.managed(device_id):
-        conflict = store.conflict(device_id)
+        conflict = store.runtime_conflict(device_id, "standard")
         if not conflict and store.voice_settings(device_id)["mode"] != "standard":
             conflict = "Live requires WebRTC; start Live or choose a Standard override."
         if conflict:
@@ -431,13 +438,18 @@ async def _realtime_start(
     # set (same gate _hello uses to advertise the webrtc policy). Arming otherwise
     # would strand the device in "listening" with no WebRTC path — the first
     # utterance gets buffered and never processed until it disconnects.
+    from vauxr.chat import is_active
+    if is_active(device_id):
+        await send_json(ws, {"type": "error", "code": "VOICE_CONFLICT",
+                             "message": "A text request is active; wait for its result before starting voice"})
+        return
     rt = get_config().realtime
     selected_transport = transport_mode(registry.get_config_for(device_id))
     explicit_live = msg.get("mode") == "live"
     from vauxr.speech.store import get_store as voice_store
     store = voice_store()
     if store.managed(device_id):
-        conflict = store.conflict(device_id)
+        conflict = store.no_voice_message() if store.chat_only(device_id) else store.conflict(device_id)
         if not conflict and explicit_live and store.voice_settings(device_id)["mode"] != "realtime":
             conflict = "Live is not selected. Select an enabled Live override or agent default."
         if conflict:

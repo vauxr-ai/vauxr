@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Awaitable, Callable
 
 from aiohttp import web
@@ -31,11 +32,12 @@ def attach_companion(app: web.Application, boundary: Callable[[Handler], Handler
         try:
             if request.query_string or request.content_type != "application/json":
                 raise ValueError()
+            limit = 12288 if request.match_info["action"] == "chat" else 4096
             raw = bytearray()
             async with asyncio.timeout(10):
                 async for chunk in request.content.iter_chunked(1024):
                     raw.extend(chunk)
-                    if len(raw) > 4096:
+                    if len(raw) > limit:
                         raise ValueError()
             body = json.loads(raw, object_pairs_hook=unique_object)
             if not isinstance(body, dict) or body.pop("browser_id", None) != browser.subject:
@@ -49,6 +51,23 @@ def attach_companion(app: web.Application, boundary: Callable[[Handler], Handler
                 speech_store().update(body, browser.subject)
                 companion._views.pop(companion._key(browser.subject), None)
                 result = {"agent_id": body["agent_id"]}
+            elif action == "chat":
+                from vauxr.chat import ChatError, run_chat
+                from vauxr.server import APP_STATE
+
+                if (set(body) != {"request_id", "text"} or not isinstance(body["request_id"], str)
+                        or not re.fullmatch(r"[a-f0-9]{32}", body["request_id"])
+                        or not isinstance(body["text"], str) or not 1 <= len(body["text"].strip()) <= 2000):
+                    raise ValueError()
+                if APP_STATE not in request.app:
+                    return web.json_response({"error": "Text transport unavailable"}, status=503)
+                state = request.app[APP_STATE]
+                try:
+                    reply = await run_chat(browser, body["request_id"], body["text"].strip(),
+                                           state.agent_server, state.openclaw_client)
+                except ChatError as error:
+                    return web.json_response({"error": str(error)}, status=409)
+                result = {"request_id": body["request_id"], "text": reply}
             elif action == "propose":
                 result = companion.propose(browser, body)
             elif action == "confirm":

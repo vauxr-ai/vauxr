@@ -117,7 +117,7 @@ async def test_conflicts_reject_atomically_and_name_device(voice):
     assert store.voice_settings("speaker")["mode"] == "standard"
     with pytest.raises(VoiceConflict):
         store.update({"mode": "realtime"}, "speaker")
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(VoiceConflict, match="speaker: Chat-only"):
         store.update({"enabled_modes": []}, agent_id=second.id)
 
 

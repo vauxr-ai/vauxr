@@ -40,7 +40,12 @@ export default function AgentsPanel({
     void refresh();
     const update = () => { void refresh(); };
     window.addEventListener("companion-resource-changed", update);
-    return () => window.removeEventListener("companion-resource-changed", update);
+    const policyUpdate = (event: Event) => { if ((event as CustomEvent).detail?.agentId) update(); };
+    window.addEventListener("speech-settings-changed", policyUpdate);
+    return () => {
+      window.removeEventListener("companion-resource-changed", update);
+      window.removeEventListener("speech-settings-changed", policyUpdate);
+    };
   }, []);
 
   async function activate(agent: ApiAgent) {
@@ -119,7 +124,7 @@ export default function AgentsPanel({
                   </p>
                 </div>
                 <span className="pill">
-                  {agent.active ? "Active route" : "Inactive route"}
+                  {agent.chat_only ? "Chat-only · no voice" : agent.active ? "Active route" : "Inactive route"}
                 </span>
                 <button
                   disabled={agent.active || busy}

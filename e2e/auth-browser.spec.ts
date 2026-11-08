@@ -221,7 +221,7 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
   await page.getByRole("button", { name: "Expand voice companion" }).click();
   await page.getByText("Browser voice connection", { exact: true }).click();
   await page.getByLabel("Voice WebSocket URL").fill("ws://localhost:18080/ws");
-  await page.getByText("Connect browser voice", { exact: true }).click();
+  await page.getByText("Connect browser", { exact: true }).click();
   await expect(
     page.getByText("Connected", { exact: true }).first(),
   ).toBeVisible();
@@ -275,7 +275,7 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
   await tab.getByRole("button", { name: "Expand voice companion" }).click();
   await tab.getByText("Browser voice connection", { exact: true }).click();
   await tab.getByLabel("Voice WebSocket URL").fill("ws://localhost:18080/ws");
-  await tab.getByText("Connect browser voice", { exact: true }).click();
+  await tab.getByText("Connect browser", { exact: true }).click();
   await expect(tab.getByRole("alert")).toContainText("another tab");
   // Permission denial does not send voice.start or start a turn.
   await page.evaluate(() => {
@@ -297,7 +297,7 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
   await expect(
     page.getByText("Queued; may be offline. No replacement saved."),
   ).toBeVisible();
-  await page.getByText("Connect browser voice", { exact: true }).click();
+  await page.getByText("Connect browser", { exact: true }).click();
   await expect(
     page.getByText("Connected", { exact: true }).first(),
   ).toBeVisible();
@@ -310,14 +310,14 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
   await page.reload();
   await expect(page.getByRole("main")).toBeVisible();
   await expect(
-    page.getByText("Connect browser voice", { exact: true }),
+    page.getByText("Connect browser", { exact: true }),
   ).toBeVisible();
   await post("/api/lifecycle/v1/revoke", {
     operation_id: "77777777777777777777777777777777",
     role: "device",
     subject: identity.deviceId,
   });
-  await page.getByText("Connect browser voice", { exact: true }).click();
+  await page.getByText("Connect browser", { exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Request failed");
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Expand voice companion" }).click();
@@ -443,7 +443,7 @@ test("non-loopback HTTP administration works while browser microphone remains re
   await expect(
     page.getByText("Microphone unavailable.", { exact: true }),
   ).toBeVisible();
-  await page.getByText("Connect browser voice", { exact: true }).click();
+  await page.getByText("Connect browser", { exact: true }).click();
   await expect(page.getByRole("alert")).toContainText(
     "HTTP administration remains available",
   );

@@ -9,7 +9,7 @@ type Backend = {
   readiness: string;
 };
 type Defaults = {
-  mode?: "standard" | "realtime";
+  mode?: "standard" | "realtime" | null;
   realtime_backend?: string;
   realtime_voice?: string;
   stt_backend: string;
@@ -23,7 +23,8 @@ type Policy = {
   configured: boolean;
   integration_modes: string[];
   enabled_modes: string[];
-  default_mode: string;
+  default_mode: string | null;
+  chat_only?: boolean;
   available_modes: string[];
   capabilities_known: boolean;
   conflict: string | null;
@@ -32,7 +33,7 @@ type Policy = {
 type View = {
   policy?: Policy;
   voice?: {
-    mode: "standard" | "realtime";
+    mode: "standard" | "realtime" | null;
     realtime_backend: string;
     realtime_model: string;
     realtime_voice: string;
@@ -104,7 +105,7 @@ export default function SpeechSettings({
 }: {
   deviceId?: string;
   agentId?: string;
-  onModeChange?: (mode: "standard" | "realtime") => void;
+  onModeChange?: (mode: "standard" | "realtime" | null) => void;
 }) {
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState("");
@@ -195,6 +196,7 @@ export default function SpeechSettings({
             source: "settings",
             scope: deviceId ? "device" : "global",
             deviceId,
+            agentId,
           },
         }),
       );
@@ -205,7 +207,7 @@ export default function SpeechSettings({
     }
   }
   useEffect(() => {
-    if (data) onModeChange?.(data.voice?.mode || "standard");
+    if (data) onModeChange?.(data.policy?.chat_only ? null : data.voice?.mode || "standard");
   }, [data, onModeChange]);
   useEffect(() => {
     setAgentDraft(data?.policy?.assigned ? data.policy.agent_id : "");
@@ -218,6 +220,7 @@ export default function SpeechSettings({
           voices: { ...data.defaults.voices, ...providerDraft.voices },
         }
       : data?.defaults;
+  const chatOnly = data?.policy?.chat_only === true;
   const hasProviderDraft = Object.keys(providerDraft).length > 0;
   const effective = data?.effective;
   const shownMode = agentId ? editMode : data?.voice?.mode || "standard";
@@ -269,6 +272,7 @@ export default function SpeechSettings({
       {error && <p role="alert">{error}</p>}
       {data?.error && <p role="alert">{data.error}</p>}
       {data?.policy?.conflict && <p role="alert">{data.policy.conflict}</p>}
+      {chatOnly && <p role="status">Chat-only · No voice modes enabled. Browser text is available; physical voice devices require a voice-enabled agent.</p>}
       {deviceId && data?.policy && (
         <fieldset disabled={busy} className="speech-fields">
           <SpeechSelect
@@ -346,7 +350,8 @@ export default function SpeechSettings({
           save={(policy) => update({ ...providerDraft, ...policy })}
         />
       )}
-      {data && (
+      {chatOnly && agentId && <p>Stored provider settings below are inactive while this agent is chat-only.</p>}
+      {data && (!chatOnly || agentId) && (
         <fieldset disabled={busy} className="speech-fields">
           <SpeechSelect
             label={agentId ? "Configure mode providers" : "Voice mode"}
@@ -363,7 +368,7 @@ export default function SpeechSettings({
                 ? [
                     {
                       value: "",
-                      label: `Inherit agent default (${data.defaults.mode === "realtime" ? "Live" : "Standard"})`,
+                      label: `Inherit agent default (${chatOnly ? "Chat-only; no voice" : data.defaults.mode === "realtime" ? "Live" : "Standard"})`,
                     },
                   ]
                 : []),
@@ -521,7 +526,7 @@ export default function SpeechSettings({
           </div>
         </fieldset>
       )}
-      {shownMode === "realtime" && data && (
+      {shownMode === "realtime" && data && !chatOnly && (
         <p className="text-sm speech-selection">
           {agentId && hasProviderDraft ? "Draft Live:" : "Effective Live:"}{" "}
           {liveBackend || "unconfigured"} /{" "}
@@ -529,7 +534,7 @@ export default function SpeechSettings({
           {liveVoice || "unconfigured"}
         </p>
       )}
-      {shownMode !== "realtime" && effective && (
+      {shownMode !== "realtime" && effective && !chatOnly && (
         <p className="text-sm">
           Effective: {effective.stt_backend} / {effective.tts_backend} /{" "}
           {effective.voice_id}
@@ -562,7 +567,7 @@ function AgentModePolicy({
       className="speech-mode-policy"
       onSubmit={(event) => {
         event.preventDefault();
-        void save({ enabled_modes: enabled, default_mode: defaultMode });
+        void save({ enabled_modes: enabled, default_mode: enabled.length ? defaultMode : null });
       }}
     >
       <fieldset disabled={busy} className="speech-fields">
@@ -572,22 +577,22 @@ function AgentModePolicy({
             <input
               type="checkbox"
               checked={enabled.includes(mode)}
-              onChange={(event) =>
-                setEnabled((current) =>
-                  event.target.checked
-                    ? [...current, mode]
-                    : current.filter((item) => item !== mode),
-                )
-              }
+              onChange={(event) => {
+                const next = event.target.checked ? [...enabled, mode] : enabled.filter(item => item !== mode);
+                setEnabled(next);
+                if (!next.length) setDefaultMode(null);
+                else if (!defaultMode || !next.includes(defaultMode)) setDefaultMode(next[0]);
+              }}
             />{" "}
             {mode === "realtime" ? "Enable Live" : "Enable Standard"}
           </label>
         ))}
         <SpeechSelect
           label="Default voice mode"
-          value={defaultMode}
+          value={defaultMode || ""}
           options={[
-            ...(!policy.integration_modes.includes(defaultMode)
+            ...(!enabled.length ? [{ value: "", label: "Chat-only (no voice default)" }] : []),
+            ...(defaultMode && !policy.integration_modes.includes(defaultMode)
               ? [
                   {
                     value: defaultMode,
@@ -595,7 +600,7 @@ function AgentModePolicy({
                   },
                 ]
               : []),
-            ...policy.integration_modes.map((mode) => ({
+            ...enabled.map((mode) => ({
               value: mode,
               label: mode === "realtime" ? "Live" : "Standard",
             })),
@@ -603,15 +608,13 @@ function AgentModePolicy({
           onChange={setDefaultMode}
         />
         <button
-          disabled={busy || !enabled.length || !enabled.includes(defaultMode)}
+          disabled={busy || (enabled.length > 0 && !enabled.includes(defaultMode || ""))}
         >
           Save voice configuration
         </button>
         {changed && <p>Unsaved voice policy</p>}
         {!enabled.length && (
-          <p role="alert">
-            Enable at least one voice mode to save this configuration.
-          </p>
+          <p role="status">Chat-only: text conversation remains available. No microphone, STT or TTS.</p>
         )}
       </fieldset>
     </form>

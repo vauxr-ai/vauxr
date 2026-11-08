@@ -42,7 +42,8 @@ def attach_speech_routes(
             except (ValueError, TypeError) as error:
                 return web.json_response({"error": str(error)}, status=400)
         result = store.view(device_id, agent_id)
-        states = await asyncio.gather(*(readiness(b) for b in store.backends.values()))
+        states = (["disabled (chat-only)"] * len(store.backends) if result["policy"]["chat_only"]
+                  else await asyncio.gather(*(readiness(b) for b in store.backends.values())))
         for backend, state in zip(result["backends"], states, strict=True):
             backend["readiness"] = state
         return web.json_response(result)

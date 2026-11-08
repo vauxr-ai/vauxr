@@ -61,6 +61,7 @@ function OwnerApp() {
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState("");
   const [voiceConflict, setVoiceConflict] = useState("");
+  const [chatOnly, setChatOnly] = useState(false);
   const [availableVoiceModes, setAvailableVoiceModes] = useState([
     "standard",
     "realtime",
@@ -290,6 +291,8 @@ function OwnerApp() {
         if (attempt !== modeRequest.current || controller.signal.aborted)
           return;
         const policy = data.policy;
+        setChatOnly(policy?.chat_only === true);
+        if (policy?.chat_only) stopVoiceRef.current();
         setAvailableVoiceModes(
           policy?.assigned || policy?.configured
             ? policy.available_modes
@@ -311,7 +314,7 @@ function OwnerApp() {
               ? "toggle"
               : "hold";
         const next = data.voice?.mode === "realtime" ? "realtime" : standard;
-        if (next !== current) {
+        if (!policy?.chat_only && next !== current) {
           stopVoiceRef.current();
           setTalkMode(next);
         }
@@ -336,7 +339,7 @@ function OwnerApp() {
   }, [deviceId, connectionEpoch]);
 
   const changeMode = async (next: TalkMode) => {
-    if (modeBusy || next === talkMode) return;
+    if (chatOnly || modeBusy || next === talkMode) return;
     stopVoice();
     setModeBusy(true);
     setModeError("");
@@ -435,7 +438,8 @@ function OwnerApp() {
   }, [ws, audio]);
 
   const handleTalkStart = useCallback(async () => {
-    if (voiceConflict || modeBusy || (deviceId && !modeLoaded)) return;
+    if (chatOnly || !availableVoiceModes.includes(talkMode === "realtime" ? "realtime" : "standard")
+      || voiceConflict || modeBusy || (deviceId && !modeLoaded)) return;
     if (talkMode === "realtime") {
       if (realtime.state === "stopped")
         await realtime.start(deviceId, credential.current);
@@ -457,6 +461,8 @@ function OwnerApp() {
     voiceConflict,
     modeBusy,
     modeLoaded,
+    chatOnly,
+    availableVoiceModes,
   ]);
 
   const handleTalkEnd = useCallback(() => {
@@ -578,14 +584,16 @@ function OwnerApp() {
       }
       talk={
         <Companion
+          chatOnly={chatOnly}
           open={companionOpen}
           onOpen={setCompanionOpen}
           context={viewContext}
           route={deviceRoute || activeRoute}
-          state={voiceStatus}
+          state={chatOnly ? "Chat-only · Voice unavailable" : voiceStatus}
           connection={
             <ConfigPanel
               compact={!companionOpen}
+              chatOnly={chatOnly}
               connected={isConnected}
               connecting={enrollingBrowser || ws.state === "connecting"}
               onEnrollmentChange={setEnrollingBrowser}
@@ -601,7 +609,7 @@ function OwnerApp() {
             epoch={connectionEpoch} route={activeSection}
             selection={activeSection === "agents" ? selection : null}
             onSwitch={stopVoice} />
-          {micUnavailable && <MicWarning />}
+          {micUnavailable && !chatOnly && <MicWarning />}
           {(voiceConflict ||
             modeError ||
             realtime.error ||
@@ -614,6 +622,7 @@ function OwnerApp() {
             </p>
           )}
           <TalkPanel
+            noVoice={chatOnly}
             compact={!companionOpen}
             availableModes={availableVoiceModes}
             voiceConflict={!!voiceConflict}
