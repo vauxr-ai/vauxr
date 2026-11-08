@@ -25,6 +25,7 @@ for (const width of [390,1366]) for (const theme of ['light','dark']) {
     await summary.focus();await page.keyboard.press('Enter');
     const menu=row.locator('.agent-actions-list');
     await expect(menu).toBeVisible();
+    await expect(menu).toHaveJSProperty('inert',false);
     for (const name of ['Voice pipeline for Vauxr Support','Runtime settings for Vauxr Support','Delete agent']) {
       const item=menu.getByRole('button',{name,exact:true});
       expect((await item.boundingBox())!.height).toBeGreaterThanOrEqual(44);
@@ -59,6 +60,9 @@ for (const width of [390,1366]) for (const theme of ['light','dark']) {
     await page.screenshot({path:`${artifacts}/tooltip-${width}-${theme}.png`});
     await page.keyboard.press('Escape');
     await expect(summary).toBeFocused();
+    await expect(menu).toHaveJSProperty('inert',true);
+    await page.keyboard.press('Tab');
+    expect(await menu.evaluate(el=>el.contains(document.activeElement))).toBe(false);
     await expect(row.locator('details')).not.toHaveAttribute('open','');
     await expect(menu).toBeHidden();
     await summary.click();

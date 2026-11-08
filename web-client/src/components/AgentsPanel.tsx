@@ -86,6 +86,9 @@ export default function AgentsPanel({
       if (event instanceof KeyboardEvent && !escape) return;
       document.querySelectorAll<HTMLDetailsElement>(".agent-actions[open]").forEach(menu => {
         if (escape || !menu.contains(event.target as Node)) {
+          // The close fade retains content briefly; remove its controls immediately.
+          const actions = menu.querySelector<HTMLElement>(".agent-actions-list");
+          if (actions) actions.inert = true;
           menu.open = false;
           if (escape) menu.querySelector<HTMLElement>("summary")?.focus();
         }
@@ -229,7 +232,14 @@ export default function AgentsPanel({
                 >
                   {agent.active ? "Default" : "Set as default"}
                 </button>
-                <details className="agent-actions"><summary aria-label={`Actions for ${agent.name}`}>⋯</summary><div className="agent-actions-list">
+                <details className="agent-actions" onToggle={event => {
+                  const actions = event.currentTarget.querySelector<HTMLElement>(".agent-actions-list");
+                  if (actions) actions.inert = !event.currentTarget.open;
+                }}><summary aria-label={`Actions for ${agent.name}`} onClick={event => {
+                  const menu = event.currentTarget.parentElement as HTMLDetailsElement;
+                  const actions = menu.querySelector<HTMLElement>(".agent-actions-list");
+                  if (actions) actions.inert = menu.open;
+                }}>⋯</summary><div className="agent-actions-list">
                 <button className="agent-route-action" aria-label={`Voice pipeline for ${agent.name}`}
                   onClick={event => {(voiceReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setVoiceId(agent.id);}}><Icon name="agents" size={20}/>Voice pipeline</button>
                 <button className="agent-route-action" aria-label={`Runtime settings for ${agent.name}`} title="Agent runtime settings"
