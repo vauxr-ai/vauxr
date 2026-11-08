@@ -6,6 +6,7 @@ import { test, expect, login } from "./auth-fixture";
 
 for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
   test(`registry configuration provenance ${width} ${theme}`, async ({ page, server }) => {
+    page.setDefaultTimeout(5000);
     writeFileSync(resolve(server.data, "agents.json"), JSON.stringify({ version: 1, active_agent: "fixture-route", agents: [
       { id: "fixture-route", name: "Household integration", type: "openclaw", createdAt: "2026-11-08" },
     ] }));

@@ -1,3 +1,4 @@
+import LoadingIndicator from "./LoadingIndicator";
 import VoiceSample from "./VoiceSample";
 import AgentPipelineEditor from "./AgentPipelineEditor";
 import RefreshButton from "./RefreshButton";
@@ -266,7 +267,7 @@ export default function SpeechSettings({
         label: `${backend.id} · ${backend.model} · ${backend.readiness}`,
       }));
   if (agentId) return <section aria-label="Agent voice" className="speech-settings agent-pipeline-settings">
-    {!data && !error && <p role="status">Loading voice configuration…</p>}
+    {!data && !error && <LoadingIndicator label="Loading voice configuration"/>}
     {error && <p role="alert">{error}</p>}
     {data?.error && <p role="alert">{data.error}</p>}
     {data?.policy?.conflict && <p role="alert">{data.policy.conflict}</p>}
@@ -291,7 +292,7 @@ export default function SpeechSettings({
         mode; reconnect WebRTC for provider changes. Voices belong to a
         configured model.
       </p>}
-      {!data && !error && <p role="status">Loading voice configuration…</p>}
+      {!data && !error && <LoadingIndicator label="Loading voice configuration"/>}
       {!data && error && <RefreshButton label="Retry voice configuration" busy={busy} onClick={() => void update()} />}
       {busy && <p role="status">Checking voice configuration…</p>}
       {saved && <p role="status">{saved}</p>}

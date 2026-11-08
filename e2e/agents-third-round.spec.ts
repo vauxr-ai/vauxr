@@ -80,3 +80,19 @@ test('deleting an enrolled agent revokes its credential and survives restart',as
   await expect(page.getByRole('heading',{name:'Removable integration', level:3, exact:true})).toHaveCount(0);
   expect((await native(server,'/api/devices',undefined,delivery.credential)).status).toBe(401);
 });
+
+test('voice dialog reserves final size while its data loads',async({page,server})=>{
+  await page.setViewportSize({width:390,height:844});await login(page,server);
+  let release:()=>void=()=>{};
+  const pending=new Promise<void>(resolve=>{release=resolve;});
+  await page.route('**/api/agents/vauxr-support/speech',async route=>{await pending;await route.continue();});
+  await openAgentAction(page,'Voice pipeline for Vauxr Support');
+  const modal=page.getByRole('dialog',{name:'Voice pipeline',exact:true});
+  await expect(modal.getByRole('status',{name:'Loading voice configuration',exact:true})).toBeVisible();
+  const initial=(await modal.boundingBox())!;
+  release();await expect(modal.locator('.pipeline-graph')).toBeVisible();
+  const final=(await modal.boundingBox())!;
+  expect(Math.abs(initial.height-final.height)).toBeLessThan(1);
+  expect(Math.abs(initial.y-final.y)).toBeLessThan(1);
+  expect(Math.abs(final.y*2+final.height-844)).toBeLessThan(2);
+});

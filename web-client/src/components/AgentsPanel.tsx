@@ -77,6 +77,23 @@ export default function AgentsPanel({
     };
   }, []);
 
+  useEffect(() => {
+    const closeMenus = (event: PointerEvent | KeyboardEvent) => {
+      if (document.querySelector("dialog[open]")) return;
+      const escape = event instanceof KeyboardEvent && event.key === "Escape";
+      if (event instanceof KeyboardEvent && !escape) return;
+      document.querySelectorAll<HTMLDetailsElement>(".agent-actions[open]").forEach(menu => {
+        if (escape || !menu.contains(event.target as Node)) {
+          menu.open = false;
+          if (escape) menu.querySelector<HTMLElement>("summary")?.focus();
+        }
+      });
+    };
+    document.addEventListener("pointerdown", closeMenus);
+    document.addEventListener("keydown", closeMenus);
+    return () => {document.removeEventListener("pointerdown", closeMenus); document.removeEventListener("keydown", closeMenus);};
+  }, []);
+
   async function activate(agent: ApiAgent) {
     if (
       !window.confirm(
@@ -119,11 +136,7 @@ export default function AgentsPanel({
 
   return (
     <div className="space-y-5">
-      <div className="resource-toolbar">
-        <div>
-          <span className="eyebrow">YOUR WORKSPACE</span>
-          <h2>Agents</h2>
-        </div>
+      <div className="resource-toolbar agents-toolbar">
         <AddAgent
           onCreated={async (created) => {
             await refresh();

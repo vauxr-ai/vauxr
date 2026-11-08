@@ -1,3 +1,4 @@
+import LoadingIndicator from "./LoadingIndicator";
 import VoiceSample, { type BrowserVoiceProps } from "./VoiceSample";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ownerFetch } from "../auth/api";
@@ -73,7 +74,7 @@ export default function DeviceVoicePipeline({ deviceId, onModeChange, transport,
   const backendOptions = (kind: string) => (data?.backends || []).filter(b => b.kind === kind).map(b => ({ value: b.id, label: `${b.id} · ${b.model} · ${b.readiness}` }));
   return <section className="device-section device-assignment" aria-label="Assigned agent">
     <div className="device-section-heading"><h3>Assigned agent</h3><span role="status">{status}</span><RefreshButton label="Refresh device voice configuration" busy={busy} onClick={() => void refresh()} /></div>
-    {!data && !error && <p role="status">Loading voice configuration…</p>}
+    {!data && !error && <LoadingIndicator label="Loading voice configuration"/>}
     {error && <p role="alert">{error}</p>}
     {data && <>
       <label className="device-field"><span className="sr-only">Assigned agent</span><select aria-label="Assigned agent" disabled={busy} value={data.policy.assigned ? data.policy.agent_id : ""} onChange={event => save({ agent_id: event.target.value || null })}>

@@ -979,3 +979,24 @@ dialog.modal.agent-detail-modal[open] { height:auto; width:min(1000px,calc(100% 
 .agent-list > li:has(.agent-actions[open]) { z-index:6; }
 
 .agent-actions-list { bottom:100%; max-height:50dvh; overflow-y:auto; }
+
+.agents-toolbar { justify-content:flex-end; }
+/* A modal reserves its final viewport footprint before its data arrives. */
+dialog.modal.agent-detail-modal[open] { height:min(840px,calc(100dvh - 24px)); }
+dialog.modal.agent-create-modal[open] { height:min(780px,calc(100dvh - 32px)); }
+.agent-detail-modal[open], .agent-create-modal[open] { display:flex; flex-direction:column; overflow:hidden; }
+.agent-detail-modal .modal-heading, .agent-create-modal .modal-heading { flex:none; }
+.agent-detail-modal .modal-body, .agent-create-modal .modal-body { flex:1; min-height:0; overflow-y:auto; align-content:start; }
+.agent-voice-modal .modal-body:has(.loading-indicator) { display:flex; flex-direction:column; }
+.loading-indicator { display:grid; place-content:center; flex:1; min-height:160px; width:100%; }
+.agent-voice-modal .loading-indicator { min-height:360px; }
+.loading-spinner { width:36px; height:36px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:loading-spin .8s linear infinite; }
+@keyframes loading-spin { to { transform:rotate(360deg); } }
+.auth-panel button.button-primary, button.button-primary { background:linear-gradient(125deg,#a16af1 0%,#8544e1 42%,#6226b8 100%); box-shadow:inset 0 1px 0 #ffffff38,0 5px 18px #763edb40; transition:background .2s,transform .18s,box-shadow .2s; }
+.auth-panel button.button-primary:hover:not(:disabled), button.button-primary:hover:not(:disabled) { background:linear-gradient(110deg,#b47cfc 0%,#9654ed 42%,#7634d0 100%); transform:translateY(-2px); box-shadow:inset 0 1px 0 #ffffff55,0 9px 25px #763edb60; }
+.auth-panel button.button-primary:active:not(:disabled), button.button-primary:active:not(:disabled) { transform:translateY(0) scale(.98); box-shadow:inset 0 2px 5px #3e127533,0 2px 8px #763edb40; }
+button.button-primary:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
+@media(max-width:600px) { .agent-type-choices { grid-template-columns:repeat(2,minmax(0,1fr)); } .agent-type-choice { min-width:0; padding:16px 8px; } }
+@media(prefers-reduced-motion:reduce) { .loading-spinner { animation-duration:2s; } button.button-primary { transition:none !important; } button.button-primary:hover:not(:disabled),button.button-primary:active:not(:disabled) { transform:none !important; } }
+.agent-voice-modal .agent-pipeline-settings:has(.loading-indicator) { flex:1; display:flex; flex-direction:column; }
+.agent-voice-modal .loading-indicator { min-height:0; }

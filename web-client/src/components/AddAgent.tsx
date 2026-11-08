@@ -1,3 +1,4 @@
+import LoadingIndicator from "./LoadingIndicator";
 import IntegrationEnrollment from "./IntegrationEnrollment";
 import RefreshButton from "./RefreshButton";
 import { useEffect, useState, useRef } from "react";
@@ -50,6 +51,7 @@ export default function AddAgent({
       {open && (
         <Modal
           title="Add Agent"
+          className="agent-create-modal"
           onClose={() => {if (!busy) setOpen(false);}}
           returnFocus={trigger}
         >
@@ -58,7 +60,7 @@ export default function AddAgent({
           </p>
           {error && <p role="alert">{error}</p>}
           {!definitions && !error && (
-            <p role="status">Loading registered agents…</p>
+            <LoadingIndicator label="Loading registered agents"/>
           )}
           {definitions?.length === 0 && (
             <p>
@@ -73,7 +75,7 @@ export default function AddAgent({
             </button>
             {definitions?.map(d => <button type="button" key={d.id} className="agent-type-choice" aria-label={`Choose ${d.name}`} aria-pressed={selected === d.id} disabled={busy} onClick={() => setSelected(d.id)}>
               <span className="agent-type-art">{d.id === "vauxr-support" ? <img src="/agent-types/vauxr-support.png" alt=""/> : <svg aria-hidden="true" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2"><path d="m32 5 24 14v26L32 59 8 45V19ZM8 19l24 14 24-14M32 33v26"/></svg>}</span>
-              <strong>{d.name}</strong><small>{d.framework}</small>
+              <strong>{d.name}</strong><small>{d.supported_modes.includes("standard") ? "Voice & text" : "Text agent"}</small>
             </button>)}
           </div>
           {selected === "@openclaw" ? <IntegrationEnrollment/> : !!definitions?.length && (
