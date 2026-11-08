@@ -1,3 +1,4 @@
+import { openIntegrations, openSettings } from "./auth-fixture";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Page } from "@playwright/test";
@@ -204,8 +205,9 @@ test("phone access panel wraps long device identities without horizontal scrolli
   }));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page,"Access & security");
   const panel = page.locator(".auth-panel").filter({
-    has: page.getByRole("heading", { name: "Pairing and access", exact: true }),
+    has: page.getByRole("heading", { name: "Access & security", exact: true }),
   });
   await expect(panel.getByText(deviceId, { exact: false })).toBeVisible();
   await expect(panel.getByRole("button", { name: "recover device", exact: true })).toBeVisible();
@@ -220,6 +222,7 @@ test("Settings manages real webhook configuration without voice", async ({
 }) => {
   await login(page, server);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page,"Webhooks");
   await page.getByRole("button", { name: "Add webhook" }).click();
   await page.getByLabel("Name", { exact: true }).fill("Acceptance action");
   await page
@@ -250,6 +253,7 @@ test("Settings manages real webhook configuration without voice", async ({
   await expect(page.locator("main li")).toHaveCount(1);
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page,"Webhooks");
   await expect(page.locator("main li")).toHaveCount(1);
   await expect(
     page.getByRole("button", { name: "Connect browser", exact: true }),
@@ -271,6 +275,7 @@ test("agent names persist independently of shared routing and credentials", asyn
     name: "Integration enrollment",
     exact: true,
   });
+  await openIntegrations(page);
   await enrollment.getByText("Refresh integration requests").click();
   const requestRow = enrollment.getByRole("region", {
     name: `Integration request ${request.request_id}`,
@@ -288,13 +293,15 @@ test("agent names persist independently of shared routing and credentials", asyn
     credential: delivery.credential,
     saved: true,
   });
+  await openIntegrations(page);
   await enrollment.getByText("Refresh integration requests").click();
+  await page.getByRole("button", {name:"Agents",exact:true}).click();
   await page.getByText("Refresh agents", { exact: true }).click();
   page.on("dialog", (dialog) => dialog.accept());
   await page
     .locator("main li")
     .filter({ hasText: "Household helper" })
-    .getByText("Activate", { exact: true })
+    .getByText("Set as default", { exact: true })
     .click();
   await page
     .getByRole("button", { name: "View agent Household helper" })
@@ -305,7 +312,7 @@ test("agent names persist independently of shared routing and credentials", asyn
   });
   await detail.getByLabel("Agent name").fill("Kitchen guide");
   await detail.getByRole("button", { name: "Save name" }).click();
-  await expect(detail.getByRole("status")).toHaveText("Agent name saved.");
+  await expect(detail.getByRole("status").filter({ hasText: "Agent name saved." })).toHaveText("Agent name saved.");
   await expect(page.locator(".companion-header h2")).toHaveText(
     "Kitchen guide",
   );

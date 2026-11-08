@@ -4,6 +4,7 @@ for (const width of [390, 1366]) test(`implemented plugin package download at ${
   await page.setViewportSize({width, height:900});
   await login(page, server);
   await page.getByRole("button", {name:"Settings",exact:true}).click();
+  await page.getByRole("navigation",{name:"Settings sections"}).getByRole("button",{name:/^Plugins/}).click();
   const plugins = page.getByRole("region",{name:"Integration plugins",exact:true});
   await expect(plugins.getByRole("link",{name:"Download OpenClaw plugin",exact:true})).toBeVisible();
   const response = await page.request.get(server.origin+"/api/plugins");

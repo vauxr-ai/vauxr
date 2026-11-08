@@ -34,7 +34,8 @@ export default function InterfaceEditor({onDirtyChange}:{onDirtyChange?:(dirty:b
     return () => window.removeEventListener("companion-resource-changed",update);
   },[dirty]);
   return <section id="interface-editor" tabIndex={-1} aria-label="Interface editor" className="card auth-panel p-5 space-y-3">
-    <h2>Interface editor</h2>
+    <h2>Interfaces</h2>
+    <p>A small, custom information surface for the companion to read and update. Edit its title, HTML and CSS here; publishing replaces this surface without replacing the Vauxr application.</p>
     <p>Edit bounded HTML and CSS source. Preview is static: scripts, links, forms, remote assets and Vauxr API access are unavailable. Trusted navigation, administration and voice stay outside the isolated frame.</p>
     <p role="status">{status}</p>
     {error && <p role="alert">{error}</p>}

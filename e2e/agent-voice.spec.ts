@@ -1,3 +1,4 @@
+import { openIntegrations } from "./auth-fixture";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Locator, Page } from "@playwright/test";
@@ -123,6 +124,7 @@ for (const width of [375, 390])
         name: "Integration enrollment",
         exact: true,
       });
+      await openIntegrations(page);
       await enrollment.getByText("Refresh integration requests").click();
       const row = enrollment.getByRole("region", {
         name: `Integration request ${request.request_id}`,
@@ -145,6 +147,7 @@ for (const width of [375, 390])
         caps: ["ws", "webrtc"],
       });
       try {
+        await page.getByRole("button", {name:"Agents",exact:true}).click();
         await page.getByText("Refresh agents", { exact: true }).click();
         await page
           .getByRole("button", {

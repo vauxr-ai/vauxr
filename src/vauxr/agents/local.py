@@ -14,7 +14,7 @@ from aiohttp import web
 
 from vauxr import companion
 from vauxr.agents import registry
-from vauxr.agents.support import EMPTY, validate
+from vauxr.agents.support import runtime_view, validate
 from vauxr.config import get_config
 from vauxr.config_files import unique_object, update_json
 from vauxr.plugins.agents import definition, definitions
@@ -101,7 +101,7 @@ def attach_local_agents(
 
             config = settings(agent_id)
             return web.json_response(
-                {**config, "status": "configured" if config != EMPTY else "setup_needed"},
+                runtime_view(config),
                 headers={"Cache-Control": "no-store"},
             )
         except (ValueError, TypeError, KeyError, TimeoutError):

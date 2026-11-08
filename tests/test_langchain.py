@@ -71,8 +71,9 @@ async def test_owner_local_agent_flow_never_mints_integration_credentials():
         assert (await client.delete(f"/api/local-agents/{agent['id']}", headers=headers)).status == 200
 
 
+@pytest.mark.parametrize("use_profile", [False, True])
 async def test_real_graph_routes_through_shared_agent_transport_and_named_household_action(
-    tmp_path, unused_tcp_port
+    tmp_path, unused_tcp_port, use_profile
 ):
     model_requests = []
     deliveries = []
@@ -154,6 +155,14 @@ async def test_real_graph_routes_through_shared_agent_transport_and_named_househ
             }
         },
     )
+    if use_profile:
+        from vauxr.settings.providers import ProviderStore
+
+        ProviderStore(tmp_path).save("household", {
+            "name": "Household fixture", "provider": "ollama",
+            "endpoint": f"http://127.0.0.1:{unused_tcp_port}", "model": "installed-local", "auth": "none",
+        })
+        update_json(tmp_path / "local-agent-models.json", lambda _: {agent.id: {"profile_id": "household"}})
     assert not (Path(tmp_path) / "support.json").exists()
     server = AgentServer()
     done = asyncio.get_running_loop().create_future()

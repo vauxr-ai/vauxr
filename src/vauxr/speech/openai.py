@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import AsyncIterator, Callable
 
 import aiohttp
@@ -35,8 +34,13 @@ def base_url(backend: Backend) -> str:
     return f"{scheme}://{backend.host}:{backend.port}"
 
 
-def _headers() -> dict[str, str]:
-    key = os.environ.get("OPENAI_API_KEY")
+def _headers(backend: Backend | None = None) -> dict[str, str]:
+    from vauxr.settings.providers import speech_credential
+
+    try:
+        key = speech_credential(backend.id if backend else "openai-tts")
+    except ValueError:
+        raise OpenAITTSError("Provider credential is not configured") from None
     if not key:
         raise OpenAITTSError("OPENAI_API_KEY is not configured")
     return {"Authorization": f"Bearer {key}"}
@@ -44,12 +48,10 @@ def _headers() -> dict[str, str]:
 
 async def readiness(backend: Backend) -> str:
     """Bounded model lookup; no synthesis, no audio, no credential exposure."""
-    if not os.environ.get("OPENAI_API_KEY"):
-        return "unavailable"
     try:
         async with (
             asyncio.timeout(2),
-            aiohttp.ClientSession(headers=_headers()) as http,
+            aiohttp.ClientSession(headers=_headers(backend)) as http,
             http.get(f"{base_url(backend)}/v1/models/{backend.model}") as response,
         ):
             return "ready" if response.status == 200 else "unavailable"
@@ -74,7 +76,7 @@ async def synthesize(
     resample = _make_resampler(SOURCE_RATE, effective) if effective != SOURCE_RATE else None
     timeout = aiohttp.ClientTimeout(sock_connect=10, sock_read=30)
     async with (
-        aiohttp.ClientSession(headers=_headers(), timeout=timeout) as http,
+        aiohttp.ClientSession(headers=_headers(backend), timeout=timeout) as http,
         http.post(f"{base_url(backend)}/v1/audio/speech", json=body) as response,
     ):
         if response.status != 200:

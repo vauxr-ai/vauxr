@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import SettingsPanel from "./SettingsPanel";
+import SettingsPanel from "./WebhooksPanel";
 
 vi.mock("./AccessPanel", () => ({ default: () => <div>Pairing and access</div> }));
 

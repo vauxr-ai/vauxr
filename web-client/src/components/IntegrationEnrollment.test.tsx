@@ -26,7 +26,7 @@ test("discloses fixed grants, exclusions and physical pairing limits immediately
     /Each pairing approval still requires a fresh verified physical pairing window/,
     /confirmation of the matching code spoken by the device/,
     /Connect to its own agent and respond to existing voice requests on that agent when active/,
-    /Agent activation selects voice routing; it does not grant these permissions or gate device access/,
+    /Setting the default agent selects fallback voice routing; it does not grant these permissions or gate device access/,
     /Device playback is reserved; no playback URL endpoint is available/,
     /does not grant owner administration/,
     /credential creation, disclosure, rotation or revocation/,

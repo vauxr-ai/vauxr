@@ -1,3 +1,4 @@
+import { openSettings } from "./auth-fixture";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Locator, Page } from "@playwright/test";
@@ -180,30 +181,15 @@ for (const width of [375, 390]) {
       let sockets = 0;
       page.on("websocket", () => sockets++);
       await page.getByRole("button", { name: "Settings", exact: true }).click();
-      const global = page.getByRole("region", {
-        name: "Global speech",
-        exact: true,
-      });
-      await expect(
-        global.getByRole("combobox", { name: "Voice", exact: true }),
-      ).toHaveValue(voice);
-      await expectInsideSpeechCard(global);
+      await openSettings(page,"Text to speech");
+      const global = page.locator(".settings-content");
+      await expect(global.getByLabel("Default voice",{exact:true})).toHaveValue(voice);
       await capture(page, `${width}-${theme}-global-standard`, global);
-      await global
-        .locator(".speech-field")
-        .last()
-        .evaluate((element) => element.scrollIntoView({ block: "center" }));
+      await global.getByLabel("Default voice",{exact:true}).scrollIntoViewIfNeeded();
       await capture(page, `${width}-${theme}-global-selected-voice`);
-      await global
-        .getByLabel("Voice mode", { exact: true })
-        .selectOption("realtime");
-      await expect(global.getByLabel("Realtime voice")).toHaveValue(liveVoice);
-      await expectInsideSpeechCard(global);
+      await openSettings(page,"Realtime");
+      await expect(global.getByLabel("Default voice",{exact:true})).toHaveValue(liveVoice);
       await capture(page, `${width}-${theme}-global-realtime`, global);
-      await global
-        .getByLabel("Voice mode", { exact: true })
-        .selectOption("standard");
-      await expect(global.getByLabel("TTS backend")).toBeEnabled();
       await page.getByRole("button", { name: "Devices", exact: true }).click();
       await page.locator("main li").first().getByRole("button").first().click();
       const device = page.getByRole("region", {
@@ -320,8 +306,8 @@ for (const width of [375, 390]) {
       expect(expandedColumns[0].width).toBeGreaterThanOrEqual(200);
       await capture(page, `${width}-${theme}-desktop-device-expanded`, device);
       await page.getByRole("button", { name: "Settings", exact: true }).click();
-      await expect(global.getByLabel("TTS backend")).toHaveValue(tts);
-      await expectInsideSpeechCard(global);
+      await openSettings(page,"Text to speech");
+      await expect(global.getByLabel("Default deployment",{exact:true})).toHaveValue(tts);
       await capture(page, `${width}-${theme}-desktop-global-expanded`, global);
     });
   }

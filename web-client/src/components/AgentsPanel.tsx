@@ -1,7 +1,7 @@
 import { ownerFetch, jsonResponse } from "../auth/api";
 import SupportSettings from "./SupportSettings";
 import IntegrationMetadata from "./IntegrationMetadata";
-import IntegrationEnrollment from "./IntegrationEnrollment";
+import AddAgent from "./AddAgent";
 import { useEffect, useState } from "react";
 import { useAgents, type ApiAgent } from "../hooks/useAgents";
 import Icon from "./Icon";
@@ -20,7 +20,6 @@ export default function AgentsPanel({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [selectedId, setSelectedId] = useState("");
-  const [localName,setLocalName] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [saved, setSaved] = useState("");
   const selected = agents.find((agent) => agent.id === selectedId);
@@ -42,9 +41,13 @@ export default function AgentsPanel({
   };
   useEffect(() => {
     void refresh();
-    const update = () => { void refresh(); };
+    const update = () => {
+      void refresh();
+    };
     window.addEventListener("companion-resource-changed", update);
-    const policyUpdate = (event: Event) => { if ((event as CustomEvent).detail?.agentId) update(); };
+    const policyUpdate = (event: Event) => {
+      if ((event as CustomEvent).detail?.agentId) update();
+    };
     window.addEventListener("speech-settings-changed", policyUpdate);
     return () => {
       window.removeEventListener("companion-resource-changed", update);
@@ -55,7 +58,7 @@ export default function AgentsPanel({
   async function activate(agent: ApiAgent) {
     if (
       !window.confirm(
-        `Make ${agent.name} the active fallback route for unassigned devices? This changes server routing, not just your companion.`,
+        `Make ${agent.name} the default fallback route for unassigned devices? This changes server routing, not just your companion.`,
       )
     )
       return;
@@ -65,7 +68,11 @@ export default function AgentsPanel({
       await refresh();
       window.dispatchEvent(new Event("agent-route-changed"));
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Agent activation failed. Refresh before retrying.");
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Unable to set the default agent. Refresh before retrying.",
+      );
     } finally {
       setBusy(false);
     }
@@ -78,7 +85,7 @@ export default function AgentsPanel({
           <div>
             <h2>Routing agents</h2>
             <p>
-              The active route serves devices that have no explicit agent
+              The default agent serves devices that have no explicit agent
               assignment.
             </p>
           </div>
@@ -99,7 +106,10 @@ export default function AgentsPanel({
           <div className="empty-state">
             <Icon name="agents" size={32} />
             <h3>No routing agents yet</h3>
-            <p>Approve an OpenClaw connection below to get started.</p>
+            <p>
+              Add a registered agent, or connect an external agent in Settings →
+              Apps & Integrations.
+            </p>
           </div>
         ) : (
           <ul className="agent-list">
@@ -122,19 +132,29 @@ export default function AgentsPanel({
                     </button>
                   </h3>
                   <p>
-                    {agent.type === "langgraph" ? "LangGraph · standalone" : agent.type === "support" ? "Built-in · independent runtime" : agent.type === "openclaw-direct"
-                      ? "OpenClaw direct"
-                      : "OpenClaw connection"}
+                    {agent.type === "langchain"
+                      ? "LangChain · registered"
+                      : agent.type === "langgraph"
+                        ? "Standalone agent"
+                        : agent.type === "support"
+                          ? "Built-in · independent runtime"
+                          : agent.type === "openclaw-direct"
+                            ? "OpenClaw direct"
+                            : "OpenClaw connection"}
                   </p>
                 </div>
                 <span className="pill">
-                  {agent.chat_only ? "Chat-only · no voice" : agent.active ? "Active route" : "Inactive route"}
+                  {agent.chat_only
+                    ? "Chat-only · no voice"
+                    : agent.active
+                      ? "Default"
+                      : "Not default"}
                 </span>
                 <button
                   disabled={agent.active || busy}
                   onClick={() => void activate(agent)}
                 >
-                  {agent.active ? "Active" : "Activate"}
+                  {agent.active ? "Default" : "Set as default"}
                 </button>
               </li>
             ))}
@@ -150,10 +170,16 @@ export default function AgentsPanel({
             <>
               <h2>{selected.name}</h2>
               <p>
-                {selected.type === "langgraph" ? "LangGraph · standalone" : selected.type === "support" ? "Built-in · independent runtime" : selected.type === "openclaw-direct"
-                  ? "OpenClaw direct"
-                  : "OpenClaw connection"}{" "}
-                · {selected.active ? "Active route" : "Inactive route"}
+                {selected.type === "langchain"
+                  ? "LangChain · registered"
+                  : selected.type === "langgraph"
+                    ? "Standalone agent"
+                    : selected.type === "support"
+                      ? "Built-in · independent runtime"
+                      : selected.type === "openclaw-direct"
+                        ? "OpenClaw direct"
+                        : "OpenClaw connection"}{" "}
+                · {selected.active ? "Default" : "Not default"}
               </p>
               <p>
                 This route is shared by devices. Changing its display name does
@@ -162,16 +188,63 @@ export default function AgentsPanel({
               <p>
                 Agent ID: <code>{selected.id}</code>
               </p>
-              <p>{selected.active ? "Fallback for unassigned devices only. Explicit device assignments and your independent companion selection are unchanged." : "Inactive as the shared fallback. Explicit device assignments remain separate."} Route activation does not prove the integration is online or ready; check effective voice configuration below and device diagnostics.</p>
+              <p>
+                {selected.active
+                  ? "Fallback for unassigned devices only. Explicit device assignments and your independent companion selection are unchanged."
+                  : "Not the shared default. Explicit device assignments remain separate."}{" "}
+                Setting the default does not prove the integration is online or
+                ready; check effective voice configuration below and device
+                diagnostics.
+              </p>
               <IntegrationMetadata metadata={selected.integration_metadata} />
               {selected.type === "support" && <SupportSettings />}
-              {selected.type === "langgraph" && <SupportSettings key={`runtime-${selected.id}`} agentId={selected.id} />}
-              {selected.type === "langgraph" && <button disabled={busy || selected.active} onClick={async()=>{setBusy(true);setError("");
-                try {const response=await ownerFetch(`/api/local-agents/${encodeURIComponent(selected.id)}`,{method:"DELETE"});
-                  if(response.status===409)throw new Error("Choose another fallback and unassign all devices before removal.");
-                  await jsonResponse(response);setSelectedId("");await refresh();window.dispatchEvent(new Event("agent-route-changed"));
-                }catch(error){setError(error instanceof Error?error.message:"Removal unavailable; refresh before retrying.");}finally{setBusy(false);}}}>Remove local agent</button>}
-              <SpeechSettings key={`voice-${selected.id}`} agentId={selected.id} />
+              {(selected.type === "langgraph" ||
+                selected.type === "langchain") && (
+                <SupportSettings
+                  key={`runtime-${selected.id}`}
+                  agentId={selected.id}
+                />
+              )}
+              {(selected.type === "langgraph" ||
+                selected.type === "langchain") &&
+                !selected.builtin &&
+                selected.id !== "vauxr-support" && (
+                  <button
+                    disabled={busy || selected.active}
+                    onClick={async () => {
+                      setBusy(true);
+                      setError("");
+                      try {
+                        const response = await ownerFetch(
+                          `/api/local-agents/${encodeURIComponent(selected.id)}`,
+                          { method: "DELETE" },
+                        );
+                        if (response.status === 409)
+                          throw new Error(
+                            "Choose another fallback and unassign all devices before removal.",
+                          );
+                        await jsonResponse(response);
+                        setSelectedId("");
+                        await refresh();
+                        window.dispatchEvent(new Event("agent-route-changed"));
+                      } catch (error) {
+                        setError(
+                          error instanceof Error
+                            ? error.message
+                            : "Removal unavailable; refresh before retrying.",
+                        );
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Remove agent
+                  </button>
+                )}
+              <SpeechSettings
+                key={`voice-${selected.id}`}
+                agentId={selected.id}
+              />
               <form
                 onSubmit={async (event) => {
                   event.preventDefault();
@@ -241,27 +314,16 @@ export default function AgentsPanel({
           </button>
         </section>
       )}
-      <section className="card auth-panel p-5" aria-label="Add local agent">
-        <h2>Add local agent</h2>
-        <p>LangGraph runs independently inside Vauxr with its own configured local model and named household webhook actions. Standard voice and text are supported; Live is not advertised for this integration.</p>
-        <form className="grid gap-3" onSubmit={async event=>{event.preventDefault();setBusy(true);setError("");
-          try {const created=await jsonResponse(await ownerFetch("/api/local-agents",{method:"POST",body:JSON.stringify({framework:"langgraph",name:localName})}));
-            await refresh();setSelectedId(created.id);setNameDraft(created.name);setLocalName("");
-          } catch {setError("Create failed or outcome uncertain. Refresh agents before retrying.");}finally{setBusy(false);}}}>
-          <label>Local agent name<input value={localName} onChange={e=>setLocalName(e.target.value)} required maxLength={120} disabled={busy}/></label>
-          <button disabled={busy||!localName.trim()}>Add LangGraph agent</button>
-        </form>
-      </section>
-      <section className="card auth-panel enrollment-section">
-        <h2>Connect an agent</h2>
-        <p>For OpenClaw, start enrollment in its Vauxr plugin and approve the matching request here. Local LangGraph agents use Add local agent above. Plugin packages are available in Settings.</p>
-        <p>OpenClaw Direct, when configured by the server operator, is an existing alternative route. No connection, credential or plugin editor is available here.</p>
-        <p>
-          Approve an integration request from OpenClaw. Credentials are managed
-          in Settings → Pairing and access.
-        </p>
-        <IntegrationEnrollment />
-      </section>
+      <AddAgent
+        onCreated={async (created) => {
+          await refresh();
+          setSelectedId(created.id);
+          setNameDraft(created.name);
+        }}
+      />
+      <p className="text-sm text-zinc-400">
+        Connect external agents in Settings → Apps &amp; Integrations.
+      </p>
     </div>
   );
 }

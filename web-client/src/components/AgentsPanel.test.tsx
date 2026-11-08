@@ -27,6 +27,8 @@ it("keeps the name draft after a failed save and only claims success after persi
     await screen.findByRole("button", { name: "View agent Original" }),
   );
   expect(onContext).toHaveBeenLastCalledWith("Original");
+  expect(screen.getByRole("button", { name: "Default", exact: true })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Activate", exact: true })).not.toBeInTheDocument();
   const input = screen.getByLabelText("Agent name");
   await userEvent.clear(input);
   await userEvent.type(input, "New name");

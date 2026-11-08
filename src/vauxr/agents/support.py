@@ -22,7 +22,29 @@ def settings() -> dict[str, str]:
     return validate(read_json(path)) if path.exists() else dict(EMPTY)
 
 
+def runtime_view(config: dict[str, str]) -> dict[str, str]:
+    """Public runtime configuration; resolved credentials never cross this boundary."""
+    if "profile_id" not in config:
+        return {**config, "status": "configured" if config != EMPTY else "setup_needed"}
+    from vauxr.settings.providers import resolve_profile
+
+    try:
+        resolved = resolve_profile(config["profile_id"])
+    except ValueError:
+        return {**config, "status": "setup_needed"}
+    return {**config, "status": "configured" if resolved["provider"] == "ollama" else "unsupported"}
+
+
 def validate(body: object) -> dict[str, str]:
+    if isinstance(body, dict) and set(body) == {"profile_id"}:
+        from vauxr.settings.providers import ID, ProviderStore
+
+        identity = body["profile_id"]
+        if not isinstance(identity, str) or not ID.fullmatch(identity):
+            raise ValueError("Invalid profile reference")
+        if not any(p["id"] == identity for p in ProviderStore().read()["profiles"]):
+            raise ValueError("Provider profile unavailable")
+        return {"profile_id": identity}
     if (
         not isinstance(body, dict)
         or set(body) != set(EMPTY)
@@ -90,7 +112,7 @@ def attach_support(
                 update_json(Path(get_config().data_dir) / "support.json", lambda _: config)
             config = settings()
             return web.json_response(
-                {**config, "status": "configured" if config["provider"] else "setup_needed"},
+                runtime_view(config),
                 headers={"Cache-Control": "no-store"},
             )
         except (ValueError, TypeError, TimeoutError):

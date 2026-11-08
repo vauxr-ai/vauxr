@@ -156,3 +156,13 @@ export function seedRealtimeAgent(server: Server) {
   data.active_agent = agentId;
   writeFileSync(path, JSON.stringify(data));
 }
+
+/** Follow product navigation rather than assuming all Settings are mounted. */
+export async function openSettings(page: Page, section: string) {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: new RegExp("^" + section) }).click();
+}
+export async function openIntegrations(page: Page) {
+  await openSettings(page, "Apps & Integrations");
+}

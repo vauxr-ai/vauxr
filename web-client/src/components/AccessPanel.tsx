@@ -28,12 +28,18 @@ const stateHelp: Record<string, string> = {
     "Expired. After unacknowledged delivery, re-pair/recover is required.",
   revoked: "Access revoked. Re-pair required; configuration retained.",
 };
-export default function AccessPanel() {
+export default function AccessPanel({
+  mode = "all",
+}: {
+  mode?: "all" | "pairing" | "security";
+}) {
   const [pairs, setPairs] = useState<Pair[]>([]);
   const [devices, setDevices] = useState<
     { id: string; name: string; state?: string }[]
   >([]);
-  const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
+  const [agents, setAgents] = useState<
+    { id: string; name: string; type?: string }[]
+  >([]);
   const [operations, setOperations] = useState<Operation[]>(() => {
     try {
       return JSON.parse(sessionStorage.getItem("vauxr-operations") || "[]");
@@ -67,7 +73,7 @@ export default function AccessPanel() {
     return p.requests;
   }
   async function refresh() {
-    await refreshPairs();
+    if (mode !== "security") await refreshPairs();
     const d = await jsonResponse(await ownerFetch("/api/devices"));
     setDevices(Array.isArray(d) ? d : d.devices);
     setAgents(await jsonResponse(await ownerFetch("/api/agents")));
@@ -114,186 +120,245 @@ export default function AccessPanel() {
       subject: op.subject,
     });
     retain(
-      rows.map((row) => (row.operation_id === op.operation_id ? { ...row, ...result } : row)),
+      rows.map((row) =>
+        row.operation_id === op.operation_id ? { ...row, ...result } : row,
+      ),
     );
   }
   return (
     <div className="auth-panel card space-y-4 p-5">
-      <h2>Pairing and access</h2>
-      <p>
-        Hold the speaker's Action button to enter pairing mode, then press it
-        briefly to hear the code. Press again whenever you need to hear it again.
-        Refresh, identify its request, and enter the code once to approve pairing.
-        Names are untrusted and may repeat. No
-        hardware credentials are displayed here.
-      </p>
-      <PairingMessages />
+      <h2>
+        {mode === "pairing"
+          ? "Add Device"
+          : mode === "security"
+            ? "Access & security"
+            : "Pairing and access"}
+      </h2>
+      {mode !== "security" && (
+        <>
+          <p>
+            Hold the speaker's Action button to enter pairing mode, then press
+            it briefly to hear the code. Press again whenever you need to hear
+            it again. Refresh, identify its request, and enter the code once to
+            approve pairing. Names are untrusted and may repeat. No hardware
+            credentials are displayed here.
+          </p>
+          <PairingMessages />
+        </>
+      )}
       <button disabled={busy} onClick={() => run(refresh)}>
-        Refresh pairing and identities
+        {mode === "security"
+          ? "Refresh identities"
+          : "Refresh pairing and identities"}
       </button>
       {busy && <p role="status">Loading or submitting access request…</p>}
-      {error && <><p role="alert">{error}</p><p>Refresh status before retrying; a lost response does not prove failure.</p></>}
-      {loaded && !pairs.some(p => p.kind === "physical") && <p>No physical pairing requests.</p>}
-      {pairs
-        .filter((p) => p.kind === "physical")
-        .map((p) => (
-          <PairRow
-            key={p.request_id}
-            pair={p}
-            busy={busy}
-            act={(action, code) =>
-              run(async () => {
-                try {
-                  if (action === "approve") {
-                    // A previous request may have committed even if its response
-                    // was lost. Reconcile before deciding whether to initiate.
-                    const current = (await refreshPairs()).find(
-                      (pair) => pair.request_id === p.request_id,
-                    );
-                    if (current?.status === "ready") {
-                      await ownerPost("/api/enrollment/v1/initiate", {
-                        request_id: p.request_id, code,
-                      });
-                    }
-                  }
-                  await ownerPost(`/api/enrollment/v1/${action}`, {
-                    request_id: p.request_id,
-                    ...(code ? { code } : {}),
-                  });
-                } catch (error) {
-                  // Keep the original action error if the status refresh also
-                  // fails. The next click will fetch fresh status before acting.
-                  await refreshPairs().catch(() => {});
-                  throw error;
-                }
-                await refresh();
-              })
-            }
-          />
-        ))}
-      <h3>Device credentials</h3>
-      {loaded && devices.length === 0 && <p>No devices reported. Use a retained exact ID below for an offline identity.</p>}
-      {devices.map((d) => (
-        <div key={d.id}>
-          <span>
-            {d.name} — {d.id} — {d.state || "connectivity unknown"}{" "}
-          </span>
-          {["rotate", "revoke", "recover"].map((a) => (
-            <button
-              className="m-2"
-              disabled={busy}
-              key={a}
-              onClick={() => run(() => operate(a, "device", d.id))}
-            >
-              {a} device
-            </button>
-          ))}
-        </div>
-      ))}
-      <h3>Integration credentials</h3>
-      <p>
-        New connections require owner-approved integration enrollment. Existing integration
-        rotation/revocation uses lifecycle v1; it never reveals an agent token.
-      </p>
-      {agents.filter((agent) => agent.id !== "openclaw-direct").map((c) => (
-        <div key={c.id}>
-          {c.name} — {c.id}
-          {["rotate", "revoke"].map((a) => (
-            <button
-              className="m-2"
-              disabled={busy}
-              key={a}
-              onClick={() => run(() => operate(a, "integration", c.id))}
-            >
-              {a} integration
-            </button>
-          ))}
-        </div>
-      ))}
-      <details>
-        <summary>Known offline identity</summary>
-        <p>
-          The device list may omit a never-connected or retired client. Enter
-          its exact retained subject ID; display names are not IDs.
-        </p>
-        <select
-          aria-label="Identity role"
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-        >
-          <option>device</option>
-          <option>integration</option>
-        </select>
-        <input
-          aria-label="Subject ID"
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
-        />
-        {["rotate", "revoke", ...(role === "device" ? ["recover"] : [])].map(
-          (a) => (
-            <button
-              key={a}
-              disabled={busy || !subject}
-              onClick={() => run(() => operate(a, role, subject))}
-            >
-              {a} known identity
-            </button>
-          ),
-        )}
-      </details>
-      <h3>Retained operations in this tab</h3>
-      <p>
-        Refresh status after errors or lost replies; retry uses the same
-        operation ID. No automatic retry can claim completion. Recovery grants
-        last five minutes; offline rotations expire after 24 hours, and delivery
-        starts a maximum five-minute save deadline.
-      </p>
-      {operations.length === 0 && <p>No retained operations in this tab.</p>}
-      {operations.map((op) => (
-        <div key={op.operation_id} className="border-t border-white/10 py-3">
+      {error && (
+        <>
+          <p role="alert">{error}</p>
           <p>
-            {op.role} {op.subject}: {op.action} —{" "}
-            {op.state || "outcome unknown"}
+            Refresh status before retrying; a lost response does not prove
+            failure.
           </p>
-          <p>{stateHelp[op.state || ""] || "Outcome unknown. Refresh status using this operation ID; no save acknowledgement has been confirmed."}</p>
-          <small>
-            {op.operation_id}
-            {op.expires_at
-              ? ` · expires ${new Date(op.expires_at * 1000).toLocaleString()}`
-              : ""}
-            {op.overlap_until
-              ? ` · save deadline ${new Date(op.overlap_until * 1000).toLocaleString()}`
-              : ""}
-          </small>
-          <div>
-            <button
-              disabled={busy}
-              onClick={() =>
+        </>
+      )}
+      {mode !== "security" &&
+        loaded &&
+        !pairs.some((p) => p.kind === "physical") && (
+          <p>No physical pairing requests.</p>
+        )}
+      {mode !== "security" &&
+        pairs
+          .filter((p) => p.kind === "physical")
+          .map((p) => (
+            <PairRow
+              key={p.request_id}
+              pair={p}
+              busy={busy}
+              act={(action, code) =>
                 run(async () => {
-                  const result = await ownerPost("/api/lifecycle/v1/status", {
-                    operation_id: op.operation_id,
-                  });
-                  retain(
-                    operations.map((o) =>
-                      o.operation_id === op.operation_id ? { ...o, ...result } : o,
-                    ),
-                  );
+                  try {
+                    if (action === "approve") {
+                      // A previous request may have committed even if its response
+                      // was lost. Reconcile before deciding whether to initiate.
+                      const current = (await refreshPairs()).find(
+                        (pair) => pair.request_id === p.request_id,
+                      );
+                      if (current?.status === "ready") {
+                        await ownerPost("/api/enrollment/v1/initiate", {
+                          request_id: p.request_id,
+                          code,
+                        });
+                      }
+                    }
+                    await ownerPost(`/api/enrollment/v1/${action}`, {
+                      request_id: p.request_id,
+                      ...(code ? { code } : {}),
+                    });
+                  } catch (error) {
+                    // Keep the original action error if the status refresh also
+                    // fails. The next click will fetch fresh status before acting.
+                    await refreshPairs().catch(() => {});
+                    throw error;
+                  }
+                  await refresh();
                 })
               }
+            />
+          ))}
+      {mode !== "pairing" && (
+        <>
+          <h3>Device credentials</h3>
+          {loaded && devices.length === 0 && (
+            <p>
+              No devices reported. Use a retained exact ID below for an offline
+              identity.
+            </p>
+          )}
+          {devices.map((d) => (
+            <div key={d.id}>
+              <span>
+                {d.name} — {d.id} — {d.state || "connectivity unknown"}{" "}
+              </span>
+              {["rotate", "revoke", "recover"].map((a) => (
+                <button
+                  className="m-2"
+                  disabled={busy}
+                  key={a}
+                  onClick={() => run(() => operate(a, "device", d.id))}
+                >
+                  {a} device
+                </button>
+              ))}
+            </div>
+          ))}
+          <h3>Integration credentials</h3>
+          <p>
+            New connections require owner-approved integration enrollment.
+            Existing integration rotation/revocation uses lifecycle v1; it never
+            reveals an agent token.
+          </p>
+          {agents
+            .filter(
+              (agent) =>
+                agent.id !== "openclaw-direct" &&
+                (!agent.type || agent.type === "openclaw"),
+            )
+            .map((c) => (
+              <div key={c.id}>
+                {c.name} — {c.id}
+                {["rotate", "revoke"].map((a) => (
+                  <button
+                    className="m-2"
+                    disabled={busy}
+                    key={a}
+                    onClick={() => run(() => operate(a, "integration", c.id))}
+                  >
+                    {a} integration
+                  </button>
+                ))}
+              </div>
+            ))}
+          <details>
+            <summary>Known offline identity</summary>
+            <p>
+              The device list may omit a never-connected or retired client.
+              Enter its exact retained subject ID; display names are not IDs.
+            </p>
+            <select
+              aria-label="Identity role"
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
             >
-              Refresh status
-            </button>{" "}
-            <button
-              disabled={busy}
-              onClick={() =>
-                run(() => operate(op.action, op.role, op.subject, op))
-              }
+              <option>device</option>
+              <option>integration</option>
+            </select>
+            <input
+              aria-label="Subject ID"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+            />
+            {[
+              "rotate",
+              "revoke",
+              ...(role === "device" ? ["recover"] : []),
+            ].map((a) => (
+              <button
+                key={a}
+                disabled={busy || !subject}
+                onClick={() => run(() => operate(a, role, subject))}
+              >
+                {a} known identity
+              </button>
+            ))}
+          </details>
+          <h3>Retained operations in this tab</h3>
+          <p>
+            Refresh status after errors or lost replies; retry uses the same
+            operation ID. No automatic retry can claim completion. Recovery
+            grants last five minutes; offline rotations expire after 24 hours,
+            and delivery starts a maximum five-minute save deadline.
+          </p>
+          {operations.length === 0 && (
+            <p>No retained operations in this tab.</p>
+          )}
+          {operations.map((op) => (
+            <div
+              key={op.operation_id}
+              className="border-t border-white/10 py-3"
             >
-              Retry same operation
-            </button>
-          </div>
-        </div>
-      ))}
+              <p>
+                {op.role} {op.subject}: {op.action} —{" "}
+                {op.state || "outcome unknown"}
+              </p>
+              <p>
+                {stateHelp[op.state || ""] ||
+                  "Outcome unknown. Refresh status using this operation ID; no save acknowledgement has been confirmed."}
+              </p>
+              <small>
+                {op.operation_id}
+                {op.expires_at
+                  ? ` · expires ${new Date(op.expires_at * 1000).toLocaleString()}`
+                  : ""}
+                {op.overlap_until
+                  ? ` · save deadline ${new Date(op.overlap_until * 1000).toLocaleString()}`
+                  : ""}
+              </small>
+              <div>
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      const result = await ownerPost(
+                        "/api/lifecycle/v1/status",
+                        {
+                          operation_id: op.operation_id,
+                        },
+                      );
+                      retain(
+                        operations.map((o) =>
+                          o.operation_id === op.operation_id
+                            ? { ...o, ...result }
+                            : o,
+                        ),
+                      );
+                    })
+                  }
+                >
+                  Refresh status
+                </button>{" "}
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    run(() => operate(op.action, op.role, op.subject, op))
+                  }
+                >
+                  Retry same operation
+                </button>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }

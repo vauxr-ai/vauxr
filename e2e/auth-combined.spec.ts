@@ -1,3 +1,4 @@
+import { openIntegrations, openSettings } from "./auth-fixture";
 import { test, expect, login, native, client, requestIntegration, save, socket, pairDevice } from "./auth-fixture";
 
 test("owner approves integration; scoped pairing, speech, activation, rotation and revoke remain separate", async ({ page, context, server }) => {
@@ -17,6 +18,7 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
   await expect(page.getByLabel(/device token|shared token|agent token/i)).toHaveCount(0);
   const { secret, request } = await requestIntegration(server);
   const enrollment = page.getByRole("region", { name: "Integration enrollment", exact: true });
+  await openIntegrations(page);
   await enrollment.getByText("Refresh integration requests").click();
   const row = enrollment.getByRole("region", { name: `Integration request ${request.request_id}`, exact: true });
   await expect(row).toContainText(server.origin);
@@ -39,11 +41,13 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
   expect(Boolean(delivery.save_required && delivery.credential.startsWith("vx_int_"))).toBe(true);
   expect((await native(server, "/api/devices", undefined, delivery.credential)).status).toBe(401);
   expect((await native(server, "/api/integrations/v1/deliver", secret)).status).toBe(409);
+  await openIntegrations(page);
   await enrollment.getByText("Refresh integration requests").click();
   await expect(row).toContainText("durable save has NOT been acknowledged");
   const integration = save(server, delivery.credential);
   await client(server, "ack", { ...secret, credential: integration, saved: true });
   await client(server, "ack", { ...secret, credential: integration, saved: true }); // lost-ACK retry
+  await openIntegrations(page);
   await enrollment.getByText("Refresh integration requests").click();
   await expect(row).toContainText("State: completed");
   expect((await native(server, "/api/devices", undefined, integration)).status).toBe(200);
@@ -76,10 +80,11 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
     expect(deviceAgent.messages[0].type).toBe("error");
     deviceAgent.ws.close();
     expect((await native(server, "/api/speech", undefined, device.device_token)).status).toBe(403);
+    await page.getByRole("button", {name:"Agents",exact:true}).click();
     await page.getByText("Refresh agents", { exact: true }).click();
     const route = page.locator("li").filter({ hasText: "Synthetic OpenClaw" });
-    await route.getByRole("button", { name: "Activate", exact: true }).click();
-    await expect(route.getByText("Active route", { exact: true })).toBeVisible();
+    await route.getByRole("button", { name: "Set as default", exact: true }).click();
+    await expect(route.locator(".pill").filter({ hasText: /^Default$/ })).toBeVisible();
     // PR58 settings run against the actual connected device projection and real speech API.
     await page.getByRole("button", { name: "Devices", exact: true }).click();
     await page.getByText(device.device_id, { exact: true }).first().click();
@@ -91,7 +96,8 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
     await expect(speech.getByLabel("TTS backend")).toHaveValue("");
     // Owner lifecycle is public metadata only; native client alone delivers and saves the replacement.
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    await page.getByText("Refresh pairing and identities").click();
+    await openSettings(page,"Access & security");
+    await page.getByText("Refresh identities").click();
     const access = page.locator("div").filter({ hasText: `Synthetic OpenClaw — ${request.agent_id}` })
       .filter({ has: page.getByRole("button", { name: "rotate integration", exact: true }) }).last();
     await access.getByText("rotate integration", { exact: true }).click();
@@ -142,6 +148,7 @@ test("matching code errors and denial never deliver credentials; legacy forms st
   const first = await requestIntegration(server, "Same display name");
   const second = await requestIntegration(server, "Same display name");
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await openIntegrations(page);
   await page.getByText("Refresh integration requests").click();
   const row = page.getByRole("region", { name: `Integration request ${first.request.request_id}`, exact: true });
   await row.getByLabel("Integration matching code").fill(second.request.user_code);
@@ -157,6 +164,7 @@ test("matching code errors and denial never deliver credentials; legacy forms st
   await client(server, "cancel", second.secret);
   await page.reload();
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await openIntegrations(page);
   await page.getByText("Refresh integration requests").click();
   await expect(row).toContainText("State: denied");
   await expect(page.getByRole("region", { name: `Integration request ${second.request.request_id}`, exact: true })).toContainText("State: cancelled");
@@ -168,6 +176,7 @@ test("server restart preserves owner session, approved integration and speech co
   await login(page, server);
   const { secret, request } = await requestIntegration(server);
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await openIntegrations(page);
   await page.getByText("Refresh integration requests").click();
   const row = page.getByRole("region", { name: `Integration request ${request.request_id}`, exact: true });
   await row.getByLabel("Integration matching code").fill(request.user_code);

@@ -30,6 +30,10 @@ def attach_plugins(
     app: web.Application,
     boundary: Callable[[Callable[[web.Request], Awaitable[web.StreamResponse]]], Callable[[web.Request], Awaitable[web.StreamResponse]]],
 ) -> None:
+    from vauxr.plugins.settings import attach_plugin_settings
+
+    attach_plugin_settings(app, boundary)
+
     async def handle(request: web.Request) -> web.Response:
         if session_principal(request) is None:
             return web.json_response({"error": "unauthorized"}, status=401)

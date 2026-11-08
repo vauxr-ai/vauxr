@@ -91,7 +91,16 @@ async def _answer(
     if agent is None or agent.type != "langchain":
         raise ValueError("Registered agent unavailable")
     implementation = build(agent.definition_id or "")
-    config = settings(agent_id)
+    try:
+        config = settings(agent_id)
+        if "profile_id" in config:
+            from vauxr.settings.providers import resolve_profile
+
+            config = resolve_profile(config["profile_id"])
+    except ValueError:
+        return "Agent needs setup. Its model profile is unavailable or missing credentials. No model request was made."
+    if config.get("provider") == "openai":
+        return "OpenAI model profiles are unsupported by this agent runtime. Choose an Ollama profile. No model request was made."
     if not config["provider"]:
         return f"{agent.name} needs setup. Configure its local model runtime in Settings. No model request was made."
     tools = [
