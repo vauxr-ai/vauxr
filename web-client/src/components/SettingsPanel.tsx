@@ -1,3 +1,4 @@
+import InterfaceEditor from "./InterfaceEditor";
 import PluginsPanel from "./PluginsPanel";
 import AccessPanel from "./AccessPanel";
 import SpeechSettings from "./SpeechSettings";
@@ -111,14 +112,15 @@ export default function SettingsPanel({ wsUrl, token, wsState: _wsState, addLog,
 
   useEffect(() => { void refresh(); }, [refresh]);
   const dirty = showAdd || editing !== null;
+  const [interfaceDirty,setInterfaceDirty] = useState(false);
   useEffect(() => { if (saved && !busy) addButton.current?.focus(); }, [saved, busy]);
-  useEffect(() => { onDirtyChange?.(dirty); return () => onDirtyChange?.(false); }, [dirty, onDirtyChange]);
+  useEffect(() => { onDirtyChange?.(dirty || interfaceDirty); return () => onDirtyChange?.(false); }, [dirty, interfaceDirty, onDirtyChange]);
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty && !interfaceDirty) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  }, [dirty, interfaceDirty]);
   const discard = () => !dirty || window.confirm("Discard unsaved webhook edits?");
   async function mutate(action: () => Promise<void>) {
     if (busy) return;
@@ -220,6 +222,7 @@ export default function SettingsPanel({ wsUrl, token, wsState: _wsState, addLog,
       <nav aria-label="Settings sections" className="settings-sections">
         <a href="#voice-defaults">Voice providers/defaults</a>
         <a href="#plugins">Plugins</a>
+        <a href="#interface-editor">Interface editor</a>
         <a href="#pairing-access">Pairing &amp; Access</a>
         <a href="#webhooks">Webhooks</a>
       </nav>
@@ -229,6 +232,7 @@ export default function SettingsPanel({ wsUrl, token, wsState: _wsState, addLog,
         <SpeechSettings />
       </section>
       <PluginsPanel />
+      <InterfaceEditor onDirtyChange={setInterfaceDirty} />
       <section id="pairing-access" tabIndex={-1} aria-label="Pairing and access"><AccessPanel /></section>
     <section id="webhooks" tabIndex={-1} aria-label="Webhooks" className="card overflow-hidden">
       <div className="flex flex-wrap gap-3 items-center justify-between border-b border-white/5 px-5 py-3">

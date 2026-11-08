@@ -60,9 +60,10 @@ async def answer(device_id: str, text: str) -> str:
         "name": "vauxr_context_read", "description": "Read fresh sanitized current page and selected setting context.",
         "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
     }}, {"type": "function", "function": {
-        "name": "vauxr_context_action", "description": "Execute requested navigation, selected-agent rename or highlight. Use the fresh exact context revision/resource ID. No second confirmation.",
+        "name": "vauxr_context_action", "description": "Execute requested navigation, selected-agent rename, highlight or static interface source editing in Settings. Read interface source/revision with interface_read before interface_save. Use the fresh exact context revision/resource ID. No second confirmation.",
         "parameters": {"type": "object", "properties": {
-            "op": {"type": "string", "enum": ["navigate", "highlight", "rename_agent"]},
+            "op": {"type": "string", "enum": ["navigate", "highlight", "rename_agent", "interface_read", "interface_save"]},
+            "document_revision": {"type":"string"}, "title":{"type":"string"}, "html":{"type":"string"}, "css":{"type":"string"},
             "revision": {"type": "string"}, "resource_id": {"type": "string"},
             "name": {"type": "string"}, "route": {"type": "string", "enum": ["agents", "devices", "settings"]},
             "control": {"type": "string", "enum": ["agent_name"]},
