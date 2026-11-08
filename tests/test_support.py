@@ -33,14 +33,14 @@ def test_builtin_install_is_idempotent_and_preserves_existing_route(tmp_path):
     assert registry.remove("vauxr-support") is False
     registry.load()
     assert registry.activate("vauxr-support")
-    assert registry.get_active().type == "support"
+    assert registry.get_active().type == "langchain"
 
 
 async def test_unconfigured_is_honest_without_model_or_openclaw():
     registry.ensure_support()
     assert registry.get_active().id == "vauxr-support"
     assert support.settings() == support.EMPTY
-    assert await support.answer("browser", "Help") == support.SETUP
+    assert "needs setup" in await support.answer("browser", "Help")
 
 
 @pytest.mark.parametrize("change", [

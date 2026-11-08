@@ -1,0 +1,1 @@
+{"version":1,"definitions":[{"id":"household","name":"Household assistant","framework":"langchain","implementation":"household:build","supported_modes":["standard"]},{"id":"vauxr-support","name":"Vauxr Support","framework":"langchain","implementation":"support:build","supported_modes":["standard"]}]}

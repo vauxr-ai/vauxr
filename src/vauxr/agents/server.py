@@ -75,6 +75,7 @@ class AgentServer:
         self._response_origins: deque[_ResponseOrigin] = deque(maxlen=256)
         self._realtime_origins: deque[tuple[str, _Connection, str]] = deque(maxlen=256)
         self._response_listeners: dict[str, DeviceResponseListener] = {}
+        self._local_tasks: dict[str, asyncio.Task] = {}
         self._bound_response_admissions: dict[str, object] = {}
         self._response_agents: dict[str, str] = {}
         self._media_turns: dict[asyncio.Event, str] = {}
@@ -129,7 +130,7 @@ class AgentServer:
         active = agent_registry.get_active()
         if active is None:
             return False
-        if active.type in ("openclaw-direct", "support", "langgraph"):
+        if active.type in ("openclaw-direct", "langchain"):
             return True
         conn = self._connections.get(active.id)
         return conn is not None and not conn.ws.closed and current(conn.principal)
@@ -141,30 +142,41 @@ class AgentServer:
         if active is None:
             log.warning("No active agent — dropping transcript")
             return False
-        if active.type in ("support", "langgraph"):
-            from vauxr.agents.support import answer
+        if active.type == "langchain":
+            from vauxr.agents.langchain import answer
 
             target = listener or self._response_listeners.get(device_id)
             if target is None:
                 return False
 
+            previous = self._local_tasks.get(device_id)
+            if previous is not None and not previous.done() and not previous.cancelling():
+                return False
+
             async def respond() -> None:
+                if previous is not None and not previous.done():
+                    await asyncio.gather(previous, return_exceptions=True)
                 try:
-                    if active.type == "langgraph":
-                        from vauxr.agents.langgraph import answer as graph_answer
-                        reply = await graph_answer(active.id, device_id, text)
-                    else:
-                        reply = await answer(device_id, text)
+                    def is_current() -> bool:
+                        selected = agent_registry.get_for_device(device_id)
+                        return (selected is not None and selected.id == active.id
+                                and self._response_listeners.get(device_id) is target)
+                    reply = await answer(active.id, device_id, text, is_current=is_current)
                     selected = agent_registry.get_for_device(device_id)
                     if (selected is not None and selected.id == active.id
                             and self._response_listeners.get(device_id) is target):
-                        target["on_delta"]("support", reply)
-                        target["on_end"]("support")
+                        target["on_delta"]("langchain", reply)
+                        target["on_end"]("langchain")
                 except Exception:
                     if self._response_listeners.get(device_id) is target:
-                        target["on_error"]("support", "Support runtime unavailable; check setup")
+                        target["on_error"]("langchain", "Agent runtime unavailable; check setup")
 
-            asyncio.create_task(respond())
+            task = asyncio.create_task(respond())
+            self._local_tasks[device_id] = task
+            def finished(completed: asyncio.Task) -> None:
+                if self._local_tasks.get(device_id) is completed:
+                    self._local_tasks.pop(device_id, None)
+            task.add_done_callback(finished)
             return True
         if active.type == "openclaw-direct":
             return False
@@ -238,6 +250,9 @@ class AgentServer:
         auth_connections.release(self._media_authorities.pop(abort, None))
 
     def add_response_listener(self, device_id: str, listener: DeviceResponseListener) -> None:
+        previous = self._local_tasks.get(device_id)
+        if previous is not None and not previous.done():
+            previous.cancel()
         self._bound_response_admissions.pop(device_id, None)
         self._response_listeners[device_id] = listener
         active = agent_registry.get_for_device(device_id)
@@ -252,6 +267,9 @@ class AgentServer:
         if listener is not None and self._response_listeners.get(device_id) is not listener:
             return
         self._bound_response_admissions.pop(device_id, None)
+        task = self._local_tasks.get(device_id)
+        if task is not None and not task.done():
+            task.cancel()
         self._response_listeners.pop(device_id, None)
         self._response_agents.pop(device_id, None)
 

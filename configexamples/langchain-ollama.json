@@ -1,0 +1,4 @@
+{
+  "create": {"definition_id": "household", "name": "Household assistant"},
+  "runtime": {"provider": "ollama", "endpoint": "http://ollama.local:11434", "model": "gemma4:12b"}
+}
