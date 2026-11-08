@@ -322,6 +322,7 @@ async def device_command(request: web.Request) -> web.Response:
 
 @_require_auth
 async def list_agents(_request: web.Request) -> web.Response:
+    from vauxr.agents.integration_metadata import public_metadata
     from vauxr.speech.store import get_store as voice_store
 
     agents = [
@@ -329,6 +330,7 @@ async def list_agents(_request: web.Request) -> web.Response:
             "id": c.id,
             "name": c.name,
             "chat_only": voice_store().chat_only_agent(c.id),
+            "integration_metadata": public_metadata(c),
             "type": c.type,
             "active": c.active,
             "createdAt": c.createdAt,
