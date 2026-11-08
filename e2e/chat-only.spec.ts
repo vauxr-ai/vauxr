@@ -37,7 +37,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
       await closeAgentDetail(page);
       await page.getByRole("button", {name:"Agents",exact:true}).click();
       await page.getByRole("button", {name: "Refresh agents", exact: true}).click();
-      await page.getByRole("button", { name: "View agent Household text companion" }).click();
+      await page.getByRole("button", { name: "Voice pipeline for Household text companion" }).click();
       const voice = page.getByRole("region", { name: "Agent voice", exact: true });
       await voice.getByLabel("Enable Standard").uncheck();
       await voice.getByLabel("Enable Live").uncheck();
@@ -77,7 +77,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
       await page.keyboard.press("Escape");
       await server.restart();
       await page.reload();
-      await page.getByRole("button", { name: "View agent Household text companion" }).click();
+      await page.getByRole("button", { name: "Voice pipeline for Household text companion" }).click();
       await expect(page.getByLabel("Enable Standard")).not.toBeChecked();
       await expect(page.getByLabel("Enable Live")).not.toBeChecked();
       await closeAgentDetail(page);
