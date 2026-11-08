@@ -1,6 +1,11 @@
 import { ownerFetch } from "../auth/api";
 import { useCallback } from "react";
 
+export interface IntegrationMetadata {
+  framework: "openclaw";
+  configuration: "enrolled" | "operator-managed" | "registered";
+}
+
 export interface ApiAgent {
   id: string;
   name: string;
@@ -9,6 +14,7 @@ export interface ApiAgent {
   createdAt: string;
   builtin?: boolean;
   chat_only?: boolean;
+  integration_metadata?: IntegrationMetadata;
 }
 
 export function useAgents(_baseUrl = "", _token = "") {
