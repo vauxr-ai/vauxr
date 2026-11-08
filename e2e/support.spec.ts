@@ -1,4 +1,4 @@
-import { test, expect, login } from "./auth-fixture";
+import { test, expect, login, closeAgentDetail } from "./auth-fixture";
 for (const width of [390, 1366]) test(`built-in Support is independent and honest without runtime at ${width}`, async ({ page, server }) => {
   await page.setViewportSize({width, height: 900});
   await page.addInitScript(() => {
@@ -10,6 +10,7 @@ for (const width of [390, 1366]) test(`built-in Support is independent and hones
   const setup = page.getByRole("region", {name:/^(Support runtime|Agent model runtime)$/, exact:true});
   await expect(setup).toContainText("Setup needed");
   await expect(setup.getByRole("combobox")).toHaveValue("");
+  await closeAgentDetail(page);
   await page.getByRole("button", {name:"Connect browser", exact:true}).click();
   const companion = page.locator("#voice-companion");
   await expect(companion.getByLabel("Conversation agent")).toBeEnabled();

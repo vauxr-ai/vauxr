@@ -328,6 +328,8 @@ def remove(agent_id: str) -> bool:
         return _encode([a for a in agents if a.id != agent_id], "" if active == agent_id else active)
 
     _commit(change)
+    from vauxr.agents.avatars import remove as remove_avatar
+    remove_avatar(agent_id)
     return True
 
 

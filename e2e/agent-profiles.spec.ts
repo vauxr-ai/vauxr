@@ -1,3 +1,4 @@
+import { closeAgentDetail } from "./auth-fixture";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -28,6 +29,7 @@ for (const width of [390, 1366]) test(`saved profile drives registered runtime a
     });
     await login(page, server);
     console.log(`Profile ${width}: logged in`);
+    await closeAgentDetail(page);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: /^Model providers/ }).click();
     await page.getByRole("button", { name: "+ Add provider profile", exact: true }).click();
@@ -38,6 +40,7 @@ for (const width of [390, 1366]) test(`saved profile drives registered runtime a
     await page.getByRole("button", { name: "Save provider profile", exact: true }).click();
     await expect(page.getByText(/Provider profile saved/)).toBeVisible();
     console.log(`Profile ${width}: saved profile`);
+    await closeAgentDetail(page);
     await page.getByRole("button", { name: "Agents", exact: true }).click();
     await expect(page.getByRole("button", { name: "Default", exact: true })).toBeDisabled();
     await page.getByRole("button", { name: "+ Add Agent", exact: true }).click();
@@ -67,10 +70,14 @@ for (const width of [390, 1366]) test(`saved profile drives registered runtime a
     await page.reload();
     await page.getByRole("button", { name: "View agent Profile household", exact: true }).click();
     await expect(runtime.getByLabel("Model profile", { exact: true })).toHaveValue("selected-local");
+    await closeAgentDetail(page);
     await page.getByRole("button", { name: "Connect browser", exact: true }).click();
     const companion = page.locator("#voice-companion");
+    await closeAgentDetail(page);
     await companion.getByLabel("Conversation agent", { exact: true }).selectOption(agent.id);
+    await closeAgentDetail(page);
     await companion.getByLabel("Text message", { exact: true }).fill("Verify selected runtime");
+    await closeAgentDetail(page);
     await companion.getByRole("button", { name: "Send text", exact: true }).click();
     await expect(companion.getByLabel("Agent text response", { exact: true })).toContainText("Deterministic transport reply from profile-model");
     expect(calls.map(c => c.path)).toEqual(["/api/show", "/api/chat"]);
@@ -78,6 +85,7 @@ for (const width of [390, 1366]) test(`saved profile drives registered runtime a
     expect(calls[1].body.tools.map((t: any) => t.function.name)).toContain("vauxr_household_action");
     expect(await page.evaluate(() => [(window as any).micCalls, (window as any).playCalls])).toEqual([0, 0]);
     await page.screenshot({ path: `/tmp/vauxr-b2-integrated-response-${width}.png`, fullPage: true });
+    await closeAgentDetail(page);
     await companion.getByRole("button", { name: "Collapse voice companion", exact: true }).click();
     const card = page.getByRole("listitem").filter({ has: page.getByRole("button", { name: "View agent Profile household", exact: true }) });
     page.once("dialog", dialog => dialog.accept());

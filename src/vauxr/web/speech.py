@@ -52,6 +52,14 @@ def attach_speech_routes(
             backend["readiness"] = state
         return web.json_response(result)
 
+    async def preview(request: web.Request) -> web.Response:
+        if not await authorize(request):
+            raise web.HTTPUnauthorized()
+        from vauxr.web.speech_preview import preview as synthesize_preview
+        return await synthesize_preview(request)
+
+    app.router.add_post("/api/speech/preview", boundary(preview))
+
     settings = boundary(settings)
     for path in ("/api/speech", "/api/devices/{device_id}/speech", "/api/agents/{agent_id}/speech"):
         app.router.add_get(path, settings)

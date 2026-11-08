@@ -47,6 +47,9 @@ def isolated(monkeypatch, tmp_path):
 # Expected authorization and concrete endpoint outcome, including owner-only and unshipped routes.
 ROUTES = [
     ("GET", "/api/speech", "o", 200),
+    ("POST", "/api/speech/preview", "o", 403),
+    ("GET", "/api/agents/missing/avatar", "o", 404),
+    ("POST", "/api/agents/missing/avatar", "o", 404),
     ("PATCH", "/api/speech", "o", 200),
     ("GET", "/api/devices/missing/speech", "o", 200),
     ("PATCH", "/api/devices/missing/speech", "o", 200),
@@ -134,8 +137,8 @@ def test_route_inventory_complete():
     }
     expected.add(("GET", "/firmware-delivery/{token}/{filename}"))
     assert actual == expected
-    # Speech uses one injected boundary for six path/method combinations.
-    assert len(HTTP_OPERATIONS) + 6 == len(ROUTES)
+    # Speech shares an injected boundary; avatar GET/POST share one operation.
+    assert len(HTTP_OPERATIONS) + 8 == len(ROUTES)
 
 
 async def test_unknown_handler_and_api_fallback_deny():

@@ -13,6 +13,7 @@ export interface ApiAgent {
   active: boolean;
   createdAt: string;
   builtin?: boolean;
+  avatar_url?: string;
   chat_only?: boolean;
   integration_metadata?: IntegrationMetadata;
 }

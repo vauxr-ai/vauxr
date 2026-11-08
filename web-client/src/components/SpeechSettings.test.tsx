@@ -101,7 +101,7 @@ it("refreshes inheritors and scopes voice controls after a global model change",
   vi.stubGlobal("fetch", fetcher);
   render(<SpeechSettings deviceId="b" />);
   await screen.findByText("Effective: whisper / piper / amy");
-  fireEvent.click(screen.getByText("Refresh speech"));
+  fireEvent.click(screen.getByRole("button", {name: "Refresh speech"}));
   await screen.findByText("Effective: whisper / kokoro / af");
   expect(screen.getByRole("option", { name: "af" })).toBeTruthy();
   expect(screen.queryByRole("option", { name: "amy" })).toBeNull();
@@ -152,9 +152,9 @@ it.each([undefined, "device-a"])(
         deviceId,
       });
       await waitFor(() =>
-        expect(screen.getByText("Refresh speech")).toBeEnabled(),
+        expect(screen.getByRole("button", {name: "Refresh speech"})).toBeEnabled(),
       );
-      fireEvent.click(screen.getByText("Refresh speech"));
+      fireEvent.click(screen.getByRole("button", {name: "Refresh speech"}));
       await waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
       expect(changed.mock.calls[1][0].detail).toEqual(
         changed.mock.calls[0][0].detail,
@@ -243,9 +243,7 @@ it("saves Live-only enablement and default atomically, retaining the draft on an
   render(<SpeechSettings agentId="agent" />);
   const standard = await screen.findByLabelText("Enable Standard");
   fireEvent.click(standard);
-  fireEvent.change(screen.getByLabelText("Default voice mode"), {
-    target: { value: "realtime" },
-  });
+  fireEvent.click(screen.getByRole("switch", {name: "Default Live"}));
   fetcher.mockResolvedValueOnce({
     ok: false,
     status: 409,
@@ -260,7 +258,7 @@ it("saves Live-only enablement and default atomically, retaining the draft on an
     "kitchen-speaker: reset its Standard override",
   );
   expect(standard).not.toBeChecked();
-  expect(screen.getByLabelText("Default voice mode")).toHaveValue("realtime");
+  expect(screen.getByRole("switch", {name: "Default Live"})).toBeChecked();
   expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({
     enabled_modes: ["realtime"],
     default_mode: "realtime",
@@ -360,9 +358,7 @@ it("stages a disabled Live provider and saves provider, voice, enablement and de
   vi.stubGlobal("fetch", fetcher);
   render(<SpeechSettings agentId="agent" />);
   await screen.findByLabelText("Enable Standard");
-  fireEvent.change(screen.getByLabelText("Configure mode providers"), {
-    target: { value: "realtime" },
-  });
+  fireEvent.click(screen.getByRole("tab", {name: "Live / Realtime"}));
   fireEvent.change(screen.getByLabelText("Realtime provider / model"), {
     target: { value: "live-provider" },
   });
@@ -375,9 +371,7 @@ it("stages a disabled Live provider and saves provider, voice, enablement and de
   ).toBeVisible();
   fireEvent.click(screen.getByLabelText("Enable Standard"));
   fireEvent.click(screen.getByLabelText("Enable Live"));
-  fireEvent.change(screen.getByLabelText("Default voice mode"), {
-    target: { value: "realtime" },
-  });
+  fireEvent.click(screen.getByRole("switch", {name: "Default Live"}));
   fetcher.mockResolvedValueOnce({
     ok: false,
     status: 409,
@@ -433,4 +427,74 @@ it("stages a disabled Live provider and saves provider, voice, enablement and de
   expect(
     screen.getByText("Effective Live: live-provider / live-model / ash"),
   ).toBeVisible();
+});
+
+const previewPolicy = {
+  agent_id: "agent", assigned: false, configured: true,
+  integration_modes: ["standard", "realtime"], enabled_modes: ["standard"],
+  default_mode: "standard", available_modes: ["standard"],
+  capabilities_known: true, conflict: null, agents: [{id: "agent", name: "Household"}],
+};
+it("navigates provider tabs by keyboard and disables disconnected previews", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ok: true, json: async () => ({...view, policy: previewPolicy})}));
+  render(<SpeechSettings agentId="agent" agentName="Workshop" />);
+  expect(await screen.findByRole("button", {name: "Test selected voice"})).toBeDisabled();
+  const standard = screen.getByRole("tab", {name: "Standard"});
+  fireEvent.keyDown(standard, {key: "End"});
+  expect(screen.getByRole("tab", {name: "Live / Realtime"})).toHaveFocus();
+  expect(screen.getByText(/samples are available for Standard/)).toBeVisible();
+  fireEvent.keyDown(screen.getByRole("tab", {name: "Live / Realtime"}), {key: "ArrowRight"});
+  expect(standard).toHaveFocus();
+});
+it("cancels preview on draft selection change without persisting selection", async () => {
+  let signal: AbortSignal | undefined;
+  const fetcher = vi.fn().mockImplementation(async (path, init) => {
+    if (path === "/api/speech/preview") { signal = init.signal; return new Promise(() => {}); }
+    return {ok: true, json: async () => ({...view, policy: previewPolicy})};
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<SpeechSettings agentId="agent" browserDeviceId="browser" browserConnected browserCredential={() => "browser-proof"} />);
+  fireEvent.click(await screen.findByRole("button", {name: "Test selected voice"}));
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({device_id: "browser", tts_backend: "piper", voice: "amy"});
+  expect(new Headers(fetcher.mock.calls[1][1].headers).get("X-Vauxr-Browser")).toBe("browser-proof");
+  fireEvent.change(screen.getByLabelText("Voice"), {target: {value: "sam"}});
+  expect(signal?.aborted).toBe(true);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("button", {name: "Stop"})).toBeNull();
+});
+it("reports preview errors and disables unavailable providers", async () => {
+  const fetcher = vi.fn().mockResolvedValue({ok: true, json: async () => ({...view, policy: previewPolicy})});
+  vi.stubGlobal("fetch", fetcher);
+  render(<SpeechSettings agentId="agent" browserDeviceId="browser" browserConnected browserCredential={() => "browser-proof"} />);
+  const test = await screen.findByRole("button", {name: "Test selected voice"});
+  fetcher.mockResolvedValueOnce({ok: false, status: 503, json: async () => ({error: "Synthesis unavailable"})});
+  fireEvent.click(test);
+  expect(await screen.findByText("Synthesis unavailable")).toBeVisible();
+  fireEvent.change(screen.getByLabelText("TTS backend"), {target: {value: "kokoro"}});
+  expect(test).toBeDisabled();
+});
+it.each([false, true])("cleans up local playback on disconnect and reports playback rejection (%s)", async (reject) => {
+  const pause = vi.fn();
+  const play = reject ? vi.fn().mockRejectedValue(new Error("Playback denied")) : vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("Audio", class {pause = pause; play = play;});
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  const revoke = vi.fn();
+  URL.createObjectURL = vi.fn().mockReturnValue("blob:sample");
+  URL.revokeObjectURL = revoke;
+  try {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async path => path === "/api/speech/preview"
+      ? {ok: true, blob: async () => new Blob(["wav"], {type: "audio/wav"})}
+      : {ok: true, json: async () => ({...view, policy: previewPolicy})}));
+    const {rerender} = render(<SpeechSettings agentId="agent" browserDeviceId="browser" browserConnected browserCredential={() => "browser-proof"} />);
+    fireEvent.click(await screen.findByRole("button", {name: "Test selected voice"}));
+    await screen.findByText(reject ? "Playback denied" : "Playing in this browser.");
+    expect(play).toHaveBeenCalledTimes(1);
+    rerender(<SpeechSettings agentId="agent" browserDeviceId="browser" browserConnected={false} browserCredential={() => "browser-proof"} />);
+    expect(pause).toHaveBeenCalled();
+    expect(revoke).toHaveBeenCalledWith("blob:sample");
+  } finally {
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+  }
 });

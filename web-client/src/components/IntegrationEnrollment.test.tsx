@@ -14,7 +14,7 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 test("discloses fixed grants, exclusions and physical pairing limits immediately before consent", async () => {
   render(<IntegrationEnrollment />);
-  fireEvent.click(screen.getByText("Refresh integration requests"));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh integration requests", exact: true }));
   const row = await screen.findByRole("region", { name: `Integration request ${request.request_id}` });
   const disclosure = within(row).getByRole("region", { name: "Integration permissions" });
   expect(disclosure).toBeVisible();
@@ -44,7 +44,7 @@ test("discloses fixed grants, exclusions and physical pairing limits immediately
 });
 test("approval requires matching code and deliberate confirmation, and clears code after uncertain failure", async () => {
   render(<IntegrationEnrollment />);
-  fireEvent.click(screen.getByText("Refresh integration requests"));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh integration requests", exact: true }));
   const input = await screen.findByLabelText("Integration matching code");
   const approve = screen.getByText("Approve matching integration");
   fireEvent.change(input, { target: { value: "abcdef12" } });
@@ -64,7 +64,7 @@ test("approval requires matching code and deliberate confirmation, and clears co
 test("delivered state never claims save completion or reoffers approval", async () => {
   vi.mocked(ownerPost).mockResolvedValue({ requests: [{ ...request, state: "delivered" }] });
   render(<IntegrationEnrollment />);
-  fireEvent.click(screen.getByText("Refresh integration requests"));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh integration requests", exact: true }));
   await screen.findByText("Delivery attempted; durable save has NOT been acknowledged.");
   expect(screen.queryByText("Approve matching integration")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Integration matching code")).not.toBeInTheDocument();
@@ -72,7 +72,7 @@ test("delivered state never claims save completion or reoffers approval", async 
 test("denial sends only request identity and requires confirmation", async () => {
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   render(<IntegrationEnrollment />);
-  fireEvent.click(screen.getByText("Refresh integration requests"));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh integration requests", exact: true }));
   const deny = await screen.findByText("Deny integration request");
   fireEvent.click(deny);
   expect(ownerPost).toHaveBeenCalledTimes(1);

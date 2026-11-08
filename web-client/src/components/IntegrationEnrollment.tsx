@@ -1,3 +1,4 @@
+import RefreshButton from "./RefreshButton";
 import { useState } from "react";
 import { ownerPost } from "../auth/api";
 
@@ -40,7 +41,7 @@ export default function IntegrationEnrollment() {
         server address and eight-character code shown by that client. Names are untrusted
         and may repeat. Approve only a setup you deliberately started.
       </p>
-      <button disabled={busy} onClick={() => void run(refresh)}>Refresh integration requests</button>
+      <RefreshButton label="Refresh integration requests" busy={busy} onClick={() => run(refresh)} />
       {busy && <p role="status">Checking integration request…</p>}
       {error && <p role="alert">{error} Refresh requests to reconcile a possibly accepted approval before retrying.</p>}
       {loaded && requests.length === 0 && <p>No integration requests. Start enrollment in the OpenClaw client, then refresh.</p>}

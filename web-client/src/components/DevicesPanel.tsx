@@ -1,3 +1,4 @@
+import RefreshButton from "./RefreshButton";
 import AccessPanel from "./AccessPanel";
 import EventLog from "./EventLog";
 import SpeechSettings from "./SpeechSettings";
@@ -102,9 +103,6 @@ const inputClass =
 
 const primaryBtn =
   "focus-ring rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50";
-
-const ghostBtn =
-  "focus-ring inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:bg-white/5 hover:text-zinc-200";
 
 const labelClass = "flex flex-col gap-1.5 text-xs font-medium text-zinc-400";
 
@@ -265,10 +263,7 @@ export default function DevicesPanel({
             Connected hardware, per-device settings, and actions.
           </p>
         </div>
-        <button className={ghostBtn} onClick={refresh}>
-          <Icon name="refresh" size={14} />
-          Refresh
-        </button>
+        <RefreshButton label="Refresh" onClick={refresh} />
       </div>
 
       <div className="px-5 py-4">

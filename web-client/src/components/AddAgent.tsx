@@ -1,3 +1,4 @@
+import RefreshButton from "./RefreshButton";
 import { useEffect, useState, useRef } from "react";
 import Modal from "./Modal";
 import { ownerFetch, jsonResponse } from "../auth/api";
@@ -65,9 +66,7 @@ export default function AddAgent({
               register an implementation.
             </p>
           )}
-          <button disabled={busy} onClick={() => void load()}>
-            Refresh registered agents
-          </button>
+          <RefreshButton label="Refresh registered agents" busy={busy} onClick={load} />
           {!!definitions?.length && (
             <form
               className="grid gap-3"

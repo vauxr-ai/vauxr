@@ -168,6 +168,7 @@ HTTP_OPERATIONS = {
     "delete_agent": Operation.CREDENTIAL_REVOKE,
     "activate_agent": Operation.AGENT_CONFIG,
     "rename_agent": Operation.AGENT_CONFIG,
+    "agent_avatar": Operation.AGENT_CONFIG,
     "rotate_token": Operation.CREDENTIAL_ROTATE,
     "list_webhooks": Operation.WEBHOOK_CONFIG,
     "get_webhook_configuration": Operation.WEBHOOK_CONFIG,

@@ -901,3 +901,44 @@ body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; 
   .modal-heading, .modal-body { padding:20px; }
   .modal input, .modal select { font-size:16px; }
 }
+
+/* A small refresh glyph retains a generous, consistent pointer/touch target. */
+button.refresh-button, .auth-panel button.refresh-button, .settings-content button.refresh-button {
+  display:inline-flex; align-items:center; justify-content:center; width:44px; height:44px;
+  min-width:44px; padding:0; border:1px solid transparent; background:transparent;
+  color:var(--muted); border-radius:var(--radius-control); box-shadow:none;
+}
+button.refresh-button:hover:not(:disabled) { color:var(--accent); background:var(--panel-raised); border-color:var(--line); }
+.refresh-button[aria-busy="true"] svg { animation:refresh-turn 1s linear infinite; }
+@keyframes refresh-turn { to {transform:rotate(360deg);} }
+.agent-list li { position:relative; }
+.agent-open::after { content:""; position:absolute; inset:0; border-radius:14px; }
+.agent-list li:has(.agent-open:hover), .agent-list li:has(.agent-open:focus-visible) { background:color-mix(in srgb,var(--accent) 6%, transparent); }
+.agent-list .agent-route-action { position:relative; z-index:1; }
+.agent-avatar { display:inline-flex; align-items:center; justify-content:center; width:52px; height:52px; flex:none; overflow:hidden; padding:0; }
+.agent-avatar img { width:100%; height:100%; object-fit:cover; }
+.agent-detail-modal { width:min(1000px,calc(100% - 48px)); }
+.agent-detail-modal .modal-heading { position:sticky; top:0; z-index:3; background:var(--panel); gap:12px; }
+.agent-detail-modal .modal-heading > div { flex:1; min-width:0; }
+.agent-detail-modal .modal-body { gap:20px; }
+.agent-detail-modal .modal-body > p { font-size:13px; }
+.agent-detail-modal .modal-heading h2 { font-size:clamp(22px,3vw,30px); }
+.agent-profile { display:flex; gap:18px; align-items:center; }
+.agent-profile .agent-avatar { width:76px; height:76px; border-radius:22px; }
+.agent-profile small { display:block; font-size:11px; margin-top:6px; }
+.avatar-upload { position:relative; display:inline-flex !important; flex-direction:row !important; font-size:13px; font-weight:600; color:var(--accent); border:1px solid var(--line); border-radius:10px; padding:10px 14px; cursor:pointer; }
+.avatar-upload input { position:absolute; opacity:0; inset:0; width:100%; cursor:pointer; }
+.avatar-upload:focus-within { outline:2px solid var(--accent); outline-offset:3px; }
+#rename-agent { display:block; margin:0; }
+#rename-agent input { width:100%; font-size:inherit; padding:6px 10px; }
+.name-edit-actions { display:flex; gap:8px; margin-top:8px; }
+.name-edit-actions button { width:auto; font-size:12px; padding:6px 10px; }
+@media(max-width:760px) {
+  .agent-detail-modal { width:100%; max-width:none; margin:0; height:100dvh; max-height:100dvh; border-radius:0; border:0; }
+  .agent-detail-modal .modal-body { padding:20px 16px max(24px,env(safe-area-inset-bottom)); }
+  .agent-detail-modal .modal-heading { padding:18px 16px; }
+}
+
+.agent-detail-modal .speech-fields {grid-template-columns:minmax(0,1fr)}
+
+@media(max-width:760px){.space-y-5 > dialog.agent-detail-modal[open]{margin:0}}

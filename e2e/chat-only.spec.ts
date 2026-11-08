@@ -1,3 +1,4 @@
+import { closeAgentDetail } from "./auth-fixture";
 import { openIntegrations } from "./auth-fixture";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -24,7 +25,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     const { request, secret } = await requestIntegration(server, "Household text companion");
     const enrollment = page.getByRole("region", { name: "Integration enrollment", exact: true });
     await openIntegrations(page);
-    await enrollment.getByText("Refresh integration requests").click();
+    await enrollment.getByRole("button", { name: "Refresh integration requests", exact: true }).click();
     const row = enrollment.getByRole("region", { name: `Integration request ${request.request_id}`, exact: true });
     await row.getByLabel("Integration matching code").fill(request.user_code);
     await row.getByRole("checkbox").check();
@@ -33,24 +34,29 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await client(server, "ack", { ...secret, credential: delivery.credential, saved: true });
     const agent = await socket(server, "/agent", { type: "agent.auth", token: delivery.credential });
     try {
+      await closeAgentDetail(page);
       await page.getByRole("button", {name:"Agents",exact:true}).click();
-      await page.getByText("Refresh agents", { exact: true }).click();
+      await page.getByRole("button", {name: "Refresh agents", exact: true}).click();
       await page.getByRole("button", { name: "View agent Household text companion" }).click();
       const voice = page.getByRole("region", { name: "Agent voice", exact: true });
       await voice.getByLabel("Enable Standard").uncheck();
       await voice.getByLabel("Enable Live").uncheck();
-      await expect(voice.getByLabel("Default voice mode")).toHaveValue("");
+      for (const name of ["Default Standard", "Default Live"]) await expect(voice.getByRole("switch", {name, exact:true})).not.toBeChecked();
       await voice.getByRole("button", { name: "Save voice configuration" }).click();
       await expect(voice.getByText(/Chat-only · No voice modes enabled/)).toBeVisible();
+      await closeAgentDetail(page);
       await page.getByRole("button", { name: "Connect browser", exact: true }).click();
       const companion = page.locator("#voice-companion");
       await expect(companion.getByLabel("Conversation agent")).toBeEnabled();
+      await closeAgentDetail(page);
       await companion.getByLabel("Conversation agent").selectOption(`int_${request.request_id}`);
-      await expect(companion.getByLabel("Display name", { exact: true })).toBeEnabled();
+      await expect(companion.getByLabel("Text message", { exact: true })).toBeEnabled();
       await expect(companion.getByRole("button", { name: /Hold to Talk|Start listening/i })).toHaveCount(0);
       await expect(companion.getByRole("slider", { name: "Output volume" })).toHaveCount(0);
       await expect(companion.getByText("Chat-only · Voice unavailable", { exact: true })).toBeVisible();
+      await closeAgentDetail(page);
       await companion.getByLabel("Text message").fill("Explain the selected display name");
+      await closeAgentDetail(page);
       await companion.getByRole("button", { name: "Send text", exact: true }).click();
       await expect.poll(() => agent.messages.some(frame => frame.type === "agent.transcript")).toBe(true);
       const frame = agent.messages.find(frame => frame.type === "agent.transcript")!;
@@ -64,6 +70,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
       expect(operations.filter(type => ["voice.start", "voice.end", "realtime.start"].includes(type))).toEqual([]);
       if (artifacts) {
         mkdirSync(artifacts, { recursive: true });
+        await closeAgentDetail(page);
         await companion.getByLabel("Agent text response").scrollIntoViewIfNeeded();
         await page.screenshot({ path: resolve(artifacts, `chat-only-${width}-${theme}-text-response.png`) });
       }
@@ -73,6 +80,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
       await page.getByRole("button", { name: "View agent Household text companion" }).click();
       await expect(page.getByLabel("Enable Standard")).not.toBeChecked();
       await expect(page.getByLabel("Enable Live")).not.toBeChecked();
+      await closeAgentDetail(page);
       await page.getByRole("button", { name: "Connect browser", exact: true }).click();
       await expect(companion.getByLabel("Conversation agent")).toHaveValue(`int_${request.request_id}`);
       await expect(companion.getByText("Chat-only · Voice unavailable", { exact: true })).toBeVisible();

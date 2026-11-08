@@ -593,7 +593,7 @@ function OwnerApp() {
               />
             </>
           ) : (
-            <AgentsPanel onContext={setViewContext} onSelection={setSelection} />
+            <AgentsPanel onContext={setViewContext} onSelection={setSelection} browserDeviceId={deviceId} browserConnected={isConnected} browserCredential={browserCredential} />
           )}
 
         </div>

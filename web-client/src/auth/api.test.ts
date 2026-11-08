@@ -52,3 +52,15 @@ it("ignores an old request's 401 after a newer login, but expires current author
     setCsrf("");
   }
 });
+
+it("preserves raster upload media type without weakening owner authority", async () => {
+  const fetcher = vi.fn(async () => new Response("{}"));
+  vi.stubGlobal("fetch", fetcher); setCsrf("upload-csrf");
+  await ownerFetch("/api/agents/agent/avatar", {method:"POST",headers:{"Content-Type":"image/png",Authorization:"Bearer forbidden"},body:new Blob(["png"])});
+  const init = (fetcher.mock.calls[0] as unknown as [string,RequestInit])[1];
+  const headers = new Headers(init.headers);
+  expect(headers.get("Content-Type")).toBe("image/png");
+  expect(headers.get("X-CSRF-Token")).toBe("upload-csrf");
+  expect(headers.has("Authorization")).toBe(false);
+  expect(init.credentials).toBe("same-origin"); expect(init.redirect).toBe("error");
+});

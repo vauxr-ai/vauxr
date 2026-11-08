@@ -6,11 +6,13 @@ export default function Modal({
   children,
   onClose,
   returnFocus,
+  titleContent, headerAction, className = "",
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   returnFocus: RefObject<HTMLButtonElement>;
+  titleContent?: ReactNode; headerAction?: ReactNode; className?: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -24,7 +26,7 @@ export default function Modal({
   return (
     <dialog
       ref={dialog}
-      className="modal auth-panel"
+      className={`modal auth-panel ${className}`}
       aria-labelledby="modal-title"
       onKeyDown={(event) => {
         if (event.key !== "Tab") return;
@@ -51,8 +53,9 @@ export default function Modal({
       <header className="modal-heading">
         <div>
           <span className="eyebrow">MAKE IT YOURS</span>
-          <h2 id="modal-title">{title}</h2>
+          <h2 id="modal-title">{titleContent || title}</h2>
         </div>
+        {headerAction}
         <button type="button" aria-label="Close dialog" onClick={onClose}>
           ×
         </button>

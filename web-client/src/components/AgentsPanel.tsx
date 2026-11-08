@@ -2,19 +2,29 @@ import { ownerFetch, jsonResponse } from "../auth/api";
 import SupportSettings from "./SupportSettings";
 import IntegrationMetadata from "./IntegrationMetadata";
 import AddAgent from "./AddAgent";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useAgents, type ApiAgent } from "../hooks/useAgents";
 import Icon from "./Icon";
+import Modal from "./Modal";
+import RefreshButton from "./RefreshButton";
+import AgentAvatar from "./AgentAvatar";
 import SpeechSettings from "./SpeechSettings";
 
 export default function AgentsPanel({
   onContext,
   onSelection,
+  browserDeviceId, browserConnected = false, browserCredential,
 }: {
+  browserDeviceId?: string; browserConnected?: boolean; browserCredential?: () => string | null;
   onContext?: (context: string) => void;
   onSelection?: (selection: { id: string; name: string } | null) => void;
 }) {
   const api = useAgents();
+  const returnFocus = useRef<HTMLButtonElement>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [avatarRevision, setAvatarRevision] = useState(0);
+  const [avatarError, setAvatarError] = useState("");
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const [agents, setAgents] = useState<ApiAgent[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -88,25 +98,25 @@ export default function AgentsPanel({
         <AddAgent
           onCreated={async (created) => {
             await refresh();
+            (returnFocus as {current: HTMLButtonElement | null}).current = document.querySelector(".agent-create-action > button");
+            setEditingName(false);
             setSelectedId(created.id);
             setNameDraft(created.name);
           }}
         />
       </div>
-      <section className="card agent-inventory" aria-label="Routing agents">
+      <section className="card agent-inventory" aria-label="Agents available for use on voice devices">
         <div className="section-heading">
           <div>
-            <h2>Routing agents</h2>
+            <h2>Agents available for use on voice devices</h2>
             <p>
               The default agent serves devices that have no explicit agent
               assignment.
             </p>
           </div>
-          <button disabled={loading || busy} onClick={refresh}>
-            Refresh agents
-          </button>
+          <RefreshButton label="Refresh agents" busy={loading || busy} onClick={refresh} />
         </div>
-        {error && (
+        {error && !selectedId && (
           <p role="alert" className="p-5 text-red-300">
             {error}
           </p>
@@ -128,14 +138,15 @@ export default function AgentsPanel({
           <ul className="agent-list">
             {agents.map((agent) => (
               <li key={agent.id}>
-                <span className="resource-icon">
-                  <Icon name="agents" size={22} />
-                </span>
+                <AgentAvatar agentId={agent.id} revision={avatarRevision} />
                 <div className="agent-name">
                   <h3>
                     <button
+                      className="agent-open"
                       aria-label={`View agent ${agent.name}`}
-                      onClick={() => {
+                      onClick={(event) => {
+                        (returnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget;
+                        setEditingName(false); setAvatarError("");
                         setSelectedId(agent.id);
                         setNameDraft(agent.name);
                         setSaved("");
@@ -164,6 +175,7 @@ export default function AgentsPanel({
                       : "Not default"}
                 </span>
                 <button
+                  className="agent-route-action"
                   disabled={agent.active || busy}
                   onClick={() => void activate(agent)}
                 >
@@ -175,13 +187,46 @@ export default function AgentsPanel({
         )}
       </section>
       {selectedId && (
-        <section
-          className="card auth-panel agent-detail p-5"
-          aria-label="Agent detail"
-        >
+        <Modal title={selected?.name || "Agent detail"} className="agent-detail-modal agent-detail"
+          returnFocus={returnFocus} onClose={() => {setSelectedId(""); setEditingName(false);}}
+          titleContent={editingName ? <form id="rename-agent" onSubmit={async event => {
+            event.preventDefault(); if (!selected) return; setBusy(true); setError(""); setSaved("");
+            try {const renamed = await api.renameAgent(selected.id, nameDraft.trim());
+              setAgents(current => current.map(agent => agent.id === renamed.id ? {...agent, name:renamed.name} : agent));
+              setNameDraft(renamed.name); setEditingName(false); setSaved("Agent name saved.");
+              window.dispatchEvent(new Event("agent-route-changed"));
+            } catch (failure) {setError(failure instanceof Error ? failure.message : "Unable to save the agent name.");}
+            finally {setBusy(false);}
+          }}><label className="sr-only" htmlFor="agent-name-edit">Agent name</label>
+            <input id="agent-name-edit" value={nameDraft} maxLength={120} required disabled={busy} autoFocus
+              onChange={event => setNameDraft(event.target.value)} />
+            <div className="name-edit-actions"><button type="submit" disabled={busy || !nameDraft.trim()}>Save name</button>
+            <button type="button" disabled={busy} onClick={() => {setNameDraft(selected?.name || ""); setEditingName(false); setError("");}}>Cancel name edit</button></div>
+          </form> : undefined}
+          headerAction={!editingName && selected ? <button type="button" aria-label="Edit agent name" title="Edit agent name"
+            onClick={() => {setNameDraft(selected.name); setEditingName(true); setSaved("");}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L5 15Z" /></svg></button> : undefined}>
+          {error && <p role="alert">{error}</p>}
+          {saved && <p role="status">{saved}</p>}
           {selected ? (
             <>
-              <h2>{selected.name}</h2>
+              <div className="agent-profile">
+                <AgentAvatar agentId={selected.id} revision={avatarRevision} />
+                <div><label className="avatar-upload">{avatarBusy ? "Uploading…" : "Upload avatar"}
+                  <input type="file" accept="image/png,image/jpeg,image/webp" disabled={avatarBusy}
+                    aria-label="Upload agent avatar" onChange={async event => {
+                      const file = event.target.files?.[0]; event.target.value = ""; if (!file) return;
+                      if (!['image/png','image/jpeg','image/webp'].includes(file.type) || file.size > 1024*1024) {
+                        setAvatarError("Choose a PNG, JPEG or WebP image up to 1 MB."); return;
+                      }
+                      setAvatarBusy(true); setAvatarError("");
+                      try {const response = await ownerFetch(`/api/agents/${encodeURIComponent(selected.id)}/avatar`, {
+                        method:"POST",headers:{"Content-Type":file.type}, body:file,
+                      }); if (!response.ok) throw Error(); setAvatarRevision(value => value+1);
+                      } catch {setAvatarError("Avatar upload failed. Refresh before retrying.");}
+                      finally {setAvatarBusy(false);}
+                    }} /></label><small>PNG, JPEG or WebP · up to 1 MB</small></div>
+              </div>
+              {avatarError && <p role="alert">{avatarError}</p>}
               <p>
                 {selected.type === "langchain"
                   ? "LangChain · registered"
@@ -256,76 +301,15 @@ export default function AgentsPanel({
                 )}
               <SpeechSettings
                 key={`voice-${selected.id}`}
-                agentId={selected.id}
+                agentId={selected.id} agentName={selected.name} browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential}
               />
-              <form
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  setBusy(true);
-                  setError("");
-                  setSaved("");
-                  try {
-                    const renamed = await api.renameAgent(
-                      selected.id,
-                      nameDraft.trim(),
-                    );
-                    setAgents((current) =>
-                      current.map((agent) =>
-                        agent.id === renamed.id
-                          ? { ...agent, name: renamed.name }
-                          : agent,
-                      ),
-                    );
-                    setNameDraft(renamed.name);
-                    setSaved("Agent name saved.");
-                    window.dispatchEvent(new Event("agent-route-changed"));
-                  } catch (error) {
-                    setError(
-                      error instanceof Error
-                        ? error.message
-                        : "Unable to save the agent name.",
-                    );
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                <label>
-                  Agent name
-                  <input
-                    data-vauxr-control="agent-name"
-                    value={nameDraft}
-                    maxLength={120}
-                    required
-                    disabled={busy}
-                    onChange={(event) => {
-                      setNameDraft(event.target.value);
-                      setSaved("");
-                    }}
-                  />
-                </label>
-                <button
-                  disabled={
-                    busy ||
-                    !nameDraft.trim() ||
-                    nameDraft.trim() === selected.name
-                  }
-                >
-                  Save name
-                </button>
-                {nameDraft.trim() !== selected.name && <p>Unsaved name</p>}
-                {saved && <p role="status">{saved}</p>}
-              </form>
             </>
           ) : (
             <p role="status">
               This agent is no longer available. Refresh the agent list.
             </p>
           )}
-          <button disabled={busy} onClick={() => setSelectedId("")}>
-            Close agent detail
-          </button>
-        </section>
+        </Modal>
       )}
       <p className="text-sm text-zinc-400">
         Connect external agents in Settings → Apps &amp; Integrations.

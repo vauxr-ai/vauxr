@@ -1,3 +1,4 @@
+import { closeAgentDetail } from "./auth-fixture";
 import { test, expect, login } from "./auth-fixture";
 for (const width of [390, 1366])
   test(`registered agent setup, modes and removal at ${width}`, async ({
@@ -24,10 +25,7 @@ for (const width of [390, 1366])
     await create
       .getByRole("button", { name: "Create agent", exact: true })
       .click();
-    const detail = page.getByRole("region", {
-      name: "Agent detail",
-      exact: true,
-    });
+    const detail = page.locator("dialog.agent-detail-modal");
     await expect(
       detail.getByRole("heading", { name: "Household assistant", exact: true }),
     ).toBeVisible();
@@ -40,18 +38,22 @@ for (const width of [390, 1366])
     console.log(
       `Registered agent ${width}: Standard enabled, Live unavailable`,
     );
+    await closeAgentDetail(page);
     await page
       .getByRole("button", { name: "Connect browser", exact: true })
       .click();
     console.log(`Registered agent ${width}: browser connected`);
     const companion = page.locator("#voice-companion");
+    await closeAgentDetail(page);
     await companion
       .getByLabel("Conversation agent", { exact: true })
       .selectOption({ label: "Household assistant" });
     console.log(`Registered agent ${width}: agent selected`);
+    await closeAgentDetail(page);
     await companion
       .getByLabel("Text message", { exact: true })
       .fill("Help with the household");
+    await closeAgentDetail(page);
     await companion
       .getByRole("button", { name: "Send text", exact: true })
       .click();
@@ -59,22 +61,28 @@ for (const width of [390, 1366])
     await expect(
       companion.getByLabel("Agent text response", { exact: true }),
     ).toContainText("needs setup");
+    await closeAgentDetail(page);
     await companion
       .getByRole("button", { name: "Collapse voice companion", exact: true })
       .click();
+    await page.getByRole("button", {name:"View agent Household assistant",exact:true}).click();
     await detail
       .getByRole("button", { name: "Remove agent", exact: true })
       .click();
     await expect(page.getByRole("alert")).toContainText("unassign all devices");
+    await closeAgentDetail(page);
     await companion
       .getByRole("button", { name: "Expand voice companion", exact: true })
       .click();
+    await closeAgentDetail(page);
     await companion
       .getByLabel("Conversation agent", { exact: true })
       .selectOption("vauxr-support");
+    await closeAgentDetail(page);
     await companion
       .getByRole("button", { name: "Collapse voice companion", exact: true })
       .click();
+    await page.getByRole("button", {name:"View agent Household assistant",exact:true}).click();
     await detail
       .getByRole("button", { name: "Remove agent", exact: true })
       .click();

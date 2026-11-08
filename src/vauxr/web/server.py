@@ -323,6 +323,7 @@ async def device_command(request: web.Request) -> web.Response:
 @_require_auth
 async def list_agents(_request: web.Request) -> web.Response:
     from vauxr.agents.integration_metadata import public_metadata
+    from vauxr.agents.avatars import metadata
     from vauxr.speech.store import get_store as voice_store
 
     agents = [
@@ -334,12 +335,43 @@ async def list_agents(_request: web.Request) -> web.Response:
             "type": c.type,
             "active": c.active,
             "createdAt": c.createdAt,
+            **metadata(c.id),
             **({"builtin": c.builtin} if c.builtin is not None else {}),
         }
         for c in agent_registry.get_all()
     ]
     log.info("200 agents listed: %d", len(agents))
     return web.json_response(agents)
+
+
+@_require_auth
+async def agent_avatar(request: web.Request) -> web.Response:
+    import asyncio
+    from vauxr.agents import avatars
+    agent_id = request.match_info["agent_id"]
+    if agent_registry.get_by_id(agent_id) is None:
+        return web.json_response({"error": "agent not found"}, status=404)
+    try:
+        if request.method == "GET":
+            try:
+                data = avatars.path(agent_id).read_bytes()
+            except FileNotFoundError:
+                raise web.HTTPNotFound() from None
+            return web.Response(body=data, content_type="image/png", headers={
+                "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+        raw = bytearray()
+        async with asyncio.timeout(10):
+            async for chunk in request.content.iter_chunked(65536):
+                raw.extend(chunk)
+                if len(raw) > avatars.MAX_BYTES:
+                    raise web.HTTPRequestEntityTooLarge(max_size=avatars.MAX_BYTES, actual_size=len(raw))
+        data = avatars.normalize(bytes(raw), request.content_type)
+        avatars.save(agent_id, data)
+        return web.json_response(avatars.metadata(agent_id))
+    except (ValueError, TimeoutError):
+        return web.json_response({"error": "Invalid image; use PNG, JPEG or WebP up to 2 MiB and 2048 by 2048"}, status=400)
+    except (OSError, ImportError):
+        return web.json_response({"error": "Avatar storage unavailable"}, status=503)
 
 
 @_require_auth
@@ -623,6 +655,8 @@ def attach_http_routes(app: web.Application) -> None:
     app.router.add_post("/api/devices/{device_id}/announce", announce)
     app.router.add_post("/api/devices/{device_id}/command", device_command)
     app.router.add_get("/api/agents", list_agents)
+    app.router.add_get("/api/agents/{agent_id}/avatar", agent_avatar)
+    app.router.add_post("/api/agents/{agent_id}/avatar", agent_avatar)
     app.router.add_post("/api/agents", create_agent)
     app.router.add_delete("/api/agents/{agent_id}", delete_agent)
     app.router.add_post("/api/agents/{agent_id}/activate", activate_agent)

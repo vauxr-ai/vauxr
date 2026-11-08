@@ -166,3 +166,9 @@ export async function openSettings(page: Page, section: string) {
 export async function openIntegrations(page: Page) {
   await openSettings(page, "Apps & Integrations");
 }
+
+/** Management dialogs intentionally make shell and voice controls inert. */
+export async function closeAgentDetail(page: Page) {
+  const detail = page.locator("dialog.agent-detail-modal");
+  if (await detail.isVisible()) await detail.getByRole("button", {name:"Close dialog",exact:true}).click();
+}

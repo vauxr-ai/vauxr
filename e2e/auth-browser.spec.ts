@@ -176,7 +176,7 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button",{name:"Devices",exact:true}).click();
   await page.getByRole("button",{name:"+ Add Device",exact:true}).click();
-  await page.getByText("Refresh pairing and identities").click();
+  await page.getByRole("button", { name: "Refresh pairing and identities", exact: true }).click();
   const row = page
     .locator("div.border-t")
     .filter({ hasText: "Synthetic speaker" })

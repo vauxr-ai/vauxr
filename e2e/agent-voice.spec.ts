@@ -1,3 +1,4 @@
+import { closeAgentDetail } from "./auth-fixture";
 import { openIntegrations } from "./auth-fixture";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -116,6 +117,8 @@ for (const width of [375, 390])
         };
       });
       await login(page, server);
+      await page.getByLabel("Appearance").selectOption(theme);
+      await page.emulateMedia({reducedMotion:"reduce"});
       const { request, secret } = await requestIntegration(
         server,
         "Household agent with a long populated display name",
@@ -125,7 +128,7 @@ for (const width of [375, 390])
         exact: true,
       });
       await openIntegrations(page);
-      await enrollment.getByText("Refresh integration requests").click();
+      await enrollment.getByRole("button", { name: "Refresh integration requests", exact: true }).click();
       const row = enrollment.getByRole("region", {
         name: `Integration request ${request.request_id}`,
         exact: true,
@@ -147,8 +150,9 @@ for (const width of [375, 390])
         caps: ["ws", "webrtc"],
       });
       try {
+        await closeAgentDetail(page);
         await page.getByRole("button", {name:"Agents",exact:true}).click();
-        await page.getByText("Refresh agents", { exact: true }).click();
+        await page.getByRole("button", {name: "Refresh agents", exact: true}).click();
         await page
           .getByRole("button", {
             name: "View agent Household agent with a long populated display name",
@@ -174,20 +178,20 @@ for (const width of [375, 390])
           }),
         ).toBeVisible();
         await page.emulateMedia({ reducedMotion: "reduce" });
-        await page.getByLabel("Appearance").selectOption(theme);
+
         await page.setViewportSize({ width, height: 844 });
         await bounds(agent);
         await capture(page, `${width}-${theme}-agent-standard`, agent);
         await agent
-          .getByLabel("Configure mode providers")
-          .selectOption("realtime");
-        await agent.getByLabel("Realtime voice").selectOption("coral");
+          .getByRole("tab", {name:"Live / Realtime",exact:true}).click();
+        await agent.getByLabel("Realtime voice", { exact: true }).selectOption("coral");
         await agent
           .getByRole("button", { name: "Save voice configuration" })
           .click();
-        await expect(agent.getByLabel("Realtime voice")).toHaveValue("coral");
+        await expect(agent.getByLabel("Realtime voice", { exact: true })).toHaveValue("coral");
         await bounds(agent);
         await capture(page, `${width}-${theme}-agent-live-providers`, agent);
+        await closeAgentDetail(page);
         await page
           .getByRole("button", { name: "Devices", exact: true })
           .click();
@@ -217,10 +221,11 @@ for (const width of [375, 390])
         await card
           .getByLabel("Voice mode", { exact: true })
           .selectOption("realtime");
-        await card.getByLabel("Realtime voice").selectOption("ash");
-        await expect(card.getByLabel("Realtime voice")).toHaveValue("ash");
+        await card.getByLabel("Realtime voice", { exact: true }).selectOption("ash");
+        await expect(card.getByLabel("Realtime voice", { exact: true })).toHaveValue("ash");
         await bounds(card);
         await capture(page, `${width}-${theme}-device-overridden-live`, card);
+        await closeAgentDetail(page);
         await page.getByRole("button", { name: "Agents", exact: true }).click();
         await page
           .getByRole("button", {
@@ -234,6 +239,7 @@ for (const width of [375, 390])
         await expect(agent.getByRole("alert")).toContainText(device.device_id);
         await capture(page, `${width}-${theme}-conflicting-override`, agent);
         // Failed writes persist nothing; a deliberate reset resolves the named override.
+        await closeAgentDetail(page);
         await page
           .getByRole("button", { name: "Devices", exact: true })
           .click();
@@ -245,11 +251,12 @@ for (const width of [375, 390])
         await card
           .getByLabel("Voice mode", { exact: true })
           .selectOption("realtime");
-        await expect(card.getByLabel("Realtime voice")).toHaveValue("");
+        await expect(card.getByLabel("Realtime voice", { exact: true })).toHaveValue("");
         await expect(
-          card.getByLabel("Realtime voice"),
+          card.getByLabel("Realtime voice", { exact: true }),
         ).toHaveAccessibleDescription("Selected: Inherit agent (coral)");
         await card.getByRole("button", { name: "Reset to defaults" }).click();
+        await closeAgentDetail(page);
         await page.getByRole("button", { name: "Agents", exact: true }).click();
         await page
           .getByRole("button", {
@@ -271,11 +278,10 @@ for (const width of [375, 390])
         // Capability loss is learned on authenticated reconnect and cannot silently switch modes.
         await agent.getByLabel("Enable Live").check();
         await agent.getByLabel("Enable Standard").uncheck();
-        await agent.getByLabel("Default voice mode").selectOption("realtime");
+        await agent.getByRole("switch", {name:"Default Live",exact:true}).check();
         await agent
-          .getByLabel("Configure mode providers")
-          .selectOption("realtime");
-        await agent.getByLabel("Realtime voice").selectOption("ash");
+          .getByRole("tab", {name:"Live / Realtime",exact:true}).click();
+        await agent.getByLabel("Realtime voice", { exact: true }).selectOption("ash");
         const atomicSave = page.waitForResponse(
           (response) =>
             response.url().endsWith(`/api/agents/${request.agent_id}/speech`) &&
@@ -293,6 +299,7 @@ for (const width of [375, 390])
         });
         await expect(agent.getByLabel("Enable Standard")).not.toBeChecked();
         await capture(page, `${width}-${theme}-agent-live-only`, agent);
+        await closeAgentDetail(page);
         await page
           .getByRole("button", { name: "Devices", exact: true })
           .click();
@@ -306,8 +313,9 @@ for (const width of [375, 390])
           card.getByLabel("Voice mode", { exact: true }),
         ).toHaveValue("");
         await expect(
-          card.getByLabel("Realtime voice"),
+          card.getByLabel("Realtime voice", { exact: true }),
         ).toHaveAccessibleDescription("Selected: Inherit agent (ash)");
+        await closeAgentDetail(page);
         await page.getByRole("button", { name: "Agents", exact: true }).click();
         await page
           .getByRole("button", {
@@ -315,10 +323,11 @@ for (const width of [375, 390])
           })
           .click();
         await agent.getByLabel("Enable Standard").check();
-        await agent.getByLabel("Default voice mode").selectOption("standard");
+        await agent.getByRole("switch", {name:"Default Standard",exact:true}).check();
         await agent
           .getByRole("button", { name: "Save voice configuration" })
           .click();
+        await closeAgentDetail(page);
         await page
           .getByRole("button", { name: "Devices", exact: true })
           .click();
@@ -353,6 +362,7 @@ for (const width of [375, 390])
           token: device.device_token,
           caps: ["ws"],
         });
+        await closeAgentDetail(page);
         await page
           .getByRole("button", { name: "Devices", exact: true })
           .click();
@@ -385,6 +395,7 @@ for (const width of [375, 390])
         await page.setViewportSize({ width: 1366, height: 900 });
         await bounds(card);
         await capture(page, `${width}-${theme}-desktop-reloaded`, card);
+        await closeAgentDetail(page);
         await page
           .getByRole("button", { name: "Expand voice companion" })
           .click();

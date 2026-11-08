@@ -1,5 +1,7 @@
+import AgentPipeline from "./AgentPipeline";
+import RefreshButton from "./RefreshButton";
 import { ownerFetch } from "../auth/api";
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 type Backend = {
   id: string;
@@ -102,11 +104,27 @@ export default function SpeechSettings({
   deviceId,
   agentId,
   onModeChange,
+  agentName, browserDeviceId, browserConnected = false, browserCredential,
 }: {
+  agentName?: string;
+  browserDeviceId?: string;
+  browserConnected?: boolean;
+  browserCredential?: () => string | null;
   deviceId?: string;
   agentId?: string;
   onModeChange?: (mode: "standard" | "realtime" | null) => void;
 }) {
+  const tabsId = useId();
+  const [previewStatus, setPreviewStatus] = useState("");
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const preview = useRef<{controller?: AbortController; audio?: HTMLAudioElement; url?: string}>({});
+  const stopPreview = useCallback(() => {
+    preview.current.controller?.abort();
+    preview.current.audio?.pause();
+    if (preview.current.url) URL.revokeObjectURL(preview.current.url);
+    preview.current = {};
+    setPreviewBusy(false);
+  }, []);
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -226,7 +244,7 @@ export default function SpeechSettings({
   const chatOnly = data?.policy?.chat_only === true;
   const hasProviderDraft = Object.keys(providerDraft).length > 0;
   const effective = data?.effective;
-  const shownMode = agentId ? editMode : data?.voice?.mode || "standard";
+  const shownMode = agentId ? (data?.policy?.integration_modes.includes(editMode) ? editMode : data?.policy?.integration_modes[0] || "standard") : data?.voice?.mode || "standard";
   const liveBackend = agentId
     ? defaults?.realtime_backend
     : data?.voice?.realtime_backend;
@@ -245,6 +263,47 @@ export default function SpeechSettings({
   const selectedTts = data?.backends.find(
     (b) => b.id === (agentId ? defaults?.tts_backend : effective?.tts_backend),
   );
+  const selectedVoice = selectedTts ? defaults?.voices[selectedTts.id] || selectedTts.voices[0] || "" : "";
+  const canPreview = !!(browserConnected && browserDeviceId && browserCredential?.() && selectedTts?.kind === "tts" && selectedTts.readiness === "ready" && selectedTts.voices.includes(selectedVoice));
+  useEffect(() => {
+    stopPreview();
+    setPreviewStatus("");
+    return stopPreview;
+  }, [selectedVoice, selectedTts?.id, browserConnected, browserDeviceId, shownMode, stopPreview]);
+  async function testVoice() {
+    stopPreview();
+    if (!canPreview || !selectedTts) return;
+    const controller = new AbortController();
+    preview.current = { controller };
+    setPreviewBusy(true);
+    setPreviewStatus("Preparing voice sample…");
+    try {
+      const response = await ownerFetch("/api/speech/preview", {
+        method: "POST", headers: { "Content-Type": "application/json", "X-Vauxr-Browser": browserCredential?.() || "" },
+        body: JSON.stringify({device_id: browserDeviceId, tts_backend: selectedTts.id, voice: selectedVoice}),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const failure = await response.json().catch(() => ({}));
+        throw new Error(failure.error || `Voice preview failed (${response.status})`);
+      }
+      const blob = await response.blob();
+      if (controller.signal.aborted) return;
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      preview.current = { controller, audio, url };
+      audio.onended = () => { if (!controller.signal.aborted) { stopPreview(); setPreviewStatus("Voice sample finished."); } };
+      audio.onerror = () => { if (!controller.signal.aborted) { stopPreview(); setPreviewStatus("Voice sample playback failed."); } };
+      await audio.play();
+      if (controller.signal.aborted) { audio.pause(); return; }
+      if (!controller.signal.aborted) setPreviewStatus("Playing in this browser.");
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        stopPreview();
+        setPreviewStatus(err instanceof Error ? err.message : "Voice preview failed.");
+      }
+    }
+  }
   const style = "rounded border border-white/10 bg-zinc-900 p-2 text-sm";
   const backendOptions = (kind: Backend["kind"]): SpeechOption[] =>
     (data?.backends || [])
@@ -262,7 +321,7 @@ export default function SpeechSettings({
     >
       <h2 className="font-semibold">
         {agentId
-          ? "Agent voice defaults"
+          ? "Voice pipeline"
           : deviceId
             ? "Device speech"
             : "Global speech defaults"}
@@ -360,8 +419,22 @@ export default function SpeechSettings({
       {chatOnly && agentId && <p>Stored provider settings below are inactive while this agent is chat-only.</p>}
       {data && (!chatOnly || agentId) && (
         <fieldset disabled={busy} className="speech-fields">
+          <div style={{display: "flex", justifyContent: "flex-end", gridColumn: "1 / -1"}}>
+            <RefreshButton label={agentId && hasProviderDraft ? "Discard provider edits and refresh" : "Refresh speech"} busy={busy} onClick={() => update()} />
+          </div>
+          {agentId ? <>
+            <ModeTabs id={tabsId} modes={data.policy?.integration_modes || ["standard"]} value={shownMode} onChange={setEditMode} />
+          </> : null}
+          <div role={agentId ? "tabpanel" : undefined} id={`${tabsId}-panel`} aria-labelledby={agentId ? `${tabsId}-${shownMode}` : undefined} className={agentId ? "pipeline-editor" : "speech-provider-fields"}>
+          {agentId ? <>
+            <AgentPipeline onEdit={(kind) => {
+              const labels: Record<string, string> = {stt: "STT backend", tts: "TTS backend", realtime: "Realtime provider / model"};
+              const target = labels[kind];
+              if (target) Array.from(document.querySelectorAll<HTMLSelectElement>(".agent-detail-modal select")).find(el => Array.from(el.labels || []).some(label => label.textContent === target))?.focus();
+            }} mode={shownMode} agentName={agentName || data.policy?.agents.find(a => a.id === agentId)?.name || agentId} stt={defaults?.stt_backend} tts={defaults?.tts_backend} realtime={liveBackend} enabled={data.policy?.enabled_modes.includes(shownMode) || false} isDefault={data.policy?.default_mode === shownMode} />
+          </> : (
           <SpeechSelect
-            label={agentId ? "Configure mode providers" : "Voice mode"}
+            label="Voice mode"
             value={
               agentId
                 ? editMode
@@ -400,6 +473,7 @@ export default function SpeechSettings({
               agentId ? setEditMode(mode) : void update({ mode: mode || null })
             }
           />
+          )}
           {shownMode === "realtime" ? (
             <>
               <SpeechSelect
@@ -486,6 +560,7 @@ export default function SpeechSettings({
                   />
                 );
               })}
+              <div className={agentId ? "voice-test-row" : "speech-voice-field"}>
               {selectedTts && (
                 <SpeechSelect
                   label="Voice"
@@ -514,8 +589,17 @@ export default function SpeechSettings({
                   }
                 />
               )}
+              {agentId && <div className="speech-preview">
+                <button type="button" disabled={!canPreview || previewBusy} onClick={() => void testVoice()} aria-label="Test selected voice"><svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18"><path d="M11 4 5 9H2v6h3l6 5V4Zm4 4c3 2 3 6 0 8m3-11c5 4 5 10 0 14" fill="none" stroke="currentColor" strokeWidth="2"/></svg> Test</button>
+                {previewBusy && <button type="button" onClick={() => { stopPreview(); setPreviewStatus("Voice sample stopped."); }}>Stop</button>}
+                {!browserConnected && <p>Connect browser voice to test a sample.</p>}
+                {previewStatus && <p role="status">{previewStatus}</p>}
+              </div>}
+              </div>
             </>
           )}
+          {agentId && shownMode === "realtime" && <p>Voice samples are available for Standard text-to-speech providers only.</p>}
+          </div>
           <div className="speech-actions">
             {deviceId && (
               <button
@@ -525,11 +609,7 @@ export default function SpeechSettings({
                 Reset to defaults
               </button>
             )}
-            <button className={style} onClick={() => void update()}>
-              {agentId && hasProviderDraft
-                ? "Discard provider edits and refresh"
-                : "Refresh speech"}
-            </button>
+
           </div>
         </fieldset>
       )}
@@ -564,8 +644,9 @@ function AgentModePolicy({
   busy: boolean;
   save: (patch: object) => Promise<void>;
 }) {
-  const [enabled, setEnabled] = useState(policy.enabled_modes);
-  const [defaultMode, setDefaultMode] = useState(policy.default_mode);
+  const initialEnabled = policy.enabled_modes.filter(mode => policy.integration_modes.includes(mode));
+  const [enabled, setEnabled] = useState(initialEnabled);
+  const [defaultMode, setDefaultMode] = useState(initialEnabled.includes(policy.default_mode || "") ? policy.default_mode : initialEnabled[0] || null);
   const changed =
     JSON.stringify(enabled) !== JSON.stringify(policy.enabled_modes) ||
     defaultMode !== policy.default_mode;
@@ -583,6 +664,7 @@ function AgentModePolicy({
           <label key={mode} className="speech-check">
             <input
               type="checkbox"
+              role="switch"
               aria-label={mode === "realtime" ? "Enable Live" : "Enable Standard"}
               checked={policy.integration_modes.includes(mode) && enabled.includes(mode)}
               disabled={!policy.integration_modes.includes(mode)}
@@ -597,27 +679,14 @@ function AgentModePolicy({
             {!policy.integration_modes.includes(mode) && <span> (unavailable for this agent)</span>}
           </label>
         ))}
-        <SpeechSelect
-          label="Default voice mode"
-          value={defaultMode || ""}
-          options={[
-            ...(!enabled.length ? [{ value: "", label: "Chat-only (no voice default)" }] : []),
-            ...(defaultMode && !policy.integration_modes.includes(defaultMode)
-              ? [
-                  {
-                    value: defaultMode,
-                    label: `Unavailable default (${defaultMode})`,
-                  },
-                ]
-              : []),
-            ...enabled.map((mode) => ({
-              value: mode,
-              label: mode === "realtime" ? "Live" : "Standard",
-            })),
-          ]}
-          onChange={setDefaultMode}
-        />
-        <button
+        <fieldset className="pipeline-defaults">
+          <legend>Default voice mode</legend>
+          {["standard", "realtime"].map(mode => <label className="speech-check" key={mode}>
+            <input type="checkbox" role="switch" aria-label={mode === "standard" ? "Default Standard" : "Default Live"} checked={defaultMode === mode && enabled.includes(mode)} disabled={!enabled.includes(mode)} onChange={() => setDefaultMode(mode)} />
+            {mode === "standard" ? "Standard default" : "Live default"}
+          </label>)}
+        </fieldset>
+        <button type="submit" className="button-primary"
           disabled={busy || (enabled.length > 0 && !enabled.includes(defaultMode || ""))}
         >
           Save voice configuration
@@ -629,4 +698,15 @@ function AgentModePolicy({
       </fieldset>
     </form>
   );
+}
+
+
+function ModeTabs({id, modes, value, onChange}: {id: string; modes: string[]; value: string; onChange: (value: string) => void}) {
+  return <div role="tablist" aria-label="Configure mode providers" className="pipeline-tabs">
+    {modes.map((mode, index) => <button key={mode} id={`${id}-${mode}`} type="button" role="tab" aria-controls={`${id}-panel`} aria-selected={value === mode} tabIndex={value === mode ? 0 : -1}
+      onClick={() => onChange(mode)} onKeyDown={event => {
+        const next = event.key === "Home" ? 0 : event.key === "End" ? modes.length - 1 : event.key === "ArrowRight" ? (index + 1) % modes.length : event.key === "ArrowLeft" ? (index - 1 + modes.length) % modes.length : -1;
+        if (next >= 0) { event.preventDefault(); onChange(modes[next]); document.getElementById(`${id}-${modes[next]}`)?.focus(); }
+      }}>{mode === "realtime" ? "Live / Realtime" : "Standard"}</button>)}
+  </div>;
 }
