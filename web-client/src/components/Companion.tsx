@@ -66,7 +66,7 @@ export default function Companion({
         return true;
       });
       const first = nodes[0];
-      const last = nodes.at(-1);
+      const last = nodes[nodes.length - 1];
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last?.focus();
