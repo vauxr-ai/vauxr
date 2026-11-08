@@ -151,7 +151,14 @@ async def _offer_handler(request: web.Request) -> web.Response:
         log.warning("realtime offer for %s rejected — no active realtime.start", device_id)
         return web.json_response({"error": "No active realtime session"}, status=403)
 
-    active = agent_registry.get_active()
+    from vauxr.speech.store import get_store as speech_store
+    voice = speech_store()
+    conflict = voice.runtime_conflict(
+        device_id, "realtime" if device_id in manager._live_devices else "standard",
+    ) if voice.managed(device_id) else None
+    if conflict:
+        return web.json_response({"error": conflict}, status=409)
+    active = agent_registry.get_for_device(device_id)
     dependencies = []
     if active is not None and active.type == "openclaw":
         dependencies = [Principal(r.role, r.subject, r.id, r.generation) for r in get_store().records

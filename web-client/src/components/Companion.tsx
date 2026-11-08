@@ -168,7 +168,8 @@ export default function Companion({
         <>
           <p className="context-chip">Viewing {context}</p>
           <p className="text-xs text-zinc-400">
-            Server active route · shared by devices. Manage routing in Agents.
+            Browser voice route. Manage device assignments in Devices and agent
+            defaults in Agents.
           </p>
         </>
       )}

@@ -72,9 +72,7 @@ it("shows effective inheritance, availability, and model-scoped choices; resets 
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
   expect(fetcher.mock.calls[2][0]).toBe("/api/devices/a%2Fb/speech");
   expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({
-    stt_backend: null,
-    tts_backend: null,
-    voices: null,
+    reset: true,
   });
   for (const [path, init] of fetcher.mock.calls) {
     expect(path).toBe("/api/devices/a%2Fb/speech");
@@ -110,7 +108,12 @@ it("refreshes inheritors and scopes voice controls after a global model change",
 });
 
 it("reports authorization failure without offering edits", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 401 }));
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 401, json: async () => ({}) }),
+  );
   render(<SpeechSettings />);
   expect((await screen.findByRole("alert")).textContent).toContain("401");
   expect(screen.queryByLabelText("TTS backend")).toBeNull();
@@ -199,7 +202,7 @@ it.each([undefined, "phone-device"])(
     });
     expect(tts).toHaveAccessibleDescription(
       deviceId
-        ? `Selected: Inherit global (${backend})`
+        ? `Selected: Inherit agent (${backend})`
         : `Selected: ${backend} · ${model} · unavailable`,
     );
     expect(
@@ -219,3 +222,211 @@ it.each([undefined, "phone-device"])(
     });
   },
 );
+
+it("saves Live-only enablement and default atomically, retaining the draft on an actionable conflict", async () => {
+  const policy = {
+    agent_id: "agent",
+    assigned: false,
+    configured: true,
+    integration_modes: ["standard", "realtime"],
+    enabled_modes: ["standard", "realtime"],
+    default_mode: "standard",
+    available_modes: ["standard", "realtime"],
+    capabilities_known: false,
+    conflict: null,
+    agents: [{ id: "agent", name: "Household" }],
+  };
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue({ ok: true, json: async () => ({ ...view, policy }) });
+  vi.stubGlobal("fetch", fetcher);
+  render(<SpeechSettings agentId="agent" />);
+  const standard = await screen.findByLabelText("Enable Standard");
+  fireEvent.click(standard);
+  fireEvent.change(screen.getByLabelText("Default voice mode"), {
+    target: { value: "realtime" },
+  });
+  fetcher.mockResolvedValueOnce({
+    ok: false,
+    status: 409,
+    json: async () => ({
+      error: "kitchen-speaker: reset its Standard override",
+    }),
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Save voice configuration" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "kitchen-speaker: reset its Standard override",
+  );
+  expect(standard).not.toBeChecked();
+  expect(screen.getByLabelText("Default voice mode")).toHaveValue("realtime");
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({
+    enabled_modes: ["realtime"],
+    default_mode: "realtime",
+  });
+  expect(fetcher.mock.calls[1][0]).toBe("/api/agents/agent/speech");
+  fireEvent.click(screen.getByLabelText("Enable Live"));
+  expect(
+    screen.getByRole("button", { name: "Save voice configuration" }),
+  ).toBeDisabled();
+  expect(screen.getByText(/Enable at least one voice mode/)).toBeVisible();
+});
+
+it("offers explicit assignment with reset and never discards overrides after a rejected assignment", async () => {
+  const policy = {
+    agent_id: "old",
+    assigned: true,
+    configured: true,
+    integration_modes: ["standard", "realtime"],
+    enabled_modes: ["standard"],
+    default_mode: "standard",
+    available_modes: ["standard"],
+    capabilities_known: true,
+    conflict: null,
+    agents: [
+      { id: "old", name: "Household" },
+      { id: "new", name: "Workshop" },
+    ],
+  };
+  const fetcher = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({ ...view, policy, overrides: { mode: "standard" } }),
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<SpeechSettings deviceId="speaker" />);
+  const assignment = await screen.findByLabelText("Assigned agent");
+  fireEvent.change(assignment, { target: { value: "new" } });
+  fetcher.mockResolvedValueOnce({
+    ok: false,
+    status: 409,
+    json: async () => ({
+      error: "speaker: incompatible override. Reset or change it.",
+    }),
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Save agent assignment" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "incompatible override",
+  );
+  expect(assignment).toHaveValue("new");
+  expect(screen.getByLabelText("Voice mode")).toHaveValue("standard");
+  fireEvent.click(
+    screen.getByLabelText("Reset voice overrides when assigning"),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Save agent assignment" }),
+  );
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+  expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({
+    agent_id: "new",
+    reset: true,
+  });
+});
+
+it("stages a disabled Live provider and saves provider, voice, enablement and default in one request", async () => {
+  const policy = {
+    agent_id: "agent",
+    assigned: false,
+    configured: true,
+    integration_modes: ["standard", "realtime"],
+    enabled_modes: ["standard"],
+    default_mode: "standard",
+    available_modes: ["standard"],
+    capabilities_known: true,
+    conflict: null,
+    agents: [{ id: "agent", name: "Household" }],
+  };
+  const live = {
+    id: "live-provider",
+    kind: "realtime",
+    model: "live-model",
+    voices: ["sage", "ash"],
+    readiness: "unavailable",
+  };
+  const fetcher = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      ...view,
+      policy,
+      backends: [...view.backends, live],
+    }),
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<SpeechSettings agentId="agent" />);
+  await screen.findByLabelText("Enable Standard");
+  fireEvent.change(screen.getByLabelText("Configure mode providers"), {
+    target: { value: "realtime" },
+  });
+  fireEvent.change(screen.getByLabelText("Realtime provider / model"), {
+    target: { value: "live-provider" },
+  });
+  fireEvent.change(screen.getByLabelText("Realtime voice"), {
+    target: { value: "ash" },
+  });
+  expect(fetcher).toHaveBeenCalledTimes(1); // Provider preparation is not an enablement request.
+  expect(
+    screen.getByText("Draft Live: live-provider / live-model / ash"),
+  ).toBeVisible();
+  fireEvent.click(screen.getByLabelText("Enable Standard"));
+  fireEvent.click(screen.getByLabelText("Enable Live"));
+  fireEvent.change(screen.getByLabelText("Default voice mode"), {
+    target: { value: "realtime" },
+  });
+  fetcher.mockResolvedValueOnce({
+    ok: false,
+    status: 409,
+    json: async () => ({ error: "D1: reconnect with WebRTC first" }),
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Save voice configuration" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "D1: reconnect with WebRTC first",
+  );
+  expect(screen.getByLabelText("Realtime provider / model")).toHaveValue(
+    "live-provider",
+  );
+  expect(screen.getByLabelText("Realtime voice")).toHaveValue("ash");
+  expect(screen.getByLabelText("Enable Standard")).not.toBeChecked();
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({
+    realtime_backend: "live-provider",
+    realtime_voice: "ash",
+    enabled_modes: ["realtime"],
+    default_mode: "realtime",
+  });
+  fetcher.mockResolvedValueOnce({
+    ok: true,
+    json: async () => ({
+      ...view,
+      defaults: {
+        ...view.defaults,
+        mode: "realtime",
+        realtime_backend: "live-provider",
+        realtime_voice: "ash",
+      },
+      voice: {
+        mode: "realtime",
+        realtime_backend: "live-provider",
+        realtime_model: "live-model",
+        realtime_voice: "ash",
+      },
+      policy: {
+        ...policy,
+        enabled_modes: ["realtime"],
+        default_mode: "realtime",
+      },
+      backends: [...view.backends, live],
+    }),
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Save voice configuration" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByText(/Unsaved provider changes/)).toBeNull(),
+  );
+  expect(
+    screen.getByText("Effective Live: live-provider / live-model / ash"),
+  ).toBeVisible();
+});

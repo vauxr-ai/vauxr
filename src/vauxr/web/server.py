@@ -184,6 +184,10 @@ async def update_device(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "voice_mode must be websocket | webrtc | realtime"}, status=400
             )
+    if "transport_mode" in body:
+        if body["transport_mode"] not in ("websocket", "webrtc"):
+            return web.json_response({"error": "Choose WebSocket or WebRTC transport"}, status=400)
+        patch["transport_mode"] = body["transport_mode"]
     if "pipeline_mode" in body:
         mode = body["pipeline_mode"]
         if not isinstance(mode, str) or mode not in VALID_PIPELINE_MODES:
@@ -218,11 +222,17 @@ async def update_device(request: web.Request) -> web.Response:
         # The combined selector owns its policy fields; legacy fields in the
         # same request must not undo its transport/pipeline/barge-in invariants.
         patch.update(voice_mode_patch(body["voice_mode"]))
+    if patch.get("transport_mode") == "websocket":
+        patch["barge_in"] = False
+
+    from vauxr.speech.store import VoiceConflict
 
     try:
         nxt = registry.update_config(device_id, patch)  # type: ignore[arg-type]
-    except (ValueError, TypeError):
-        return web.json_response({"error": "Invalid device speech selection"}, status=400)
+    except VoiceConflict as error:
+        return web.json_response({"error": str(error)}, status=409)
+    except (ValueError, TypeError) as error:
+        return web.json_response({"error": str(error)}, status=400)
     if nxt.get("name"):
         device.name = nxt["name"]
     log.info("200 device updated: %s", device_id)
@@ -336,6 +346,13 @@ async def delete_agent(request: web.Request) -> web.Response:
 @_require_auth
 async def activate_agent(request: web.Request) -> web.Response:
     agent_id = request.match_info["agent_id"]
+    if agent_registry.get_by_id(agent_id) is None:
+        return web.json_response({"error": "agent not found"}, status=404)
+    from vauxr.speech.store import VoiceConflict, get_store
+    try:
+        get_store().validate_fallback(agent_id)
+    except VoiceConflict as error:
+        return web.json_response({"error": str(error)}, status=409)
     if not agent_registry.activate(agent_id):
         return web.json_response({"error": "agent not found"}, status=404)
     return web.json_response({"ok": True})

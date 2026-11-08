@@ -195,6 +195,11 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
     """
     caps = msg.get("caps")
     caps_list = [c for c in caps if isinstance(c, str)] if isinstance(caps, list) else []
+    from vauxr.speech.store import get_store as voice_store
+    store = voice_store()
+    if ctx.device_id:
+        store.record_capabilities(ctx.device_id, caps_list)
+    conflict = store.conflict(ctx.device_id or "") if store.managed(ctx.device_id or "") else None
     rt = get_config().realtime
     # WebRTC needs an absolute offer URL at the device's trusted signaling origin
     # (firmware only arms realtime when offer_url shares that same origin — see
@@ -231,7 +236,7 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
             ctx.output_sample_rate = rate
 
     realtime_policy: dict[str, Any] = {"enabled": False, "transport": "ws"}
-    if webrtc_ok:
+    if webrtc_ok and not conflict:
         # offer_url must be same-origin with the device's trusted signaling
         # origin (owner_auth.configured_origin) so firmware's credential guard
         # accepts it — REALTIME_HOST is for ICE candidate host munging only and
@@ -256,6 +261,8 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
         realtime_policy.get("transport"),
     )
     await send_json(ws, {"type": "hello", "pipeline_mode": mode, "realtime": realtime_policy})
+    if conflict:
+        await send_json(ws, {"type": "error", "code": "VOICE_CONFLICT", "message": conflict})
 
 
 async def _device_button(state: AppState, ctx: ConnectionCtx, msg: dict[str, Any]) -> None:
@@ -285,6 +292,15 @@ async def _voice_start(
     state: AppState, ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, Any]
 ) -> None:
     device_id = ctx.device_id
+    from vauxr.speech.store import get_store as voice_store
+    store = voice_store()
+    if store.managed(device_id):
+        conflict = store.conflict(device_id)
+        if not conflict and store.voice_settings(device_id)["mode"] != "standard":
+            conflict = "Live requires WebRTC; start Live or choose a Standard override."
+        if conflict:
+            await send_json(ws, {"type": "error", "code": "VOICE_CONFLICT", "message": conflict})
+            return
     if ctx.device_id:
         registry.abort_active_turn(ctx.device_id)
 
@@ -418,6 +434,15 @@ async def _realtime_start(
     rt = get_config().realtime
     selected_transport = transport_mode(registry.get_config_for(device_id))
     explicit_live = msg.get("mode") == "live"
+    from vauxr.speech.store import get_store as voice_store
+    store = voice_store()
+    if store.managed(device_id):
+        conflict = store.conflict(device_id)
+        if not conflict and explicit_live and store.voice_settings(device_id)["mode"] != "realtime":
+            conflict = "Live is not selected. Select an enabled Live override or agent default."
+        if conflict:
+            await send_json(ws, {"type": "error", "code": "VOICE_CONFLICT", "message": conflict})
+            return
     # The Live flag is client-controlled. Only a durable browser enrollment
     # may use it to override the selected physical-device transport policy.
     browser_live = (
@@ -664,13 +689,14 @@ async def _startup(app: web.Application) -> None:
     webhooks.load()
     log.info("webhooks loaded")
 
-    active = agent_registry.get_active()
-    if cfg.openclaw.url and active is not None and active.type == "openclaw-direct":
+    # A configured Direct agent can be assigned independently of the fallback,
+    # including after startup. Own its client for the whole application lifetime.
+    if cfg.openclaw.url:
         client = OpenClawClient()
         try:
             await client.connect()
             state.openclaw_client = client
-            log.info("OpenClaw connected (openclaw-direct active agent)")
+            log.info("OpenClaw connected (openclaw-direct available)")
         except Exception as e:  # noqa: BLE001
             log.error("Failed to connect to OpenClaw: %s", e)
             log.error("Server will start but openclaw-direct will fail until OpenClaw reconnects")

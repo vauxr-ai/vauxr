@@ -76,7 +76,7 @@ async def test_warm_ws_prompt_completion_matches_mic_and_registry(
     manager._sessions["review"] = session
     monkeypatch.setattr(realtime_session, "get_manager", lambda: manager)
     agent = AgentServer()
-    monkeypatch.setattr(agent, "get_active_agent", lambda: SimpleNamespace(type="openclaw-direct"))
+    monkeypatch.setattr(agent, "get_active_agent", lambda device_id="": SimpleNamespace(type="openclaw-direct"))
 
     async def chat(_key: str, _text: str, on_delta: Callable[[str], None]) -> None:
         on_delta("Another question?" if follow_up else "Done.")

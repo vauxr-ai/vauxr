@@ -57,6 +57,12 @@ function OwnerApp() {
   const [modeLoaded, setModeLoaded] = useState(false);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState("");
+  const [voiceConflict, setVoiceConflict] = useState("");
+  const [availableVoiceModes, setAvailableVoiceModes] = useState([
+    "standard",
+    "realtime",
+  ]);
+  const [deviceRoute, setDeviceRoute] = useState("");
   const modeRequest = useRef(0);
   const segmenter = useRef(new SpeechSegmenter());
   const acceptPlayback = useRef(false);
@@ -226,6 +232,7 @@ function OwnerApp() {
     (url: string, dev: string, token: string) => {
       credential.current = token;
       setModeLoaded(false);
+      setDeviceRoute("");
       setConnectionEpoch((epoch) => epoch + 1);
       setWsUrl(url);
 
@@ -263,6 +270,7 @@ function OwnerApp() {
       const detail = (event as CustomEvent | undefined)?.detail;
       if (
         event &&
+        event.type !== "agent-route-changed" &&
         (detail?.source === "talk" ||
           (detail?.scope !== "global" && detail?.deviceId !== deviceId))
       )
@@ -278,6 +286,20 @@ function OwnerApp() {
         const data = await response.json();
         if (attempt !== modeRequest.current || controller.signal.aborted)
           return;
+        const policy = data.policy;
+        setAvailableVoiceModes(
+          policy?.assigned || policy?.configured
+            ? policy.available_modes
+            : ["standard", "realtime"],
+        );
+        setVoiceConflict(policy?.conflict || "");
+        setDeviceRoute(
+          policy?.agents?.find(
+            (agent: { id: string; name: string }) =>
+              agent.id === policy.agent_id,
+          )?.name || (policy?.assigned ? "Assigned agent unavailable" : ""),
+        );
+        if (policy?.conflict) stopVoiceRef.current();
         const current = talkModeRef.current;
         const standard =
           event && current !== "realtime"
@@ -301,10 +323,12 @@ function OwnerApp() {
     };
     void refresh();
     window.addEventListener("speech-settings-changed", refresh);
+    window.addEventListener("agent-route-changed", refresh);
     return () => {
       controller.abort();
       modeRequest.current++;
       window.removeEventListener("speech-settings-changed", refresh);
+      window.removeEventListener("agent-route-changed", refresh);
     };
   }, [deviceId, connectionEpoch]);
 
@@ -325,8 +349,12 @@ function OwnerApp() {
           }),
         },
       );
-      if (!response.ok) throw new Error("Unable to save voice mode");
+      if (!response.ok) {
+        const failure = await response.json();
+        throw new Error(failure.error || "Unable to save voice mode");
+      }
       if (attempt !== modeRequest.current) return;
+      setVoiceConflict("");
       setTalkMode(next);
       setModeLoaded(true);
       if (next !== "realtime")
@@ -404,6 +432,7 @@ function OwnerApp() {
   }, [ws, audio]);
 
   const handleTalkStart = useCallback(async () => {
+    if (voiceConflict || modeBusy || (deviceId && !modeLoaded)) return;
     if (talkMode === "realtime") {
       if (realtime.state === "stopped")
         await realtime.start(deviceId, credential.current);
@@ -416,7 +445,16 @@ function OwnerApp() {
       return;
     }
     await startActualTalking();
-  }, [talkMode, startActualTalking, stopVoice, realtime, deviceId]);
+  }, [
+    talkMode,
+    startActualTalking,
+    stopVoice,
+    realtime,
+    deviceId,
+    voiceConflict,
+    modeBusy,
+    modeLoaded,
+  ]);
 
   const handleTalkEnd = useCallback(() => {
     if (talkMode !== "hold") return;
@@ -540,7 +578,7 @@ function OwnerApp() {
           open={companionOpen}
           onOpen={setCompanionOpen}
           context={viewContext}
-          route={activeRoute}
+          route={deviceRoute || activeRoute}
           state={voiceStatus}
           connection={
             <ConfigPanel
@@ -557,13 +595,21 @@ function OwnerApp() {
           }
         >
           {micUnavailable && <MicWarning />}
-          {(modeError || realtime.error || ws.connectionError) && (
+          {(voiceConflict ||
+            modeError ||
+            realtime.error ||
+            ws.connectionError) && (
             <p className="voice-error" role="alert">
-              {modeError || realtime.error || ws.connectionError}
+              {voiceConflict ||
+                modeError ||
+                realtime.error ||
+                ws.connectionError}
             </p>
           )}
           <TalkPanel
             compact={!companionOpen}
+            availableModes={availableVoiceModes}
+            voiceConflict={!!voiceConflict}
             modeBusy={modeBusy || (!!deviceId && !modeLoaded)}
             transcript={
               talkMode === "realtime" ? realtime.transcript : transcript

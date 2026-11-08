@@ -157,7 +157,7 @@ async def test_midturn_stt_to_multiple_tts_segments(store, monkeypatch):
     monkeypatch.setattr(pipeline, "synthesize", synthesize)
     monkeypatch.setattr(pipeline, "_route_via_openclaw_direct", route)
     ws = SimpleNamespace(closed=False, send_str=AsyncMock(), send_bytes=AsyncMock())
-    agents = SimpleNamespace(get_active_agent=lambda: SimpleNamespace(type="openclaw-direct"))
+    agents = SimpleNamespace(get_active_agent=lambda device_id="": SimpleNamespace(type="openclaw-direct"))
     state = AppState(openclaw_client=object(), agent_server=agents)
     ctx = ConnectionCtx(device_id="a", principal=auth.authenticate("speech-test"))
     await _voice_start(

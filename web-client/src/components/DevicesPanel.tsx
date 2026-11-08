@@ -22,6 +22,7 @@ interface ButtonAction {
 interface DeviceConfig {
   name?: string;
   pipeline_mode?: "standard" | "realtime";
+  transport_mode?: "websocket" | "webrtc";
   voice_mode?: "websocket" | "webrtc" | "realtime";
   follow_up_mode?: FollowUpMode;
   output_sample_rate?: number;
@@ -473,31 +474,26 @@ function DeviceCard({
                 />
               </label>
               <label className={labelClass}>
-                Voice mode
+                Voice transport
                 <select
                   className={inputClass}
-                  value={voiceMode}
+                  value={voiceMode === "websocket" ? "websocket" : "webrtc"}
                   disabled={saving}
                   onChange={(e) =>
                     onPatch(
                       device.id,
                       {
-                        voice_mode: e.target.value as
-                          | "websocket"
-                          | "webrtc"
-                          | "realtime",
+                        transport_mode: e.target.value as
+                          "websocket" | "webrtc",
                       },
-                      `Voice mode → ${e.target.value}`,
+                      `Voice transport → ${e.target.value}`,
                     )
                   }
                 >
                   <option value="websocket">
                     WebSocket only · no barge-in
                   </option>
-                  <option value="webrtc">
-                    WebRTC Standard · optional barge-in
-                  </option>
-                  <option value="realtime">WebRTC Realtime</option>
+                  <option value="webrtc">WebRTC · Standard or Live</option>
                 </select>
               </label>
               <label className={labelClass}>

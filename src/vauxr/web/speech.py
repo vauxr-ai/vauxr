@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
-from vauxr.speech.store import get_store, readiness
+from vauxr.speech.store import VoiceConflict, get_store, readiness
 
 ManagementAuthorization = Callable[[web.Request], Awaitable[bool]]
 
@@ -19,7 +19,8 @@ SpeechHandler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 
 def attach_speech_routes(
-    app: web.Application, authorize: ManagementAuthorization,
+    app: web.Application,
+    authorize: ManagementAuthorization,
     boundary: Callable[[SpeechHandler], SpeechHandler],
 ) -> None:
     async def settings(request: web.Request) -> web.Response:
@@ -27,18 +28,26 @@ def attach_speech_routes(
             return web.json_response({"error": "unauthorized"}, status=401)
         store = get_store()
         device_id = request.match_info.get("device_id")
+        agent_id = request.match_info.get("agent_id")
+        if agent_id:
+            from vauxr.agents import registry
+
+            if registry.get_by_id(agent_id) is None:
+                return web.json_response({"error": "Agent unavailable; refresh agents"}, status=404)
         if request.method == "PATCH":
             try:
-                store.update(await request.json(), device_id)
-            except (ValueError, TypeError):
-                return web.json_response({"error": "Invalid speech selection"}, status=400)
-        result = store.view(device_id)
+                store.update(await request.json(), device_id, agent_id)
+            except VoiceConflict as error:
+                return web.json_response({"error": str(error)}, status=409)
+            except (ValueError, TypeError) as error:
+                return web.json_response({"error": str(error)}, status=400)
+        result = store.view(device_id, agent_id)
         states = await asyncio.gather(*(readiness(b) for b in store.backends.values()))
         for backend, state in zip(result["backends"], states, strict=True):
             backend["readiness"] = state
         return web.json_response(result)
 
     settings = boundary(settings)
-    for path in ("/api/speech", "/api/devices/{device_id}/speech"):
+    for path in ("/api/speech", "/api/devices/{device_id}/speech", "/api/agents/{agent_id}/speech"):
         app.router.add_get(path, settings)
         app.router.add_patch(path, settings)

@@ -772,7 +772,7 @@ class RealtimeSession:
 
     async def _agent_turn_complete_callback(self) -> Callable[[bool, str], Awaitable[None]] | None:
         """Retain agent ownership through playback on this exact peer."""
-        active = self._agent_server.get_active_agent()
+        active = self._agent_server.get_active_agent(self.device_id)
         if self._closed:
             return None
         if active is None or any(origin != active.id for origin in self._agent_media.values()):

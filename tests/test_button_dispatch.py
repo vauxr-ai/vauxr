@@ -338,7 +338,7 @@ async def test_warm_prompt_emits_ws_audio_and_records_conversation(
     seed = AsyncMock()
     monkeypatch.setattr(manager, "seed_text_turn", seed)
     agent = AgentServer()
-    monkeypatch.setattr(agent, "get_active_agent", lambda: SimpleNamespace(type="openclaw-direct"))
+    monkeypatch.setattr(agent, "get_active_agent", lambda device_id="": SimpleNamespace(type="openclaw-direct"))
 
     async def chat(_key: str, _text: str, on_delta: Callable[[str], None]) -> None:
         on_delta("Hello?" if follow_up else "Hello.")
