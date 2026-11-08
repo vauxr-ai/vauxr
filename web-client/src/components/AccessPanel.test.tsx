@@ -197,3 +197,24 @@ it("loads and saves configurable pairing messages", async () => {
     intro: "Welcome to Vauxr! Press Action when ready.", code: "Your code is {code}.",
   });
 });
+
+it("keeps the operation identity through partial status replies and never treats delivery as save", async () => {
+  const writes: object[] = [];
+  vi.mocked(ownerPost).mockImplementation(async (path, body = {}) => {
+    if (path.endsWith("/list")) return { requests: [] };
+    if (path.endsWith("/rotate")) { writes.push(body); throw new Error("Lost response"); }
+    if (path.endsWith("/status")) return { operation_id: (body as { operation_id: string }).operation_id, state: "delivered" };
+    throw new Error("Unexpected endpoint");
+  });
+  const user = userEvent.setup();
+  render(<AccessPanel />);
+  await user.click(await screen.findByText("rotate integration"));
+  await screen.findByRole("alert");
+  await user.click(screen.getByText("Refresh status"));
+  await screen.findByText("Delivery attempted; durable save has NOT been acknowledged.");
+  await user.click(screen.getByText("Retry same operation"));
+  await screen.findByRole("alert");
+  expect(writes).toHaveLength(2);
+  expect(writes[1]).toEqual(writes[0]);
+  expect(writes[1]).toMatchObject({ role: "integration", subject: "agent-1" });
+});

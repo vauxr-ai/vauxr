@@ -1,5 +1,6 @@
+import AccessPanel from "./AccessPanel";
 import SpeechSettings from "./SpeechSettings";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { deriveHttpUrl } from "../hooks/useHttpApi";
 import { type ApiWebhook, useWebhooks } from "../hooks/useWebhooks";
 import type { ConnectionState, LogEntry } from "../hooks/useWebSocket";
@@ -9,6 +10,7 @@ interface Props {
   wsUrl: string;
   token: string;
   wsState: ConnectionState;
+  onDirtyChange?: (dirty: boolean) => void;
   addLog: (dir: LogEntry["dir"], text: string) => void;
 }
 
@@ -48,7 +50,7 @@ function AuthInput({
       />
       <button
         type="button"
-        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 hover:text-zinc-300"
+        className="focus-ring absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 hover:text-zinc-300"
         aria-label={visible ? "Hide authorization" : "Show authorization"}
         onClick={() => setVisible((v) => !v)}
       >
@@ -72,12 +74,16 @@ function parseBodyField(text: string): { body?: Record<string, unknown> | null; 
   }
 }
 
-export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) {
+export default function SettingsPanel({ wsUrl, token, wsState: _wsState, addLog, onDirtyChange }: Props) {
   const httpUrl = deriveHttpUrl(wsUrl);
   const api = useWebhooks(httpUrl, token);
 
   const [hooks, setHooks] = useState<ApiWebhook[]>([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const addButton = useRef<HTMLButtonElement>(null);
+  const [saved, setSaved] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -92,19 +98,33 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
 
   const refresh = useCallback(async () => {
     setError("");
+    setLoading(true);
     try {
       setHooks(await api.listWebhooks(true));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
     }
-  }, [api]);
+  }, [api.listWebhooks]);
 
+  useEffect(() => { void refresh(); }, [refresh]);
+  const dirty = showAdd || editing !== null;
+  useEffect(() => { if (saved && !busy) addButton.current?.focus(); }, [saved, busy]);
+  useEffect(() => { onDirtyChange?.(dirty); return () => onDirtyChange?.(false); }, [dirty, onDirtyChange]);
   useEffect(() => {
-    if (wsState !== "disconnected") {
-      refresh();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsState]);
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  const discard = () => !dirty || window.confirm("Discard unsaved webhook edits?");
+  async function mutate(action: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    setSaved("");
+    try { await action(); } finally { setBusy(false); }
+  }
 
   const handleCreate = async () => {
     setError("");
@@ -126,10 +146,11 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
       setAuthorization("");
       setBodyText("");
       setShowAdd(false);
+      setSaved("Webhook change saved.");
       await refresh();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
+      setError(`${msg} The outcome may be unknown. Refresh and check the saved webhook before another change.`);
       addLog("sys", `Webhook create error: ${msg}`);
     }
   };
@@ -157,10 +178,11 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
       addLog("sys", `Webhook updated: ${editName.trim()}`);
       setEditing(null);
       setEditAuth("");
+      setSaved("Webhook change saved.");
       await refresh();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
+      setError(`${msg} The outcome may be unknown. Refresh and check the saved webhook before another change.`);
     }
   };
 
@@ -169,10 +191,11 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
     try {
       const created = await api.duplicateWebhook(id);
       addLog("sys", `Webhook duplicated: ${created.name}`);
+      setSaved("Webhook change saved.");
       await refresh();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
+      setError(`${msg} The outcome may be unknown. Refresh and check the saved webhook before another change.`);
       addLog("sys", `Webhook duplicate error: ${msg}`);
     }
   };
@@ -183,26 +206,29 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
     try {
       await api.deleteWebhook(id);
       addLog("sys", `Webhook deleted: ${id}`);
+      setSaved("Webhook change saved.");
       await refresh();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
+      setError(`${msg} The outcome may be unknown. Refresh and check the saved webhook before another change.`);
     }
   };
 
-  if (wsState === "disconnected") {
-    return (
-      <div className="card p-6 text-sm text-zinc-500">
-        Connect to a server to manage webhooks.
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-4">
-      <SpeechSettings />
-    <div className="card overflow-hidden">
-      <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
+    <div className="administration space-y-4">
+      <nav aria-label="Settings sections" className="settings-sections">
+        <a href="#voice-defaults">Voice providers/defaults</a>
+        <a href="#pairing-access">Pairing &amp; Access</a>
+        <a href="#webhooks">Webhooks</a>
+      </nav>
+      <section id="voice-defaults" tabIndex={-1} aria-label="Voice providers and defaults">
+        <h2>Voice providers/defaults</h2>
+        <p>Choose from server-configured providers. Add providers and credentials in server configuration; this page does not install plugins or edit provider credentials.</p>
+        <SpeechSettings />
+      </section>
+      <section id="pairing-access" tabIndex={-1} aria-label="Pairing and access"><AccessPanel /></section>
+    <section id="webhooks" tabIndex={-1} aria-label="Webhooks" className="card overflow-hidden">
+      <div className="flex flex-wrap gap-3 items-center justify-between border-b border-white/5 px-5 py-3">
         <div>
           <h2 className="text-base font-semibold text-zinc-100">Webhooks</h2>
           <p className="text-xs text-zinc-500">
@@ -210,13 +236,17 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
           </p>
         </div>
         <div className="flex gap-1">
-          <button className={ghostBtn} onClick={refresh} type="button">
+          <button className={ghostBtn} disabled={busy || loading} onClick={() => void refresh()} type="button">
             <Icon name="refresh" size={14} />
             Refresh
           </button>
           <button
             className={ghostBtn + " text-indigo-300 hover:text-indigo-200"}
-            onClick={() => setShowAdd(!showAdd)}
+            ref={addButton}
+            disabled={busy} onClick={() => { if (discard()) {
+              setShowAdd(!showAdd); setEditing(null); setSaved("");
+              setName(""); setUrl(""); setAuthorization(""); setBodyText(""); setEditAuth("");
+            } }}
             type="button"
           >
             <Icon name="plus" size={14} />
@@ -226,9 +256,9 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
       </div>
 
       {showAdd && (
-        <div className="space-y-3 border-b border-white/5 px-5 py-4">
+        <fieldset disabled={busy} className="space-y-3 border-b border-white/5 px-5 py-4">
           <div className="flex flex-wrap items-end gap-3">
-            <label className="flex min-w-[140px] flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+            <label className="flex min-w-0 w-full sm:w-auto sm:min-w-[140px] flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
               Name
               <input
                 className={inputClass}
@@ -237,7 +267,7 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                 placeholder="Home Assistant"
               />
             </label>
-            <label className="flex min-w-[240px] flex-1 flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+            <label className="flex min-w-0 w-full sm:min-w-[240px] flex-1 flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
               URL
               <input
                 className={inputClass}
@@ -248,7 +278,7 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
             </label>
           </div>
           <div className="flex flex-wrap items-end gap-3">
-            <label className="flex min-w-[240px] flex-1 flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+            <label className="flex min-w-0 w-full sm:min-w-[240px] flex-1 flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
               Authorization header
               <AuthInput
                 value={authorization}
@@ -269,22 +299,25 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
           </label>
           <button
             className={primaryBtn}
-            onClick={handleCreate}
-            disabled={!name.trim() || !url.trim()}
+            onClick={() => void mutate(handleCreate)}
+            disabled={busy || !name.trim() || !url.trim()}
             type="button"
           >
             Create
           </button>
-        </div>
+        </fieldset>
       )}
 
       <div className="px-5 py-4">
+        {dirty && <p role="status">Unsaved webhook edits. Save or cancel before leaving Settings.</p>}
+        {busy && <p role="status">Saving webhook change…</p>}
+        {saved && <p role="status">{saved}</p>}
         {error && (
-          <p className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          <p role="alert" className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
             {error}
           </p>
         )}
-        {hooks.length === 0 ? (
+        {loading ? <p role="status">Loading webhooks…</p> : hooks.length === 0 && !error ? (
           <p className="text-sm text-zinc-500">No webhooks yet.</p>
         ) : (
           <ul className="space-y-2">
@@ -294,7 +327,7 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                 className="rounded-lg border border-white/5 bg-zinc-900/40 px-3 py-3"
               >
                 {editing === hook.id ? (
-                  <div className="space-y-2">
+                  <fieldset disabled={busy} className="space-y-2">
                     <input
                       className={inputClass + " w-full"}
                       value={editName}
@@ -326,16 +359,16 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                       spellCheck={false}
                     />
                     <div className="flex gap-2">
-                      <button className={primaryBtn} type="button" onClick={() => handleSaveEdit(hook.id)}>
+                      <button className={primaryBtn} type="button" disabled={busy || !editName.trim() || !editUrl.trim()} onClick={() => void mutate(() => handleSaveEdit(hook.id))}>
                         Save
                       </button>
-                      <button className={ghostBtn} type="button" onClick={() => setEditing(null)}>
+                      <button className={ghostBtn} type="button" disabled={busy} onClick={() => { if (discard()) { setEditing(null); setEditAuth(""); } }}>
                         Cancel
                       </button>
                     </div>
-                  </div>
+                  </fieldset>
                 ) : (
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="truncate font-medium text-zinc-200">{hook.name}</div>
                       <div className="truncate font-mono text-[11px] text-zinc-500">{hook.url}</div>
@@ -350,11 +383,15 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                         </div>
                       )}
                     </div>
-                    <div className="flex shrink-0 gap-1">
+                    <div className="flex shrink-0 flex-wrap gap-1">
                       <button
                         className={ghostBtn}
                         type="button"
+                        disabled={busy}
                         onClick={() => {
+                          if (!discard()) return;
+                          setSaved("");
+                          setShowAdd(false);
                           setEditing(hook.id);
                           setEditName(hook.name);
                           setEditUrl(hook.url);
@@ -367,13 +404,13 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                       <button
                         className={ghostBtn}
                         type="button"
-                        onClick={() => handleDuplicate(hook.id)}
+                        disabled={busy || dirty} onClick={() => void mutate(() => handleDuplicate(hook.id))}
                       >
                         Duplicate
                       </button>
                       {confirmDelete === hook.id ? (
                         <>
-                          <button className={dangerBtn} type="button" onClick={() => handleDelete(hook.id)}>
+                          <button className={dangerBtn} type="button" disabled={busy} onClick={() => void mutate(() => handleDelete(hook.id))}>
                             Confirm
                           </button>
                           <button className={ghostBtn} type="button" onClick={() => setConfirmDelete(null)}>
@@ -381,7 +418,7 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
                           </button>
                         </>
                       ) : (
-                        <button className={dangerBtn} type="button" onClick={() => setConfirmDelete(hook.id)}>
+                        <button className={dangerBtn} type="button" disabled={busy || dirty} onClick={() => setConfirmDelete(hook.id)}>
                           Delete
                         </button>
                       )}
@@ -393,7 +430,7 @@ export default function SettingsPanel({ wsUrl, token, wsState, addLog }: Props) 
           </ul>
         )}
       </div>
-    </div>
+    </section>
     </div>
   );
 }

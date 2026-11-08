@@ -3,7 +3,6 @@ import { ownerFetch } from "./auth/api";
 import { SpeechSegmenter } from "./hooks/speechSegmenter";
 import { useRealtime } from "./hooks/useRealtime";
 import OwnerGate from "./auth/OwnerGate";
-import AccessPanel from "./components/AccessPanel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Layout from "./components/Layout";
 import Sidebar, { type SectionId } from "./components/Sidebar";
@@ -40,6 +39,7 @@ export default function App() {
 }
 
 function OwnerApp() {
+  const [settingsDirty, setSettingsDirty] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionId>("agents");
   const [companionOpen, setCompanionOpen] = useState(false);
   const [viewContext, setViewContext] = useState("Agents");
@@ -538,7 +538,10 @@ function OwnerApp() {
       sidebar={
         <Sidebar
           active={activeSection}
-          onSelect={setActiveSection}
+          onSelect={(section) => {
+            if (section !== activeSection && settingsDirty && !window.confirm("Discard unsaved webhook edits?")) return;
+            setActiveSection(section);
+          }}
           connectionState={ws.state}
           deviceId={deviceId}
         />
@@ -563,12 +566,12 @@ function OwnerApp() {
           ) : activeSection === "settings" ? (
             <>
               <SettingsPanel
+                onDirtyChange={setSettingsDirty}
                 wsUrl={wsUrl}
                 token=""
                 wsState="connected"
                 addLog={ws.addLog}
               />
-              <AccessPanel />
             </>
           ) : (
             <AgentsPanel onContext={setViewContext} onSelection={setSelection} />

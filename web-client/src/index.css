@@ -793,3 +793,14 @@
 .companion-text, .companion-reply { overflow-wrap: anywhere; white-space: pre-wrap; }
 .companion.is-collapsed .companion-text { display: none; }
 .talk-chat-only { order: 0; padding: 14px 0; color: var(--muted); }
+
+/* Administration uses the existing management scroller and companion clearance. */
+.administration, .administration section, .administration label { min-inline-size: 0; }
+.administration input:not([type="checkbox"]), .administration textarea,
+.administration select { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; }
+.administration fieldset { min-inline-size: 0; }
+.administration section { scroll-margin-top: 16px; overflow-wrap: anywhere; }
+.settings-sections { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-sections a { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.administration > section > h2 { font-weight: 600; margin-bottom: 8px; }
+.administration > section > p { color: var(--muted); margin-bottom: 12px; }

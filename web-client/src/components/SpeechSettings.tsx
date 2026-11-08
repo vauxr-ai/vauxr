@@ -110,6 +110,7 @@ export default function SpeechSettings({
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState("");
   const [providerDraft, setProviderDraft] = useState<Partial<Defaults>>({});
   const [editMode, setEditMode] = useState("standard");
   const [agentDraft, setAgentDraft] = useState("");
@@ -187,8 +188,10 @@ export default function SpeechSettings({
     }
     setBusy(true);
     setError("");
+    setSaved("");
     try {
       setData(await request(patch));
+      if (patch) setSaved("Voice settings saved. Applies to new turns.");
       setProviderDraft({});
       window.dispatchEvent(
         new CustomEvent("speech-settings-changed", {
@@ -265,11 +268,15 @@ export default function SpeechSettings({
             : "Global speech defaults"}
       </h2>
       <p className="text-xs text-zinc-400">
-        Defaults apply to new turns. Stop voice before changing its agent or
+        Global and device selections save immediately; agent provider edits require Save voice configuration. Defaults apply to new turns. Stop voice before changing its agent or
         mode; reconnect WebRTC for provider changes. Voices belong to a
         configured model.
       </p>
-      {error && <p role="alert">{error}</p>}
+      {!data && !error && <p role="status">Loading voice configuration…</p>}
+      {!data && error && <button onClick={() => void update()}>Retry voice configuration</button>}
+      {busy && <p role="status">Checking voice configuration…</p>}
+      {saved && <p role="status">{saved}</p>}
+      {error && <><p role="alert">{error}</p><p>Refresh to check the stored configuration before retrying a change.</p></>}
       {data?.error && <p role="alert">{data.error}</p>}
       {data?.policy?.conflict && <p role="alert">{data.policy.conflict}</p>}
       {chatOnly && <p role="status">Chat-only · No voice modes enabled. Browser text is available; physical voice devices require a voice-enabled agent.</p>}
