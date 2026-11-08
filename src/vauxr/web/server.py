@@ -167,6 +167,19 @@ async def list_devices(_request: web.Request) -> web.Response:
 
 
 @_require_auth
+async def device_metrics(request: web.Request) -> web.Response:
+    from vauxr.devices.metrics import WINDOWS, get_store
+
+    device_id = request.match_info["device_id"]
+    if registry.get(device_id) is None:
+        return web.json_response({"error": "device not found"}, status=404)
+    window = request.match_info.get("window", request.query.get("window", "24h"))
+    if window not in WINDOWS:
+        return web.json_response({"error": "window must be 1h, 24h, 7d or 30d"}, status=400)
+    return web.json_response(get_store().view(device_id, window))
+
+
+@_require_auth
 async def update_device(request: web.Request) -> web.Response:
     device_id = request.match_info["device_id"]
     device = registry.get(device_id)
@@ -215,6 +228,11 @@ async def update_device(request: web.Request) -> web.Response:
         if not isinstance(body["barge_in"], bool):
             return web.json_response({"error": "barge_in must be a boolean"}, status=400)
         patch["barge_in"] = body["barge_in"]
+    if "output_sample_rate" in body:
+        rate = body["output_sample_rate"]
+        if rate is not None and (type(rate) is not int or rate not in (16000, 22050, 24000, 44100)):
+            return web.json_response({"error": "output_sample_rate must be 16000, 22050, 24000, 44100 or null"}, status=400)
+        patch["output_sample_rate"] = rate
     if "button_actions" in body:
         actions, err = parse_button_actions(body["button_actions"])
         if err:
@@ -651,6 +669,8 @@ def attach_http_routes(app: web.Application) -> None:
 
     app.router.add_route("OPTIONS", "/{tail:.*}", _options)
     app.router.add_get("/api/devices", list_devices)
+    app.router.add_get("/api/devices/{device_id}/metrics", device_metrics)
+    app.router.add_get("/api/devices/{device_id}/metrics/{window}", device_metrics)
     app.router.add_patch("/api/devices/{device_id}", update_device)
     app.router.add_post("/api/devices/{device_id}/announce", announce)
     app.router.add_post("/api/devices/{device_id}/command", device_command)

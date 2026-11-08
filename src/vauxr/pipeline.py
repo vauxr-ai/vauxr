@@ -128,7 +128,7 @@ async def _synthesize_and_send(
 
     try:
         async for chunk in synthesize(
-            text, selection=selection, target_rate=target_rate, abort_event=abort, on_sample_rate=on_rate,
+            text, device_id=device_id, selection=selection, target_rate=target_rate, abort_event=abort, on_sample_rate=on_rate,
         ):
             if abort.is_set():
                 return
@@ -152,7 +152,7 @@ async def _synthesize_error_message(
 
     try:
         async for chunk in synthesize(
-            _ERROR_FALLBACK_TEXT, selection=selection, target_rate=target_rate,
+            _ERROR_FALLBACK_TEXT, device_id=device_id, selection=selection, target_rate=target_rate,
             abort_event=abort, on_sample_rate=on_rate
         ):
             if abort.is_set():
@@ -251,7 +251,7 @@ async def _route_via_agent(
                 start_state["sent_start"] = True
 
         async for chunk in synthesize(
-            text, selection=selection, target_rate=target_rate, abort_event=abort, on_sample_rate=on_rate,
+            text, device_id=device_id, selection=selection, target_rate=target_rate, abort_event=abort, on_sample_rate=on_rate,
         ):
             if abort.is_set():
                 return
@@ -406,7 +406,7 @@ async def run_voice_turn(
 
     try:
         selection = selection or resolve(device_id)
-        transcript_text = await transcribe(audio_chunks, backend=selection.stt)
+        transcript_text = await transcribe(audio_chunks, backend=selection.stt, device_id=device_id)
     except Exception as err:  # noqa: BLE001
         log.error("STT error for %s: %s", device_id, err)
         await _send_json(ws, {"type": "error", "code": "STT_ERROR", "message": str(err)})

@@ -195,6 +195,8 @@ class LiveService(OpenAILiveLLMService):
         text = turn.text if turn.open else ""
         await super()._end_turn(role)
         if text:
+            from vauxr.devices.metrics import record
+            record(self.session.device_id, "realtime_user_turns" if role == "user" else "realtime_assistant_turns")
             # The SDK transcript writer appends immutable, idempotent messages.
             # Only a closed turn is a record; UI snapshots/deltas are not records.
             self.fragments.append({"id": self.transcript_turns[role], "role": role,

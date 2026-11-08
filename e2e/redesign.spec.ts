@@ -64,12 +64,13 @@ test("B2 keeps administration independent, browser ownership stable, and microph
   await device.getByRole("button").first().click();
   await device.getByLabel("Double press action").selectOption("command");
   await expect(device.getByLabel("Double press command")).toHaveValue("mute");
+  await device.getByRole("button", {name:"Edit device name"}).click();
   await device
-    .getByLabel("Name", { exact: true })
+    .getByLabel("Device name", { exact: true })
     .fill("Browser acceptance device");
-  await device.getByLabel("Name", { exact: true }).blur();
+  await device.getByLabel("Device name", { exact: true }).blur();
   await expect(
-    device.getByText("Browser acceptance device", { exact: true }),
+    device.getByRole("heading", { name: "Browser acceptance device", exact: true }),
   ).toBeVisible();
   await closeAgentDetail(page);
   await page.getByRole("button", { name: "Agents", exact: true }).click();
@@ -172,7 +173,7 @@ test("B2 themes, reserved desktop companion, phone focus and authenticated scree
   await page.getByRole("button", { name: "Devices", exact: true }).click();
   await page.locator("main li").first().getByRole("button").first().click();
   await expect(
-    page.getByRole("region", { name: "Device speech", exact: true }),
+    page.getByRole("region", { name: "Assigned agent", exact: true }),
   ).toBeVisible();
   for (const size of ["desktop", "phone"]) {
     await page.setViewportSize(

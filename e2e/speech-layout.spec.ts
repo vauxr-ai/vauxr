@@ -193,9 +193,10 @@ for (const width of [375, 390]) {
       await page.getByRole("button", { name: "Devices", exact: true }).click();
       await page.locator("main li").first().getByRole("button").first().click();
       const device = page.getByRole("region", {
-        name: "Device speech",
+        name: "Assigned agent",
         exact: true,
       });
+      await device.getByRole("button", {name:"Override agent voice pipeline defaults"}).click();
       await expect(device.getByLabel("TTS backend")).toHaveValue("");
       await expectInsideSpeechCard(device);
       await capture(page, `${width}-${theme}-device-inherited`, device);
@@ -210,7 +211,7 @@ for (const width of [375, 390]) {
         .getByRole("combobox", { name: "Voice", exact: true })
         .selectOption(voice);
       await expect(
-        device.getByRole("button", { name: "Refresh speech" }),
+        device.getByRole("button", { name: "Refresh device voice configuration" }),
       ).toBeEnabled();
       await expectInsideSpeechCard(device);
       await capture(page, `${width}-${theme}-device-overridden`, device);
@@ -220,28 +221,17 @@ for (const width of [375, 390]) {
       await expect(device.getByLabel("Realtime voice")).toHaveValue("");
       await expect(
         device.getByLabel("Realtime voice"),
-      ).toHaveAccessibleDescription(`Selected: Inherit agent (${liveVoice})`);
+      ).toContainText(`Use agent default (${liveVoice})`);
       await expectInsideSpeechCard(device);
       await capture(page, `${width}-${theme}-device-realtime`, device);
       await device
         .getByLabel("Voice mode", { exact: true })
         .selectOption("standard");
       await expect(device.getByLabel("TTS backend")).toBeEnabled();
-      // The last real device form must be usable at maximum scroll with the connected dock.
-      const controls = page.getByRole("region", {
-        name: "Control",
-        exact: true,
-      });
-      const command = controls.getByRole("combobox").first();
-      const send = controls.getByRole("button", { name: "Send", exact: true });
-      for (const control of [
-        command,
-        controls.getByLabel("Volume", { exact: true }),
-        send,
-      ])
-        await expectAboveDock(control, page);
-      await command.selectOption("set_volume");
-      await controls.getByLabel("Volume", { exact: true }).fill("37");
+      await page.getByRole("button", {name:"Device Diagnostics"}).click();
+      const controls = page.getByRole("dialog", {name:"Device Diagnostics"});
+      const send = controls.getByRole("button", {name:"Set volume",exact:true});
+      await controls.getByLabel("Volume", {exact:true}).fill("37");
       const sent = page.waitForResponse(
         (response) =>
           response.url().endsWith("/command") &&
@@ -258,25 +248,16 @@ for (const width of [375, 390]) {
         page,
         `${width}-${theme}-device-final-controls-connected-dock`,
       );
-      await expect(
-        page.getByRole("button", { name: "Disconnect", exact: true }),
-      ).toBeVisible();
+      await controls.getByRole("button", {name:"Close dialog"}).click();
       expect(await page.evaluate(() => (window as any).layoutMicCalls)).toBe(0);
       expect(sockets).toBe(0);
-      // Also verify the smaller disconnected dock, without changing form ownership.
-      await page
-        .getByRole("button", { name: "Disconnect", exact: true })
-        .click();
-      await expectAboveDock(send, page);
-      await capture(page, `${width}-${theme}-device-final-controls-idle-dock`);
+      await page.getByRole("button", {name:"Disconnect",exact:true}).click();
       // Desktop retains useful columns rather than stretching long options across the page.
       await page.setViewportSize({ width: 1366, height: 900 });
       await device.scrollIntoViewIfNeeded();
       await expectInsideSpeechCard(device);
       const columns = await device
-        .locator("fieldset.speech-fields")
-        .last()
-        .locator(".speech-field")
+        .locator(".device-provider-grid .speech-field")
         .evaluateAll((fields) =>
           fields.slice(0, 2).map((field) => ({
             top: field.getBoundingClientRect().top,
@@ -291,9 +272,7 @@ for (const width of [375, 390]) {
         .click();
       await expectInsideSpeechCard(device);
       const expandedColumns = await device
-        .locator("fieldset.speech-fields")
-        .last()
-        .locator(".speech-field")
+        .locator(".device-provider-grid .speech-field")
         .evaluateAll((fields) =>
           fields.slice(0, 2).map((field) => ({
             top: field.getBoundingClientRect().top,

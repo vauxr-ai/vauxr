@@ -272,12 +272,13 @@ class RealtimeSession:
         from vauxr.realtime.output_buffer import OutputJitterBuffer
 
         output_buffer = OutputJitterBuffer()
-        stt = WyomingSTTService(selection=self._require_speech_selection)
+        stt = WyomingSTTService(device_id=self.device_id, selection=self._require_speech_selection)
         # Per-device segmentation: sentence mode lets pipecat's TTS aggregator cut
         # on sentence boundaries; otherwise TOKEN mode and the upstream
         # IdleSegmenter (in AgentLLMService) owns segmentation.
         seg = get_segmentation(self.device_id)
         tts = WyomingTTSService(
+            device_id=self.device_id,
             selection=self._require_speech_selection,
             text_aggregation_mode=(
                 TextAggregationMode.SENTENCE if seg.sentence else TextAggregationMode.TOKEN
@@ -662,7 +663,7 @@ class RealtimeSession:
             from vauxr.speech.wyoming_stt import transcribe
 
             self._speech_selection = selection or resolve(self.device_id)
-            text = await transcribe([pcm], backend=self._speech_selection.stt)
+            text = await transcribe([pcm], backend=self._speech_selection.stt, device_id=self.device_id)
         except Exception as e:  # noqa: BLE001
             log.error("realtime[%s]: buffered transcribe failed: %s", self.device_id, e)
             await self._release_failed_turn("transcribe failed")

@@ -54,6 +54,7 @@ ROUTES = [
     ("GET", "/api/devices/missing/speech", "o", 200),
     ("PATCH", "/api/devices/missing/speech", "o", 200),
     ("GET", "/api/devices", "oi", 200),
+    ("GET", "/api/devices/missing/metrics", "o", 404),
     ("PATCH", "/api/devices/missing", "o", 404),
     ("POST", "/api/devices/missing/announce", "oi", 404),
     ("POST", "/api/devices/missing/command", "oi", 404),
@@ -135,6 +136,7 @@ def test_route_inventory_complete():
         ("GET", "/api/settings/plugins"),
         ("PUT", "/api/settings/plugins/{plugin_id}"),
     }
+    expected.add(("GET", "/api/devices/{device_id}/metrics/{window}"))
     expected.add(("GET", "/firmware-delivery/{token}/{filename}"))
     assert actual == expected
     # Speech shares an injected boundary; avatar GET/POST share one operation.

@@ -22,16 +22,17 @@ from vauxr.speech.wyoming_tts import synthesize
 
 
 class WyomingSTTService(SegmentedSTTService):
-    def __init__(self, *, selection: Callable[[], Selection] = resolve, **kwargs) -> None:
+    def __init__(self, *, selection: Callable[[], Selection] = resolve, device_id: str | None = None, **kwargs) -> None:
         super().__init__(settings=STTSettings(model=None, language=None), **kwargs)
         self._selection = selection
+        self._device_id = device_id
 
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
         if len(audio) < int(0.4 * self.sample_rate * 2):
             return
         try:
             selected = self._selection()
-            text = await transcribe([audio], sample_rate=self.sample_rate, backend=selected.stt)
+            text = await transcribe([audio], sample_rate=self.sample_rate, backend=selected.stt, device_id=self._device_id)
             if text.strip():
                 yield TranscriptionFrame(text.strip(), self._user_id, time_now_iso8601(), Language.EN)
         except Exception:  # noqa: BLE001
@@ -43,6 +44,7 @@ class WyomingTTSService(TTSService):
         self,
         *,
         selection: Callable[[], Selection] = resolve,
+        device_id: str | None = None,
         text_aggregation_mode: TextAggregationMode = TextAggregationMode.TOKEN,
         **kwargs,
     ) -> None:
@@ -54,6 +56,7 @@ class WyomingTTSService(TTSService):
             **kwargs,
         )
         self._selection = selection
+        self._device_id = device_id
         self._selections: dict[str, Selection] = {}
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
@@ -83,7 +86,7 @@ class WyomingTTSService(TTSService):
         try:
             if selected is None:
                 raise RuntimeError("Speech reply has no selection snapshot")
-            parts = [part async for part in synthesize(text, selection=selected, on_sample_rate=on_rate)]
+            parts = [part async for part in synthesize(text, device_id=self._device_id, selection=selected, on_sample_rate=on_rate)]
 
             async def pcm_stream() -> AsyncIterator[bytes]:
                 for part in parts:

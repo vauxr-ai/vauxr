@@ -91,6 +91,7 @@ async def synthesize(
     text: str,
     *,
     selection: Selection | None = None,
+    device_id: str | None = None,
     target_rate: int | None = None,
     abort_event: asyncio.Event | None = None,
     on_sample_rate: Callable[[int], None] | None = None,
@@ -100,6 +101,9 @@ async def synthesize(
     `abort_event` mirrors the AbortSignal used by the Node port — the
     generator stops mid-stream when it fires.
     """
+    from vauxr.devices.metrics import record
+
+    had_audio = False
     selection = selection or resolve()
     if selection.tts.adapter == "openai":
         import vauxr.speech.openai as openai_tts
@@ -108,7 +112,10 @@ async def synthesize(
             text, selection=selection, target_rate=target_rate,
             abort_event=abort_event, on_sample_rate=on_sample_rate,
         ):
+            had_audio = had_audio or bool(chunk)
             yield chunk
+        if had_audio and not (abort_event and abort_event.is_set()):
+            record(device_id, "tts_syntheses")
         return
     host, port = selection.tts.host, selection.tts.port
 
@@ -143,6 +150,7 @@ async def synthesize(
                     if source_rate == 0 and isinstance(ev.data.get("rate"), (int, float)):
                         source_rate = int(ev.data["rate"])
                     if ev.payload:
+                        had_audio = True
                         # Fire on_sample_rate once, on first chunk we can ship.
                         if not sample_rate_fired and on_sample_rate is not None and source_rate:
                             effective = target_rate if (target_rate and target_rate != source_rate) else source_rate
@@ -158,6 +166,8 @@ async def synthesize(
                     stop = True
 
             if stop:
+                if had_audio and not (abort_event and abort_event.is_set()):
+                    record(device_id, "tts_syntheses")
                 break
     except _Aborted:
         return

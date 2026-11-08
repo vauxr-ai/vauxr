@@ -16,6 +16,7 @@ class Role(StrEnum):
 class Operation(StrEnum):
     DEVICES_LIST = "devices.list"
     DEVICE_CONFIG = "device.configure"
+    DEVICE_METRICS = "device.metrics"
     SPEECH_CONFIG = "speech.configure"
     ANNOUNCE = "device.announce"
     CONTROL = "device.control"
@@ -81,6 +82,7 @@ _OWNER = frozenset(
     {
         Operation.DEVICES_LIST,
         Operation.DEVICE_CONFIG,
+        Operation.DEVICE_METRICS,
         Operation.SPEECH_CONFIG,
         Operation.ANNOUNCE,
         Operation.CONTROL,
@@ -160,6 +162,7 @@ class PairApprovalResult:
 
 HTTP_OPERATIONS = {
     "list_devices": Operation.DEVICES_LIST,
+    "device_metrics": Operation.DEVICE_METRICS,
     "update_device": Operation.DEVICE_CONFIG,
     "announce": Operation.ANNOUNCE,
     "device_command": Operation.CONTROL,

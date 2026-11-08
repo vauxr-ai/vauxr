@@ -196,18 +196,17 @@ for (const width of [375, 390])
           .getByRole("button", { name: "Devices", exact: true })
           .click();
         await page.getByText(device.device_id, { exact: true }).first().click();
+        await page.getByRole("button", {name:"Override agent voice pipeline defaults"}).click();
         const card = page.getByRole("region", {
-          name: "Device speech",
+          name: "Assigned agent",
           exact: true,
         });
         await card
           .getByLabel("Assigned agent", { exact: true })
           .selectOption(request.agent_id);
-        await card
-          .getByRole("button", { name: "Save agent assignment" })
-          .click();
+        await expect(card.getByRole("status")).toHaveText("Saved");
         await expect(
-          card.getByText("Assigned agent. Inherited voice defaults.", {
+          card.getByText("Using the assigned agent’s voice defaults.", {
             exact: true,
           }),
         ).toBeVisible();
@@ -244,7 +243,8 @@ for (const width of [375, 390])
           .getByRole("button", { name: "Devices", exact: true })
           .click();
         await page.getByText(device.device_id, { exact: true }).first().click();
-        await card.getByRole("button", { name: "Reset to defaults" }).click();
+        await page.getByRole("button", {name:"Override agent voice pipeline defaults"}).click();
+        await card.getByRole("button", { name: "Reset voice overrides" }).click();
         await expect(
           card.getByLabel("Voice mode", { exact: true }),
         ).toHaveValue("");
@@ -254,8 +254,8 @@ for (const width of [375, 390])
         await expect(card.getByLabel("Realtime voice", { exact: true })).toHaveValue("");
         await expect(
           card.getByLabel("Realtime voice", { exact: true }),
-        ).toHaveAccessibleDescription("Selected: Inherit agent (coral)");
-        await card.getByRole("button", { name: "Reset to defaults" }).click();
+        ).toContainText("Use agent default (coral)");
+        await card.getByRole("button", { name: "Reset voice overrides" }).click();
         await closeAgentDetail(page);
         await page.getByRole("button", { name: "Agents", exact: true }).click();
         await page
@@ -304,6 +304,7 @@ for (const width of [375, 390])
           .getByRole("button", { name: "Devices", exact: true })
           .click();
         await page.getByText(device.device_id, { exact: true }).first().click();
+        await page.getByRole("button", {name:"Override agent voice pipeline defaults"}).click();
         await expect(
           card
             .getByLabel("Voice mode", { exact: true })
@@ -314,7 +315,7 @@ for (const width of [375, 390])
         ).toHaveValue("");
         await expect(
           card.getByLabel("Realtime voice", { exact: true }),
-        ).toHaveAccessibleDescription("Selected: Inherit agent (ash)");
+        ).toContainText("Use agent default (ash)");
         await closeAgentDetail(page);
         await page.getByRole("button", { name: "Agents", exact: true }).click();
         await page
@@ -332,6 +333,7 @@ for (const width of [375, 390])
           .getByRole("button", { name: "Devices", exact: true })
           .click();
         await page.getByText(device.device_id, { exact: true }).first().click();
+        await page.getByRole("button", {name:"Override agent voice pipeline defaults"}).click();
         await card
           .getByLabel("Voice mode", { exact: true })
           .selectOption("realtime");
@@ -349,10 +351,10 @@ for (const width of [375, 390])
             ),
           )
           .toBe(true);
-        await card.getByRole("button", { name: "Refresh speech" }).click();
+        await card.getByRole("button", { name: "Refresh device voice configuration" }).click();
         await expect(card.getByRole("alert")).toContainText("unavailable");
         await capture(page, `${width}-${theme}-capability-conflict`, card);
-        await card.getByRole("button", { name: "Reset to defaults" }).click();
+        await card.getByRole("button", { name: "Reset voice overrides" }).click();
         await expect(card.getByRole("alert")).toHaveCount(0);
         await server.restart();
         await reloadSession(page);
@@ -367,6 +369,7 @@ for (const width of [375, 390])
           .getByRole("button", { name: "Devices", exact: true })
           .click();
         await page.getByText(device.device_id, { exact: true }).first().click();
+        await page.getByRole("button", {name:"Override agent voice pipeline defaults"}).click();
         await expect(
           card.getByLabel("Assigned agent", { exact: true }),
         ).toHaveValue(request.agent_id);
