@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { Page } from "@playwright/test";
 // Synthetic oscillator input; real Chromium AudioContext, worklet and PCM conversion.
 // Local WS response stub avoids any speech inference or paid provider.
-import { test, expect, login } from "./auth-fixture";
+import { test, expect, login, seedRealtimeAgent } from "./auth-fixture";
 
 // Optional authenticated state captures; automatic auth snapshots remain disabled.
 async function capture(page: Page, state: string) {
@@ -50,6 +50,8 @@ test("Talk segments real worklet PCM, barges in, persists modes and keeps button
       if (msg.type === "voice.start") ws.send(JSON.stringify({ type: "ready" }));
     });
   });
+  seedRealtimeAgent(server);
+  await server.restart();
   await login(page, server);
   await page.getByRole("button", { name: "Connect browser", exact: true }).click();
   const talk = page.getByRole("complementary", { name: "Talk panel" });

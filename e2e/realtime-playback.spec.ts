@@ -1,6 +1,6 @@
 // Real Chromium Opus/RTP and the production hook, with a synthetic local sender.
 // No provider traffic, microphone, recordings, traces or screenshots.
-import { test, expect, login } from "./auth-fixture";
+import { test, expect, login, seedRealtimeAgent } from "./auth-fixture";
 
 test("realtime playback survives transcript overlap and restart with bounded diagnostics", async ({ page, server }) => {
   test.setTimeout(60000);
@@ -45,6 +45,8 @@ test("realtime playback survives transcript overlap and restart with bounded dia
     await route.fulfill({ json: answer });
     socket.send(JSON.stringify({ type: "realtime.ready" }));
   });
+  seedRealtimeAgent(server);
+  await server.restart();
   await login(page, server);
   await page.getByRole("button", { name: "Connect browser", exact: true }).click();
   const talk = page.getByRole("complementary", { name: "Talk panel" });

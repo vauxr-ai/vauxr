@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Locator, Page } from "@playwright/test";
-import { test, expect, login } from "./auth-fixture";
+import { test, expect, login, seedRealtimeAgent } from "./auth-fixture";
 
 const stt = "whisper_household_multilingual_transcription_provider";
 const tts = "piper_household_multilingual_synthesis_provider";
@@ -155,6 +155,7 @@ for (const width of [375, 390]) {
           devices: {},
         }),
       );
+      seedRealtimeAgent(server);
       await server.restart();
       await page.addInitScript(() => {
         (window as any).layoutMicCalls = 0;
