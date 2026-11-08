@@ -85,7 +85,28 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       await modal.getByRole('button',{name:'Save name',exact:true}).click();
       await expect(modal).toHaveAccessibleName(renamed);
       const upload = page.waitForResponse(r => r.url().endsWith(`/api/agents/${agentId}/avatar`) && r.request().method()==='POST');
-      await modal.getByLabel('Upload agent avatar').setInputFiles({name:'safe-fixture.png',mimeType:'image/png',buffer:png});
+      const pencil = modal.getByRole('button',{name:'Edit agent name'});
+      const heading = modal.getByRole('heading',{name:renamed,exact:true});
+      const titleBox = (await heading.boundingBox())!, pencilBox = (await pencil.boundingBox())!;
+      expect(pencilBox.x - titleBox.x - titleBox.width).toBeLessThan(20);
+      await expect(modal.getByText(/Agent ID:|This route is shared|Integration configuration/)).toHaveCount(0);
+      const avatarButton = modal.getByRole('button',{name:'Edit agent avatar'});
+      await avatarButton.click();
+      const avatarDialog = page.getByRole('dialog',{name:'Edit agent avatar',exact:true});
+      await page.keyboard.press('Escape');
+      await expect(avatarButton).toBeFocused();
+      await avatarButton.press('Enter');
+      for (let n = 0; n < 6; n++) {
+        await page.keyboard.press('Tab');
+        expect(await avatarDialog.evaluate(el => el.contains(document.activeElement))).toBe(true);
+      }
+      mkdirSync(artifactDir,{recursive:true});
+      await page.screenshot({path:resolve(artifactDir,`agent-avatar-${width}-${theme}.png`)});
+      await avatarDialog.getByLabel('Choose agent avatar').setInputFiles({name:'bad.txt',mimeType:'text/plain',buffer:Buffer.from('invalid')});
+      await expect(avatarDialog.getByRole('alert')).toContainText('Choose a PNG');
+      await avatarDialog.getByLabel('Choose agent avatar').setInputFiles({name:'safe-fixture.png',mimeType:'image/png',buffer:png});
+      await expect(avatarDialog).toHaveCount(0);
+      await expect(avatarButton).toBeFocused();
       expect((await upload).status()).toBe(200);
       await expect.poll(() => modal.locator('.agent-avatar img').evaluateAll(images => images.every(image => (image as HTMLImageElement).naturalWidth > 0) && images.length > 0)).toBe(true);
       mkdirSync(artifactDir,{recursive:true});
@@ -98,6 +119,9 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       await voice.getByRole('tab',{name:'Standard',exact:true}).scrollIntoViewIfNeeded();
       await page.screenshot({path:resolve(artifactDir,`agent-pipeline-${width}-${theme}-standard.png`)});
       await voice.locator('.agent-pipeline').screenshot({path:resolve(artifactDir,`agent-graph-${width}-${theme}-standard.png`)});
+      await expect(voice.locator('.pipeline-device .pipeline-entity')).toHaveCount(1);
+      await expect(voice.locator('.pipeline-agent .pipeline-entity')).toHaveCount(1);
+      await expect(voice.locator('.pipeline-provider')).toHaveCount(2);
       const deviceDetails = voice.locator('.pipeline-device-info summary').first();
       await deviceDetails.focus(); await page.keyboard.press('Space');
       await expect(voice.locator('.pipeline-device-info').first()).toHaveAttribute('open','');
@@ -151,6 +175,17 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       await voice.getByRole('button',{name:'Test selected voice'}).scrollIntoViewIfNeeded();
       mkdirSync(artifactDir,{recursive:true});
       await page.screenshot({path:resolve(artifactDir,`agent-editor-${width}-${theme}.png`)});
+      await page.keyboard.press('Escape');
+      const diagnosticsTrigger = page.getByRole('button',{name:`Runtime diagnostics for ${renamed}`,exact:true});
+      await diagnosticsTrigger.focus(); await page.keyboard.press('Enter');
+      const diagnostics = page.getByRole('dialog',{name:'Agent runtime diagnostics',exact:true});
+      for (let n = 0; n < 6; n++) {
+        await page.keyboard.press('Tab');
+        expect(await diagnostics.evaluate(el => el.contains(document.activeElement))).toBe(true);
+      }
+      await expect(diagnostics.getByText(`Agent ID: ${agentId}`,{exact:true})).toBeVisible();
+      await page.screenshot({path:resolve(artifactDir,`agent-diagnostics-${width}-${theme}.png`)});
+      await page.keyboard.press('Escape'); await expect(diagnosticsTrigger).toBeFocused();
     } finally { await peer.close(); }
   });
 }

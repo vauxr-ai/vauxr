@@ -21,6 +21,10 @@ export default function AgentsPanel({
 }) {
   const api = useAgents();
   const returnFocus = useRef<HTMLButtonElement>(null);
+  const avatarReturnFocus = useRef<HTMLButtonElement>(null);
+  const diagnosticsReturnFocus = useRef<HTMLButtonElement>(null);
+  const [avatarOpen, setAvatarOpen] = useState(false);
+  const [diagnosticsId, setDiagnosticsId] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [avatarRevision, setAvatarRevision] = useState(0);
   const [avatarError, setAvatarError] = useState("");
@@ -32,6 +36,7 @@ export default function AgentsPanel({
   const [selectedId, setSelectedId] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [saved, setSaved] = useState("");
+  const diagnostics = agents.find(agent => agent.id === diagnosticsId);
   const selected = agents.find((agent) => agent.id === selectedId);
   useEffect(() => {
     onContext?.(selected?.name || "Agents");
@@ -87,6 +92,23 @@ export default function AgentsPanel({
       setBusy(false);
     }
   }
+
+  async function uploadAvatar(file?: File) {
+    if (!file || !selected || avatarBusy) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 1024 * 1024) {
+      setAvatarError("Choose a PNG, JPEG or WebP image up to 1 MB."); return;
+    }
+    setAvatarBusy(true); setAvatarError("");
+    try {
+      const response = await ownerFetch(`/api/agents/${encodeURIComponent(selected.id)}/avatar`, {
+        method: "POST", headers: {"Content-Type": file.type}, body: file,
+      });
+      if (!response.ok) throw new Error();
+      setAvatarRevision(value => value + 1); setAvatarOpen(false); setSaved("Agent avatar saved.");
+    } catch {setAvatarError("Avatar upload failed. Try another image or retry.");}
+    finally {setAvatarBusy(false);}
+  }
+
 
   return (
     <div className="space-y-5">
@@ -181,6 +203,8 @@ export default function AgentsPanel({
                 >
                   {agent.active ? "Default" : "Set as default"}
                 </button>
+                <button className="agent-route-action agent-diagnostics-action" aria-label={`Runtime diagnostics for ${agent.name}`} title="Agent runtime diagnostics"
+                  onClick={event => { (diagnosticsReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setError(""); setDiagnosticsId(agent.id); }}>⋯</button>
               </li>
             ))}
           </ul>
@@ -210,95 +234,12 @@ export default function AgentsPanel({
           {selected ? (
             <>
               <div className="agent-profile">
-                <AgentAvatar agentId={selected.id} revision={avatarRevision} />
-                <div><label className="avatar-upload">{avatarBusy ? "Uploading…" : "Upload avatar"}
-                  <input type="file" accept="image/png,image/jpeg,image/webp" disabled={avatarBusy}
-                    aria-label="Upload agent avatar" onChange={async event => {
-                      const file = event.target.files?.[0]; event.target.value = ""; if (!file) return;
-                      if (!['image/png','image/jpeg','image/webp'].includes(file.type) || file.size > 1024*1024) {
-                        setAvatarError("Choose a PNG, JPEG or WebP image up to 1 MB."); return;
-                      }
-                      setAvatarBusy(true); setAvatarError("");
-                      try {const response = await ownerFetch(`/api/agents/${encodeURIComponent(selected.id)}/avatar`, {
-                        method:"POST",headers:{"Content-Type":file.type}, body:file,
-                      }); if (!response.ok) throw Error(); setAvatarRevision(value => value+1);
-                      } catch {setAvatarError("Avatar upload failed. Refresh before retrying.");}
-                      finally {setAvatarBusy(false);}
-                    }} /></label><small>PNG, JPEG or WebP · up to 1 MB</small></div>
+                <button ref={avatarReturnFocus} className="agent-avatar-edit" aria-label="Edit agent avatar" title="Edit agent avatar"
+                  onClick={() => {setAvatarError(""); setAvatarOpen(true);}}>
+                  <AgentAvatar agentId={selected.id} revision={avatarRevision} />
+                  <span aria-hidden="true" className="avatar-edit-badge">✎</span>
+                </button>
               </div>
-              {avatarError && <p role="alert">{avatarError}</p>}
-              <p>
-                {selected.type === "langchain"
-                  ? "LangChain · registered"
-                  : selected.type === "langgraph"
-                    ? "Standalone agent"
-                    : selected.type === "support"
-                      ? "Built-in · independent runtime"
-                      : selected.type === "openclaw-direct"
-                        ? "OpenClaw direct"
-                        : "OpenClaw connection"}{" "}
-                · {selected.active ? "Default" : "Not default"}
-              </p>
-              <p>
-                This route is shared by devices. Changing its display name does
-                not change routing or access.
-              </p>
-              <p>
-                Agent ID: <code>{selected.id}</code>
-              </p>
-              <p>
-                {selected.active
-                  ? "Fallback for unassigned devices only. Explicit device assignments and your independent companion selection are unchanged."
-                  : "Not the shared default. Explicit device assignments remain separate."}{" "}
-                Setting the default does not prove the integration is online or
-                ready; check effective voice configuration below and device
-                diagnostics.
-              </p>
-              <IntegrationMetadata metadata={selected.integration_metadata} />
-              {selected.type === "support" && <SupportSettings />}
-              {(selected.type === "langgraph" ||
-                selected.type === "langchain") && (
-                <SupportSettings
-                  key={`runtime-${selected.id}`}
-                  agentId={selected.id}
-                />
-              )}
-              {(selected.type === "langgraph" ||
-                selected.type === "langchain") &&
-                !selected.builtin &&
-                selected.id !== "vauxr-support" && (
-                  <button
-                    disabled={busy || selected.active}
-                    onClick={async () => {
-                      setBusy(true);
-                      setError("");
-                      try {
-                        const response = await ownerFetch(
-                          `/api/local-agents/${encodeURIComponent(selected.id)}`,
-                          { method: "DELETE" },
-                        );
-                        if (response.status === 409)
-                          throw new Error(
-                            "Choose another fallback and unassign all devices before removal.",
-                          );
-                        await jsonResponse(response);
-                        setSelectedId("");
-                        await refresh();
-                        window.dispatchEvent(new Event("agent-route-changed"));
-                      } catch (error) {
-                        setError(
-                          error instanceof Error
-                            ? error.message
-                            : "Removal unavailable; refresh before retrying.",
-                        );
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                  >
-                    Remove agent
-                  </button>
-                )}
               <SpeechSettings
                 key={`voice-${selected.id}`}
                 agentId={selected.id} agentName={selected.name} browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential}
@@ -311,6 +252,97 @@ export default function AgentsPanel({
           )}
         </Modal>
       )}
+      {avatarOpen && selected && <Modal title="Edit agent avatar" className="avatar-editor-modal" returnFocus={avatarReturnFocus}
+        onClose={() => {if (!avatarBusy) setAvatarOpen(false);}}>
+        <p>Choose a PNG, JPEG or WebP image up to 1 MB.</p>
+        <label className="avatar-dropzone" onDragOver={event => event.preventDefault()} onDrop={event => {
+          event.preventDefault(); if (!avatarBusy) void uploadAvatar(event.dataTransfer.files[0]);
+        }}>
+          <AgentAvatar agentId={selected.id} revision={avatarRevision} />
+          <strong>{avatarBusy ? "Uploading…" : "Drop an image here or choose a file"}</strong>
+          <input type="file" aria-label="Choose agent avatar" accept="image/png,image/jpeg,image/webp" disabled={avatarBusy}
+            onChange={event => {const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadAvatar(file);}} />
+        </label>
+        {avatarError && <p role="alert">{avatarError}</p>}
+        <button disabled={avatarBusy} onClick={() => setAvatarOpen(false)}>Cancel</button>
+      </Modal>}
+      {diagnostics && <Modal title="Agent runtime diagnostics" className="agent-detail-modal agent-detail agent-diagnostics-modal"
+        returnFocus={diagnosticsReturnFocus} onClose={() => setDiagnosticsId("")}>
+        <h3>{diagnostics.name}</h3>
+        <p>Provider changes apply to new turns. Reconnect WebRTC after changing providers. Readiness checks availability, not model inference; unavailable providers do not fall back automatically.</p>
+        {error && <p role="alert">{error}</p>}
+        <p>
+          {diagnostics.type === "langchain"
+            ? "LangChain · registered"
+            : diagnostics.type === "langgraph"
+              ? "Standalone agent"
+              : diagnostics.type === "support"
+                ? "Built-in · independent runtime"
+                : diagnostics.type === "openclaw-direct"
+                  ? "OpenClaw direct"
+                  : "OpenClaw connection"}{" "}
+          · {diagnostics.active ? "Default" : "Not default"}
+        </p>
+        <p>
+          This route is shared by devices. Changing its display name does
+          not change routing or access.
+        </p>
+        <p>
+          Agent ID: <code>{diagnostics.id}</code>
+        </p>
+        <p>
+          {diagnostics.active
+            ? "Fallback for unassigned devices only. Explicit device assignments and your independent companion selection are unchanged."
+            : "Not the shared default. Explicit device assignments remain separate."}{" "}
+          Setting the default does not prove the integration is online or
+          ready; check the agent’s voice pipeline and device diagnostics.
+        </p>
+        <IntegrationMetadata metadata={diagnostics.integration_metadata} />
+        {diagnostics.type === "support" && <SupportSettings />}
+        {(diagnostics.type === "langgraph" ||
+          diagnostics.type === "langchain") && (
+          <SupportSettings
+            key={`runtime-${diagnostics.id}`}
+            agentId={diagnostics.id}
+          />
+        )}
+        {(diagnostics.type === "langgraph" ||
+          diagnostics.type === "langchain") &&
+          !diagnostics.builtin &&
+          diagnostics.id !== "vauxr-support" && (
+            <button
+              disabled={busy || diagnostics.active}
+              onClick={async () => {
+                setBusy(true);
+                setError("");
+                try {
+                  const response = await ownerFetch(
+                    `/api/local-agents/${encodeURIComponent(diagnostics.id)}`,
+                    { method: "DELETE" },
+                  );
+                  if (response.status === 409)
+                    throw new Error(
+                      "Choose another fallback and unassign all devices before removal.",
+                    );
+                  await jsonResponse(response);
+                  setDiagnosticsId("");
+                  await refresh();
+                  window.dispatchEvent(new Event("agent-route-changed"));
+                } catch (error) {
+                  setError(
+                    error instanceof Error
+                      ? error.message
+                      : "Removal unavailable; refresh before retrying.",
+                  );
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Remove agent
+            </button>
+          )}
+      </Modal>}
       <p className="text-sm text-zinc-400">
         Connect external agents in Settings → Apps &amp; Integrations.
       </p>

@@ -172,11 +172,11 @@ for (const width of [375, 390])
         await agent
           .getByRole("button", { name: "Save voice configuration" })
           .click();
-        await expect(
-          agent.getByText(`Effective: ${stt} / ${tts} / alternate_voice`, {
-            exact: true,
-          }),
-        ).toBeVisible();
+        await expect(agent.getByLabel("Voice", {exact:true})).toHaveValue("alternate_voice");
+        await expect.poll(async () => {
+          const response = await page.request.get(`${server.origin}/api/agents/${request.agent_id}/speech`);
+          return (await response.json()).effective;
+        }).toMatchObject({stt_backend: stt, tts_backend: tts, voice_id: "alternate_voice"});
         await page.emulateMedia({ reducedMotion: "reduce" });
 
         await page.setViewportSize({ width, height: 844 });

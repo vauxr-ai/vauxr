@@ -52,6 +52,9 @@ for (const width of [390, 1366]) test(`saved profile drives registered runtime a
     await page.getByLabel("Agent name", { exact: true }).fill("Profile household");
     await page.getByRole("button", { name: "Create agent", exact: true }).click();
     console.log(`Profile ${width}: created agent`);
+    await expect(page.getByRole("dialog", {name:"Profile household",exact:true})).toBeVisible();
+    await closeAgentDetail(page);
+    await page.getByRole("button", {name: "Runtime diagnostics for Profile household", exact: true}).click();
     const runtime = page.getByRole("region", { name: "Agent model runtime", exact: true });
     await runtime.getByLabel("Model provider", { exact: true }).selectOption("profile");
     await runtime.getByLabel("Model profile", { exact: true }).selectOption("selected-local");
@@ -68,7 +71,7 @@ for (const width of [390, 1366]) test(`saved profile drives registered runtime a
     await runtime.screenshot({ path: `/tmp/vauxr-b2-integrated-runtime-${width}.png` });
     await server.restart();
     await page.reload();
-    await page.getByRole("button", { name: "View agent Profile household", exact: true }).click();
+    await page.getByRole("button", { name: "Runtime diagnostics for Profile household", exact: true }).click();
     await expect(runtime.getByLabel("Model profile", { exact: true })).toHaveValue("selected-local");
     await closeAgentDetail(page);
     await page.getByRole("button", { name: "Connect browser", exact: true }).click();

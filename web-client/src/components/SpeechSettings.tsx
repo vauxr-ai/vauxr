@@ -326,11 +326,11 @@ export default function SpeechSettings({
             ? "Device speech"
             : "Global speech defaults"}
       </h2>
-      <p className="text-xs text-zinc-400">
+      {!agentId && <p className="text-xs text-zinc-400">
         Global and device selections save immediately; agent provider edits require Save voice configuration. Defaults apply to new turns. Stop voice before changing its agent or
         mode; reconnect WebRTC for provider changes. Voices belong to a
         configured model.
-      </p>
+      </p>}
       {!data && !error && <p role="status">Loading voice configuration…</p>}
       {!data && error && <RefreshButton label="Retry voice configuration" busy={busy} onClick={() => update()} />}
       {busy && <p role="status">Checking voice configuration…</p>}
@@ -613,7 +613,7 @@ export default function SpeechSettings({
           </div>
         </fieldset>
       )}
-      {shownMode === "realtime" && data && !chatOnly && (
+      {!agentId && shownMode === "realtime" && data && !chatOnly && (
         <p className="text-sm speech-selection">
           {agentId && hasProviderDraft ? "Draft Live:" : "Effective Live:"}{" "}
           {liveBackend || "unconfigured"} /{" "}
@@ -621,16 +621,16 @@ export default function SpeechSettings({
           {liveVoice || "unconfigured"}
         </p>
       )}
-      {shownMode !== "realtime" && effective && !chatOnly && (
+      {!agentId && shownMode !== "realtime" && effective && !chatOnly && (
         <p className="text-sm">
           Effective: {effective.stt_backend} / {effective.tts_backend} /{" "}
           {effective.voice_id}
         </p>
       )}
-      <p className="text-xs text-zinc-500">
+      {!agentId && <p className="text-xs text-zinc-500">
         Readiness checks provider availability, not model inference. Unavailable
         providers do not fall back automatically.
-      </p>
+      </p>}
     </section>
   );
 }

@@ -366,9 +366,8 @@ it("stages a disabled Live provider and saves provider, voice, enablement and de
     target: { value: "ash" },
   });
   expect(fetcher).toHaveBeenCalledTimes(1); // Provider preparation is not an enablement request.
-  expect(
-    screen.getByText("Draft Live: live-provider / live-model / ash"),
-  ).toBeVisible();
+  expect(screen.getByLabelText("Realtime provider / model")).toHaveValue("live-provider");
+  expect(screen.getByLabelText("Realtime voice")).toHaveValue("ash");
   fireEvent.click(screen.getByLabelText("Enable Standard"));
   fireEvent.click(screen.getByLabelText("Enable Live"));
   fireEvent.click(screen.getByRole("switch", {name: "Default Live"}));
@@ -424,9 +423,9 @@ it("stages a disabled Live provider and saves provider, voice, enablement and de
   await waitFor(() =>
     expect(screen.queryByText(/Unsaved provider changes/)).toBeNull(),
   );
-  expect(
-    screen.getByText("Effective Live: live-provider / live-model / ash"),
-  ).toBeVisible();
+  expect(screen.getByLabelText("Realtime provider / model")).toHaveValue("live-provider");
+  expect(screen.getByLabelText("Realtime voice")).toHaveValue("ash");
+  expect(screen.getByRole("switch", {name: "Default Live"})).toBeChecked();
 });
 
 const previewPolicy = {
