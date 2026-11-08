@@ -43,7 +43,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
       const companion = page.locator("#voice-companion");
       await expect(companion.getByLabel("Conversation agent")).toBeEnabled();
       await companion.getByLabel("Conversation agent").selectOption(`int_${request.request_id}`);
-      await expect(companion.getByLabel("Proposed display name")).toBeEnabled();
+      await expect(companion.getByLabel("Display name", { exact: true })).toBeEnabled();
       await expect(companion.getByRole("button", { name: /Hold to Talk|Start listening/i })).toHaveCount(0);
       await expect(companion.getByRole("slider", { name: "Output volume" })).toHaveCount(0);
       await expect(companion.getByText("Chat-only · Voice unavailable", { exact: true })).toBeVisible();
