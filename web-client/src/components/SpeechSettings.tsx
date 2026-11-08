@@ -318,10 +318,9 @@ export default function SpeechSettings({
     {error && <p role="alert">{error}</p>}
     {data?.error && <p role="alert">{data.error}</p>}
     {data?.policy?.conflict && <p role="alert">{data.policy.conflict}</p>}
-    {saved && <p role="status">{saved}</p>}
     {!data && error && <RefreshButton label="Retry voice configuration" busy={busy} onClick={() => void update()}/>}
     {data?.policy && defaults && <AgentPipelineEditor key={agentId} agentId={agentId} agentType={agentType} agentName={agentName || agentId}
-      policy={data.policy} defaults={defaults} backends={data.backends} busy={busy} mode={shownMode} onModeChange={setEditMode}
+      policy={data.policy} defaults={defaults} backends={data.backends} hasProviderDraft={Object.keys(providerDraft).length > 0} saved={saved} busy={busy} mode={shownMode} onModeChange={setEditMode}
       onDraft={patch => void update(patch)} onSave={patch => update({...providerDraft, ...patch})} onRefresh={() => void update()}
       preview={<div className="speech-preview">
         <button type="button" disabled={!canPreview || previewBusy} onClick={() => void testVoice()} aria-label="Test selected voice"><svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18"><path d="M11 4 5 9H2v6h3l6 5V4Zm4 4c3 2 3 6 0 8m3-11c5 4 5 10 0 14" fill="none" stroke="currentColor" strokeWidth="2"/></svg> Test</button>

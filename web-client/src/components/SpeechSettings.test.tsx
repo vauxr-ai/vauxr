@@ -554,3 +554,14 @@ it("stages an agent model profile with voice settings, reports partial save and 
   await screen.findByText(/Pipeline configuration saved/);
   expect(screen.queryByText(/agent model profile was saved, but voice settings were not/)).toBeNull();
 });
+
+
+it("does not leave a saved confirmation on a newly changed graph policy", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ok:true,json:async()=>({...view,policy:previewPolicy})}));
+  render(<SpeechSettings agentId="agent"/>);
+  fireEvent.click(await screen.findByRole("button", {name:"Save pipeline configuration"}));
+  await screen.findByText(/Pipeline configuration saved/);
+  fireEvent.click(screen.getByRole("button", {name:"Enable Standard"}));
+  expect(screen.getByText("Unsaved pipeline changes.")).toBeVisible();
+  expect(screen.queryByText(/Pipeline configuration saved/)).toBeNull();
+});

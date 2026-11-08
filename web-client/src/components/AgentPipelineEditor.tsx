@@ -63,7 +63,8 @@ function EntityPopover({anchor, title, children, onClose}: {anchor: HTMLButtonEl
   </div>, anchor.closest("dialog") || document.body);
 }
 
-export default function AgentPipelineEditor({agentId, agentType, agentName, policy, defaults, backends, busy, mode, onModeChange, onDraft, onSave, onRefresh, preview}: {
+export default function AgentPipelineEditor({agentId, agentType, agentName, policy, defaults, backends, busy, mode, onModeChange, onDraft, onSave, onRefresh, preview, hasProviderDraft, saved}: {
+  hasProviderDraft: boolean; saved: string;
   agentId: string; agentType?: string; agentName: string; policy: Policy; defaults: Defaults; backends: Backend[]; busy: boolean; mode: string;
   onModeChange: (mode: string) => void; onDraft: (patch: Partial<Defaults>) => void; onSave: (patch: object) => Promise<boolean | undefined>; onRefresh: () => void; preview: ReactNode;
 }) {
@@ -77,6 +78,7 @@ export default function AgentPipelineEditor({agentId, agentType, agentName, poli
   const [runtimeError, setRuntimeError] = useState("");
   const [runtimeLoading, setRuntimeLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const dirty = hasProviderDraft || profileDraft !== null || JSON.stringify(enabled) !== JSON.stringify(policy.enabled_modes) || defaultMode !== policy.default_mode;
   const local = ["support", "langgraph", "langchain"].includes(agentType || "");
   const runtimePath = agentType === "support" ? "/api/support" : `/api/local-agents/${encodeURIComponent(agentId)}/runtime`;
   useEffect(() => { setEnabled(policy.enabled_modes); setDefaultMode(policy.default_mode); }, [policy]);
@@ -130,6 +132,7 @@ export default function AgentPipelineEditor({agentId, agentType, agentName, poli
     </fieldset>
     {!enabled.length && <p role="status">Chat-only · No voice modes enabled.</p>}
     {runtimeError && <p role="alert">{runtimeError}</p>}
+    {dirty ? <p role="status">Unsaved pipeline changes.</p> : saved && <p role="status">{saved}</p>}
     <footer className="pipeline-save"><button type="button" className="button-primary" disabled={busy || saving || !!enabled.length && !enabled.includes(defaultMode || "")} onClick={() => void save()}>{saving ? "Saving…" : "Save pipeline configuration"}</button></footer>
     {open && <EntityPopover anchor={open.anchor} title={`${titles[open.kind]} settings`} onClose={() => setOpen(null)}>
       {open.kind === "agent" ? !local ? <p>This agent’s model is managed by its enrolled integration. Model choices are configured there.</p> : <>
