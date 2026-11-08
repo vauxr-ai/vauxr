@@ -10,6 +10,16 @@ import RefreshButton from "./RefreshButton";
 import AgentAvatar from "./AgentAvatar";
 import SpeechSettings from "./SpeechSettings";
 
+/** Selecting an action dismisses its menu; dialogs return to the visible trigger. */
+function dismissActionMenu(button: HTMLButtonElement): HTMLElement {
+  const menu = button.closest<HTMLDetailsElement>("details.agent-actions");
+  if (!menu) return button;
+  const actions = menu.querySelector<HTMLElement>(".agent-actions-list");
+  if (actions) actions.inert = true;
+  menu.open = false;
+  return menu.querySelector<HTMLElement>("summary") || button;
+}
+
 export default function AgentsPanel({
   onContext,
   onSelection,
@@ -22,14 +32,14 @@ export default function AgentsPanel({
   const api = useAgents();
   const runtimeTabsId = useId();
   const [runtimeTab, setRuntimeTab] = useState("configuration");
-  const deleteReturnFocus = useRef<HTMLButtonElement>(null);
+  const deleteReturnFocus = useRef<HTMLElement>(null);
   const [deleteId,setDeleteId]=useState("");
   const [deleteError,setDeleteError]=useState("");
   const [deleting,setDeleting]=useState(false);
-  const voiceReturnFocus = useRef<HTMLButtonElement>(null);
+  const voiceReturnFocus = useRef<HTMLElement>(null);
   const [voiceId, setVoiceId] = useState("");
   const avatarReturnFocus = useRef<HTMLButtonElement>(null);
-  const diagnosticsReturnFocus = useRef<HTMLButtonElement>(null);
+  const diagnosticsReturnFocus = useRef<HTMLElement>(null);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [diagnosticsId, setDiagnosticsId] = useState("");
   const [editingName, setEditingName] = useState(false);
@@ -241,16 +251,16 @@ export default function AgentsPanel({
                   if (actions) actions.inert = menu.open;
                 }}>⋯</summary><div className="agent-actions-list">
                 <button className="agent-route-action" aria-label={`Voice pipeline for ${agent.name}`}
-                  onClick={event => {(voiceReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setVoiceId(agent.id);}}><Icon name="agents" size={20}/>Voice pipeline</button>
+                  onClick={event => {(voiceReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setVoiceId(agent.id);}}><Icon name="agents" size={20}/>Voice pipeline</button>
                 <button className="agent-route-action" aria-label={`Runtime settings for ${agent.name}`} title="Agent runtime settings"
-                  onClick={event => { (diagnosticsReturnFocus as {current: HTMLButtonElement | null}).current = event.currentTarget; setError(""); setDiagnosticsId(agent.id); }}><Icon name="settings" size={20}/>Runtime settings</button>
+                  onClick={event => { (diagnosticsReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setError(""); setDiagnosticsId(agent.id); }}><Icon name="settings" size={20}/>Runtime settings</button>
                 <span className="agent-action-tooltip-trigger"
                   tabIndex={agent.active || agent.builtin ? 0 : undefined}
                   aria-label={agent.active || agent.builtin ? `Delete ${agent.name} unavailable` : undefined}
                   aria-describedby={agent.active || agent.builtin ? `delete-reason-${agent.id}` : undefined}
                   onPointerDown={event => { if (agent.active || agent.builtin) event.currentTarget.focus(); }}>
                   <button type="button" className="agent-delete-action" disabled={agent.active || agent.builtin || busy} onClick={event => {
-                    (deleteReturnFocus as {current:HTMLButtonElement|null}).current=event.currentTarget; setDeleteId(agent.id); setDeleteError("");
+                    (deleteReturnFocus as {current:HTMLElement|null}).current=dismissActionMenu(event.currentTarget); setDeleteId(agent.id); setDeleteError("");
                   }}><Icon name="trash" size={20}/>Delete agent</button>
                   {(agent.active || agent.builtin) && <span role="tooltip" className="agent-action-tooltip" id={`delete-reason-${agent.id}`}>
                     {agent.active ? "Set another agent as default first" : "Bundled agent cannot be deleted"}

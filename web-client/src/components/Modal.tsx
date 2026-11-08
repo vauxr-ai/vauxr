@@ -11,7 +11,7 @@ export default function Modal({
   title: string;
   children: ReactNode;
   onClose: () => void;
-  returnFocus: RefObject<HTMLButtonElement>;
+  returnFocus: RefObject<HTMLElement>;
   titleContent?: ReactNode; headerAction?: ReactNode; className?: string;
 }) {
   const titleId = useId();

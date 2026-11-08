@@ -41,7 +41,7 @@ for(const width of [390,1366]) for(const theme of ['light','dark']) {
     await expect(pipeline.getByRole('tab',{name:'Standard',exact:true}).locator('svg.pipeline-default-check')).toHaveCount(1);
     await pipeline.getByRole('button',{name:'Save pipeline configuration',exact:true}).click();
     await expect(pipeline).toHaveCount(0);
-    await expect(page.getByRole('button',{name:'Voice pipeline for Retry Support',exact:true})).toBeFocused();
+    await expect(page.getByLabel('Actions for Retry Support',{exact:true})).toBeFocused();
   });
 }
 
@@ -71,6 +71,8 @@ test('deleting an enrolled agent revokes its credential and survives restart',as
   const modal=page.getByRole('dialog',{name:'Delete agent',exact:true});
   await modal.getByRole('button',{name:'Cancel',exact:true}).click();
   await expect(card).toBeVisible();
+  await expect(card.locator('summary')).toBeFocused();
+  await card.locator('summary').click();
   await card.getByRole('button',{name:'Delete agent',exact:true}).click();
   await modal.getByRole('button',{name:'Delete agent',exact:true}).click();
   console.log('Deletion fixture: delete requested');

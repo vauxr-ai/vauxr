@@ -157,7 +157,7 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       await voice.getByRole('button',{name:'Default Standard',exact:true}).click();
       await voice.getByRole('button',{name:'Save pipeline configuration'}).click();
       await expect(modal).toHaveCount(0);
-      await expect(page.getByRole('button',{name:`Voice pipeline for ${renamed}`,exact:true})).toBeFocused();
+      await expect(page.getByLabel(`Actions for ${renamed}`,{exact:true})).toBeFocused();
       await page.reload();
       await expect.poll(() => savedRow.locator('.agent-avatar img').evaluateAll(images => images.length>0 && images.every(i=>(i as HTMLImageElement).naturalWidth>0))).toBe(true);
       const avatar = await page.request.get(`${server.origin}/api/agents/${agentId}/avatar`);
@@ -207,7 +207,7 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       await page.screenshot({path:resolve(artifactDir,`agent-editor-${width}-${theme}.png`)});
       await expect(voice).toBeVisible();
       await page.keyboard.press('Escape');
-      const diagnosticsTrigger = page.getByRole('button',{name:`Runtime settings for ${renamed}`,exact:true});
+      const diagnosticsTrigger = page.getByLabel(`Actions for ${renamed}`,{exact:true});
       await openAgentAction(page, `Runtime settings for ${renamed}`);
       const diagnostics = page.getByRole('dialog',{name:'Agent runtime settings',exact:true});
       for (let n = 0; n < 6; n++) {

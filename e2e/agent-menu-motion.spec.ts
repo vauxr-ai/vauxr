@@ -85,6 +85,16 @@ for (const width of [390,1366]) for (const theme of ['light','dark']) {
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
     await expect(primary).toBeFocused();
+    await summary.click();
+    await menu.getByRole('button',{name:'Runtime settings for Vauxr Support',exact:true}).click();
+    const runtime=page.getByRole('dialog',{name:'Agent runtime settings',exact:true});
+    await expect(runtime).toBeVisible();
+    await expect(row.locator('details')).not.toHaveAttribute('open','');
+    await page.keyboard.press('Escape');
+    await expect(summary).toBeFocused();
+    await row.getByRole('button',{name:'Edit agent name',exact:true}).click();
+    await expect(page.getByLabel('Agent name',{exact:true})).toBeVisible();
+    await page.getByRole('button',{name:'Cancel name edit',exact:true}).click();
   });
 }
 
@@ -102,5 +112,5 @@ test('reduced motion disables surface, tooltip and control effects',async({page,
   const primary=dialog.getByRole('button',{name:'Save pipeline configuration',exact:true});
   expect(await primary.evaluate(el=>getComputedStyle(el).transitionDuration)).toBe('0s');
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('button',{name:'Voice pipeline for Vauxr Support',exact:true})).toBeFocused();
+  await expect(page.getByLabel('Actions for Vauxr Support',{exact:true})).toBeFocused();
 });
