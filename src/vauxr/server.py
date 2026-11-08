@@ -675,8 +675,6 @@ async def _startup(app: web.Application) -> None:
             log.error("Failed to connect to OpenClaw: %s", e)
             log.error("Server will start but openclaw-direct will fail until OpenClaw reconnects")
             state.openclaw_client = client
-    elif not cfg.openclaw.url:
-        log.info("OPENCLAW_URL not set — openclaw-direct agent unavailable")
 
 
 async def _cleanup(app: web.Application) -> None:
