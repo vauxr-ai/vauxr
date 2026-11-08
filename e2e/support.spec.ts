@@ -1,4 +1,4 @@
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test, expect, login, closeAgentDetail } from "./auth-fixture";
 for (const width of [390, 1366]) test(`built-in Support is independent and honest without runtime at ${width}`, async ({ page, server }) => {
@@ -38,13 +38,13 @@ test("pipeline model radio selection persists through the authenticated runtime 
   await page.getByRole("button", {name:"Edit Vauxr Support",exact:true}).click();
   const entity = page.getByRole("dialog", {name:"Vauxr Support settings",exact:true});
   await entity.getByRole("radio", {name:/Pipeline local model/}).check();
-  expect(existsSync(resolve(server.data,"local-agent-models.json")) ? readFileSync(resolve(server.data,"local-agent-models.json"),"utf8") : "").not.toContain("pipeline-local");
+  expect(await (await page.request.get(`${server.origin}/api/local-agents/vauxr-support/runtime`)).json()).not.toHaveProperty("profile_id", "pipeline-local");
   await page.keyboard.press("Escape");
   const runtimeWrite = page.waitForResponse(response => response.url().endsWith("/api/local-agents/vauxr-support/runtime") && response.request().method()==="POST");
   await page.getByRole("button", {name:"Save pipeline configuration",exact:true}).click();
   expect((await runtimeWrite).status()).toBe(200);
   await expect(page.getByText(/Pipeline configuration saved/)).toBeVisible();
-  expect(JSON.parse(readFileSync(resolve(server.data,"local-agent-models.json"),"utf8"))["vauxr-support"]).toEqual({profile_id:"pipeline-local"});
+  expect(await (await page.request.get(`${server.origin}/api/local-agents/vauxr-support/runtime`)).json()).toMatchObject({profile_id:"pipeline-local"});
   await server.restart(); await page.reload();
   await page.getByRole("button", {name:"Voice pipeline for Vauxr Support",exact:true}).click();
   await page.getByRole("button", {name:"Edit Vauxr Support",exact:true}).click();
