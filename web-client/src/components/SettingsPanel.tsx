@@ -1,3 +1,4 @@
+import PluginsPanel from "./PluginsPanel";
 import AccessPanel from "./AccessPanel";
 import SpeechSettings from "./SpeechSettings";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -218,6 +219,7 @@ export default function SettingsPanel({ wsUrl, token, wsState: _wsState, addLog,
     <div className="administration space-y-4">
       <nav aria-label="Settings sections" className="settings-sections">
         <a href="#voice-defaults">Voice providers/defaults</a>
+        <a href="#plugins">Plugins</a>
         <a href="#pairing-access">Pairing &amp; Access</a>
         <a href="#webhooks">Webhooks</a>
       </nav>
@@ -226,6 +228,7 @@ export default function SettingsPanel({ wsUrl, token, wsState: _wsState, addLog,
         <p>Choose from server-configured providers. Add providers and credentials in server configuration; this page does not install plugins or edit provider credentials.</p>
         <SpeechSettings />
       </section>
+      <PluginsPanel />
       <section id="pairing-access" tabIndex={-1} aria-label="Pairing and access"><AccessPanel /></section>
     <section id="webhooks" tabIndex={-1} aria-label="Webhooks" className="card overflow-hidden">
       <div className="flex flex-wrap gap-3 items-center justify-between border-b border-white/5 px-5 py-3">
