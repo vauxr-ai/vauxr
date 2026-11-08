@@ -12,7 +12,7 @@ for (const width of [390, 1366]) test(`implemented plugin package download at ${
   const archive = await page.request.get(server.origin+entry.download);
   expect(archive.status()).toBe(200);
   expect(createHash("sha256").update(await archive.body()).digest("hex")).toBe(entry.sha256);
-  await expect(plugins).toContainText("Pipecat and LangGraph integration plugins are not available");
+  await expect(plugins).toContainText("Pipecat integration plugin is not available");
   await plugins.scrollIntoViewIfNeeded();
   await page.screenshot({path:`/tmp/vauxr-plugins-${width}.png`,fullPage:true});
 });

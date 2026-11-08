@@ -17,7 +17,7 @@ from vauxr.config_files import invalid, read_json, update_json
 if TYPE_CHECKING:
     from vauxr.auth.store import CredentialStore
 
-AgentType = Literal["openclaw", "openclaw-direct", "support"]
+AgentType = Literal["openclaw", "openclaw-direct", "support", "langgraph"]
 
 
 @dataclass
@@ -69,7 +69,7 @@ def _decode(data: object, path: Path) -> tuple[list[Agent], str]:
             )
         if (
             not all(isinstance(row[key], str) and row[key] for key in ("id", "name", "createdAt"))
-            or row["type"] not in ("openclaw", "openclaw-direct", "support")
+            or row["type"] not in ("openclaw", "openclaw-direct", "support", "langgraph")
             or type(row.get("integration", False)) is not bool
             or ("builtin" in row and type(row["builtin"]) is not bool)
         ):

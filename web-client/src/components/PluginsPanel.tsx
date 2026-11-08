@@ -16,7 +16,7 @@ export default function PluginsPanel() {
     {!plugins.length && !error && <p role="status">Loading plugins…</p>}
     {plugins.map(plugin => <section key={plugin.id} aria-label={`${plugin.name} plugin`} className="space-y-2">
       <h3>{plugin.name}</h3>
-      {plugin.distribution === "builtin" ? <p>Built in and enabled. Configure its independent runtime in Agents → Vauxr Support.</p> : <>
+      {plugin.distribution === "builtin" ? <p>Built in and enabled. Configure its independent runtime in Agents → Vauxr Support.</p> : plugin.distribution === "bundled" ? <p>Included standalone integration. Add a named LangGraph agent in Agents, configure its own local model runtime, and configure named household webhook actions in Settings.</p> : <>
         <p>Available package · source revision <code className="break-all">{plugin.revision}</code></p>
         <a href={plugin.download} download={plugin.filename}>Download OpenClaw plugin</a>
         <p>Install the downloaded archive in your OpenClaw runtime:</p>
@@ -26,6 +26,6 @@ export default function PluginsPanel() {
         <a href={plugin.source} target="_blank" rel="noreferrer">Inspect package source</a>
       </>}
     </section>)}
-    <p>Pipecat and LangGraph integration plugins are not available in this catalog yet.</p>
+    <p>The Pipecat integration plugin is not available in this catalog yet.</p>
   </section>;
 }

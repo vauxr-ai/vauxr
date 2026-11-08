@@ -18,6 +18,7 @@ classifiers = [
 dependencies = [
     "aiohttp>=3.10",
     "nh3==0.3.7",
+    "langgraph==1.2.20",
     "pydantic>=2.7",
     "bcrypt>=4.1",
     "cryptography>=42",

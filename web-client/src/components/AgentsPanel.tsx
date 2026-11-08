@@ -1,3 +1,4 @@
+import { ownerFetch, jsonResponse } from "../auth/api";
 import SupportSettings from "./SupportSettings";
 import IntegrationMetadata from "./IntegrationMetadata";
 import IntegrationEnrollment from "./IntegrationEnrollment";
@@ -19,6 +20,7 @@ export default function AgentsPanel({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [selectedId, setSelectedId] = useState("");
+  const [localName,setLocalName] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [saved, setSaved] = useState("");
   const selected = agents.find((agent) => agent.id === selectedId);
@@ -120,7 +122,7 @@ export default function AgentsPanel({
                     </button>
                   </h3>
                   <p>
-                    {agent.type === "support" ? "Built-in · independent runtime" : agent.type === "openclaw-direct"
+                    {agent.type === "langgraph" ? "LangGraph · standalone" : agent.type === "support" ? "Built-in · independent runtime" : agent.type === "openclaw-direct"
                       ? "OpenClaw direct"
                       : "OpenClaw connection"}
                   </p>
@@ -148,7 +150,7 @@ export default function AgentsPanel({
             <>
               <h2>{selected.name}</h2>
               <p>
-                {selected.type === "support" ? "Built-in · independent runtime" : selected.type === "openclaw-direct"
+                {selected.type === "langgraph" ? "LangGraph · standalone" : selected.type === "support" ? "Built-in · independent runtime" : selected.type === "openclaw-direct"
                   ? "OpenClaw direct"
                   : "OpenClaw connection"}{" "}
                 · {selected.active ? "Active route" : "Inactive route"}
@@ -163,7 +165,13 @@ export default function AgentsPanel({
               <p>{selected.active ? "Fallback for unassigned devices only. Explicit device assignments and your independent companion selection are unchanged." : "Inactive as the shared fallback. Explicit device assignments remain separate."} Route activation does not prove the integration is online or ready; check effective voice configuration below and device diagnostics.</p>
               <IntegrationMetadata metadata={selected.integration_metadata} />
               {selected.type === "support" && <SupportSettings />}
-              <SpeechSettings key={selected.id} agentId={selected.id} />
+              {selected.type === "langgraph" && <SupportSettings key={`runtime-${selected.id}`} agentId={selected.id} />}
+              {selected.type === "langgraph" && <button disabled={busy || selected.active} onClick={async()=>{setBusy(true);setError("");
+                try {const response=await ownerFetch(`/api/local-agents/${encodeURIComponent(selected.id)}`,{method:"DELETE"});
+                  if(response.status===409)throw new Error("Choose another fallback and unassign all devices before removal.");
+                  await jsonResponse(response);setSelectedId("");await refresh();window.dispatchEvent(new Event("agent-route-changed"));
+                }catch(error){setError(error instanceof Error?error.message:"Removal unavailable; refresh before retrying.");}finally{setBusy(false);}}}>Remove local agent</button>}
+              <SpeechSettings key={`voice-${selected.id}`} agentId={selected.id} />
               <form
                 onSubmit={async (event) => {
                   event.preventDefault();
@@ -233,9 +241,20 @@ export default function AgentsPanel({
           </button>
         </section>
       )}
+      <section className="card auth-panel p-5" aria-label="Add local agent">
+        <h2>Add local agent</h2>
+        <p>LangGraph runs independently inside Vauxr with its own configured local model and named household webhook actions. Standard voice and text are supported; Live is not advertised for this integration.</p>
+        <form className="grid gap-3" onSubmit={async event=>{event.preventDefault();setBusy(true);setError("");
+          try {const created=await jsonResponse(await ownerFetch("/api/local-agents",{method:"POST",body:JSON.stringify({framework:"langgraph",name:localName})}));
+            await refresh();setSelectedId(created.id);setNameDraft(created.name);setLocalName("");
+          } catch {setError("Create failed or outcome uncertain. Refresh agents before retrying.");}finally{setBusy(false);}}}>
+          <label>Local agent name<input value={localName} onChange={e=>setLocalName(e.target.value)} required maxLength={120} disabled={busy}/></label>
+          <button disabled={busy||!localName.trim()}>Add LangGraph agent</button>
+        </form>
+      </section>
       <section className="card auth-panel enrollment-section">
         <h2>Connect an agent</h2>
-        <p>OpenClaw enrollment is the supported connection workflow. Start enrollment in your OpenClaw Vauxr integration; this page approves its request rather than creating an agent or installing a plugin.</p>
+        <p>For OpenClaw, start enrollment in its Vauxr plugin and approve the matching request here. Local LangGraph agents use Add local agent above. Plugin packages are available in Settings.</p>
         <p>OpenClaw Direct, when configured by the server operator, is an existing alternative route. No connection, credential or plugin editor is available here.</p>
         <p>
           Approve an integration request from OpenClaw. Credentials are managed

@@ -1,0 +1,79 @@
+"""Owner administration for implemented local integrations, without credential minting."""
+from __future__ import annotations
+
+import asyncio
+import json
+import secrets
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict
+from datetime import UTC, datetime
+from pathlib import Path
+
+from aiohttp import web
+
+from vauxr import companion
+from vauxr.agents import registry
+from vauxr.agents.support import EMPTY, validate
+from vauxr.config import get_config
+from vauxr.config_files import unique_object, update_json
+from vauxr.web.owner import session_principal
+
+
+def attach_local_agents(
+    app: web.Application,
+    boundary: Callable[[Callable[[web.Request], Awaitable[web.StreamResponse]]], Callable[[web.Request], Awaitable[web.StreamResponse]]],
+) -> None:
+    async def handle(request: web.Request) -> web.Response:
+        if session_principal(request) is None:
+            return web.json_response({"error":"unauthorized"}, status=401)
+        try:
+            if request.query_string:
+                raise ValueError()
+            body = {}
+            if request.method == "POST":
+                if request.content_type != "application/json":
+                    raise ValueError()
+                async with asyncio.timeout(10):
+                    raw = await request.content.read(4097)
+                if len(raw) > 4096:
+                    raise ValueError()
+                body = json.loads(raw, object_pairs_hook=unique_object)
+                if not isinstance(body, dict):
+                    raise ValueError()
+            agent_id = request.match_info.get("agent_id")
+            if agent_id is None:
+                if set(body) != {"framework", "name"} or body["framework"] != "langgraph":
+                    raise ValueError()
+                name = body["name"]
+                if not companion._safe_name(name):
+                    raise ValueError()
+                agent = registry.Agent(secrets.token_hex(16), name.strip(), "langgraph", False, datetime.now(UTC).isoformat())
+                registry.register(agent)
+                return web.json_response(asdict(agent), status=201, headers={"Cache-Control":"no-store"})
+            agent = registry.get_by_id(agent_id)
+            if agent is None or agent.type != "langgraph":
+                return web.json_response({"error":"Local LangGraph agent not found"}, status=404)
+            path = Path(get_config().data_dir) / "local-agent-models.json"
+            if request.method == "DELETE":
+                from vauxr.speech.store import get_store
+                store = get_store()
+                if agent.active or agent_id in store.assignments.values():
+                    return web.json_response({"error":"Choose another fallback and unassign all devices before removal"}, status=409)
+                registry.remove(agent_id)
+                if path.exists():
+                    update_json(path, lambda current: {k:v for k,v in current.items() if k != agent_id})
+                return web.json_response({"removed":True})
+            if request.method == "POST":
+                config = validate(body)
+                update_json(path, lambda current: {**current,agent_id:config})
+            from vauxr.agents.langgraph import settings
+            config = settings(agent_id)
+            return web.json_response({**config,"status":"configured" if config != EMPTY else "setup_needed"}, headers={"Cache-Control":"no-store"})
+        except (ValueError, TypeError, KeyError, TimeoutError):
+            return web.json_response({"error":"Use a supported local framework, valid display name and explicit local runtime settings"}, status=400)
+        except OSError:
+            return web.json_response({"error":"Save unavailable; reload before retrying"}, status=503)
+    app.router.add_post("/api/local-agents", boundary(handle))
+    app.router.add_get("/api/local-agents/{agent_id}/runtime", boundary(handle))
+    app.router.add_post("/api/local-agents/{agent_id}/runtime", boundary(handle))
+    app.router.add_delete("/api/local-agents/{agent_id}", boundary(handle))

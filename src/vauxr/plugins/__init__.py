@@ -23,7 +23,7 @@ def catalog() -> list[dict[str, str]]:
         "source": "https://github.com/vauxr-ai/vauxr-openclaw/tree/" + REVISION,
         "sha256": hashlib.sha256(package()).hexdigest(), "download": "/api/plugins/openclaw/package",
         "filename": "vauxr-openclaw-d2d90992.tgz",
-    }]
+    }, {"id":"langgraph", "name":"LangGraph", "distribution":"bundled"}]
 
 
 def attach_plugins(
