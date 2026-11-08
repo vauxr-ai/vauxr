@@ -9,8 +9,8 @@ from aiohttp import web
 
 from vauxr.web.owner import session_principal
 
-REVISION = "d2d90992ee012072758a6742e0177f86bf69eb0e"
-PACKAGE = "openclaw-d2d90992.tgz"
+REVISION = "9b3b0f5fca46b536aa69d258c2ec161ad2698b2a"
+PACKAGE = "openclaw-9b3b0f5f.tgz"
 
 
 def package() -> bytes:
@@ -22,7 +22,7 @@ def catalog() -> list[dict[str, str]]:
         "id": "openclaw", "name": "OpenClaw", "distribution": "archive", "revision": REVISION,
         "source": "https://github.com/vauxr-ai/vauxr-openclaw/tree/" + REVISION,
         "sha256": hashlib.sha256(package()).hexdigest(), "download": "/api/plugins/openclaw/package",
-        "filename": "vauxr-openclaw-d2d90992.tgz",
+        "filename": "vauxr-openclaw-9b3b0f5f.tgz",
     }, {"id":"langgraph", "name":"LangGraph", "distribution":"bundled"}]
 
 
@@ -37,7 +37,7 @@ def attach_plugins(
             return web.json_response({"error": "invalid request"}, status=400)
         if request.path.endswith("/package"):
             return web.Response(body=package(), content_type="application/gzip", headers={
-                "Content-Disposition": 'attachment; filename="vauxr-openclaw-d2d90992.tgz"',
+                "Content-Disposition": 'attachment; filename="vauxr-openclaw-9b3b0f5f.tgz"',
                 "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
             })
         return web.json_response(catalog(), headers={"Cache-Control": "no-store"})

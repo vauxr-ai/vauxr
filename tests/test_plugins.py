@@ -16,7 +16,7 @@ def test_pinned_package_manifest_and_bounded_contents():
     archive = plugins.package()
     entry = plugins.catalog()[1]
     assert entry["sha256"] == hashlib.sha256(archive).hexdigest()
-    assert entry["revision"] == "d2d90992ee012072758a6742e0177f86bf69eb0e"
+    assert entry["revision"] == "9b3b0f5fca46b536aa69d258c2ec161ad2698b2a"
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         names = tar.getnames()
         assert len(names) == 17
