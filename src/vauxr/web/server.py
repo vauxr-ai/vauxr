@@ -605,6 +605,8 @@ def attach_http_routes(app: web.Application) -> None:
     attach_companion(app, transport_boundary)
     from vauxr.agents.support import attach_support
     attach_support(app, transport_boundary)
+    from vauxr.plugins import attach_plugins
+    attach_plugins(app, transport_boundary)
     attach_enrollment(app)
     attach_lifecycle(app)
     attach_integration(app)
