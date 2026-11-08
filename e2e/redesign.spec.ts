@@ -357,8 +357,9 @@ test("agent names persist independently of shared routing and credentials", asyn
     await closeAgentDetail(page);
     await page.getByRole("button", { name: "Devices", exact: true }).click();
     await page.getByText(device.device_id, { exact: true }).first().click();
-    await page.getByLabel("Name", { exact: true }).fill("Kitchen speaker");
-    await page.getByLabel("Name", { exact: true }).blur();
+    await page.getByRole("button", {name:"Edit device name"}).click();
+    await page.getByLabel("Device name", { exact: true }).fill("Kitchen speaker");
+    await page.getByLabel("Device name", { exact: true }).blur();
     await expect(page.locator(".context-chip")).toHaveText(
       "Viewing Kitchen speaker",
     );

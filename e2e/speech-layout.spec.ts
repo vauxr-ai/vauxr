@@ -218,9 +218,9 @@ for (const width of [375, 390]) {
       await device
         .getByLabel("Voice mode", { exact: true })
         .selectOption("realtime");
-      await expect(device.getByLabel("Realtime voice")).toHaveValue("");
+      await expect(device.getByRole("combobox", {name:"Realtime voice",exact:true})).toHaveValue("");
       await expect(
-        device.getByLabel("Realtime voice"),
+        device.getByRole("combobox", {name:"Realtime voice",exact:true}),
       ).toContainText(`Use agent default (${liveVoice})`);
       await expectInsideSpeechCard(device);
       await capture(page, `${width}-${theme}-device-realtime`, device);
