@@ -21,7 +21,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.ws.state = "connected";
   mocks.audio.startCapture.mockResolvedValue(undefined);
-  mocks.request.mockResolvedValue({ ok: true, json: async () => ({ voice: { mode: "standard" } }) });
+  mocks.request.mockImplementation(async (path: string) => ({ ok: true, json: async () => path === "/api/agents" ? [] : ({ voice: { mode: "standard" } }) }));
   vi.stubGlobal("isSecureContext", true);
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: vi.fn() });
   Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: vi.fn() } });

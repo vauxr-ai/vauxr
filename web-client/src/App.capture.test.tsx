@@ -20,6 +20,7 @@ it.each(["reject", "resolve"])("stale capture %s cannot stop a newer capture aft
   mocks.ws.state = "connected";
   mocks.audio.startCapture.mockReturnValueOnce(pending).mockResolvedValueOnce(undefined);
   const view = render(<App />);
+  fireEvent.click(screen.getByRole("button", { name: "Expand voice companion" }));
   fireEvent.click(screen.getByText("Start"));
   mocks.ws.state = "disconnected";
   view.rerender(<App />);

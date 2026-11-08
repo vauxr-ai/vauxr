@@ -1,11 +1,9 @@
+import Appearance, { useAppearance } from "./Appearance";
+import { useOwnerActions } from "../auth/OwnerGate";
 import Icon, { type IconName } from "./Icon";
 import type { ConnectionState } from "../hooks/useWebSocket";
 
-export type SectionId =
-  | "connection"
-  | "agents"
-  | "devices"
-  | "settings";
+export type SectionId = "agents" | "devices" | "settings";
 
 interface NavItem {
   id: SectionId;
@@ -14,7 +12,6 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "connection", label: "Connection", icon: "connection" },
   { id: "agents", label: "Agents", icon: "agents" },
   { id: "devices", label: "Devices", icon: "devices" },
   { id: "settings", label: "Settings", icon: "settings" },
@@ -40,13 +37,12 @@ export default function Sidebar({
   connectionState,
   deviceId,
 }: Props) {
+  const { theme, setTheme } = useAppearance();
+  const { logout, busy, error } = useOwnerActions();
   const isConnected = CONNECTED_STATES.includes(connectionState);
 
   return (
-    <aside
-      aria-label="Primary navigation"
-      className="flex h-full flex-col border-r border-white/5 bg-zinc-950/60 px-4 py-5 backdrop-blur-xl"
-    >
+    <aside aria-label="Primary navigation" className="app-sidebar">
       <div className="mb-8 flex items-center gap-3 px-2">
         <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/15 text-indigo-300 shadow-inner-border">
           <Icon name="logo" size={22} />
@@ -56,7 +52,7 @@ export default function Sidebar({
             Vauxr
           </h1>
           <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-            Voice Portal
+            Voice & devices
           </p>
         </div>
       </div>
@@ -97,7 +93,12 @@ export default function Sidebar({
         })}
       </nav>
 
-      <div className="mt-auto space-y-2 border-t border-white/5 pt-4">
+      <div className="sidebar-footer space-y-3">
+        <Appearance theme={theme} onChange={setTheme} />
+        <button className="logout" disabled={busy} onClick={logout}>
+          Log out on this browser
+        </button>
+        {error && <p role="alert">{error}</p>}
         <div
           className={`pill ${
             isConnected

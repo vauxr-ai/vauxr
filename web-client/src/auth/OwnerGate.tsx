@@ -1,6 +1,20 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { jsonResponse, ownerFetch, ownerPost, setCsrf } from "./api";
 import { retireBrowser } from "./browser";
+
+const OwnerActions = createContext<{
+  logout: () => void;
+  busy: boolean;
+  error: string;
+}>({ logout: () => {}, busy: false, error: "" });
+export const useOwnerActions = () => useContext(OwnerActions);
 
 export default function OwnerGate({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<{
@@ -99,6 +113,12 @@ export default function OwnerGate({ children }: { children: ReactNode }) {
       channel.postMessage("logout");
       channel.close();
     });
+  if (loggedIn)
+    return (
+      <OwnerActions.Provider value={{ logout, busy, error }}>
+        {children}
+      </OwnerActions.Provider>
+    );
   return (
     <>
       <div className="auth-panel card m-4 space-y-3 p-4">
@@ -120,117 +140,106 @@ export default function OwnerGate({ children }: { children: ReactNode }) {
           </p>
         )}
         {error && <p role="alert">{error}</p>}
-        {loggedIn ? (
-          <button disabled={busy} onClick={logout}>
-            Log out on this browser
-          </button>
-        ) : (
-          <>
-            <p>
-              {status
-                ? `Owner state: ${status.state}`
-                : "Checking owner access…"}
-            </p>
-            <p>
-              First setup: run <code>vauxr-owner claim</code> in the private
-              local server console. Lost access: run{" "}
-              <code>vauxr-owner recover</code> there, then submit its code
-              below. Recovery preserves paired clients and settings. Use the
-              server's DATA_DIR and origin configuration.
-            </p>
-            {pending ? (
-              <div className="space-y-3">
-                <p>
-                  Save this generated operator token in your password manager
-                  now. It will not be displayed again after this step. It cannot
-                  log in until saved. If the save reply is lost, discard this
-                  display and try the saved token at login before using console
-                  recovery.
-                </p>
-                <output className="block break-all select-all">
-                  {pending.operator_token}
-                </output>
+        <>
+          <p>
+            {status ? `Owner state: ${status.state}` : "Checking owner access…"}
+          </p>
+          <p>
+            First setup: run <code>vauxr-owner claim</code> in the private local
+            server console. Lost access: run <code>vauxr-owner recover</code>{" "}
+            there, then submit its code below. Recovery preserves paired clients
+            and settings. Use the server's DATA_DIR and origin configuration.
+          </p>
+          {pending ? (
+            <div className="space-y-3">
+              <p>
+                Save this generated operator token in your password manager now.
+                It will not be displayed again after this step. It cannot log in
+                until saved. If the save reply is lost, discard this display and
+                try the saved token at login before using console recovery.
+              </p>
+              <output className="block break-all select-all">
+                {pending.operator_token}
+              </output>
+              <button
+                disabled={busy}
+                onClick={() =>
+                  run(async (attempt) => {
+                    await ownerPost("/api/auth/save", {
+                      save_acknowledgement: pending.save_acknowledgement,
+                      saved: true,
+                    });
+                    if (attempt !== generation.current) return;
+                    setPending(undefined);
+                    setSecret("");
+                    await refresh(attempt);
+                  })
+                }
+              >
+                I saved this in my password manager
+              </button>
+              <button
+                onClick={() => {
+                  setPending(undefined);
+                  setSecret("");
+                }}
+              >
+                Discard display
+              </button>
+            </div>
+          ) : (
+            <form
+              className="space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void run(async (attempt) => {
+                  const token = secret;
+                  setSecret("");
+                  const session = await ownerPost("/api/auth/login", {
+                    operator_token: token,
+                  });
+                  if (attempt !== generation.current) return;
+                  setCsrf(session.csrf_token);
+                  setLoggedIn(true);
+                });
+              }}
+            >
+              <label>
+                Operator token or console code
+                <input
+                  className="block w-full bg-zinc-800 p-2"
+                  type="password"
+                  autoComplete="off"
+                  value={secret}
+                  onChange={(e) => setSecret(e.target.value)}
+                />
+              </label>
+              <button disabled={busy || !secret}>
+                Log in with saved operator token
+              </button>{" "}
+              {!status?.environment_managed && (
                 <button
-                  disabled={busy}
+                  type="button"
+                  disabled={busy || !secret}
                   onClick={() =>
                     run(async (attempt) => {
-                      await ownerPost("/api/auth/save", {
-                        save_acknowledgement: pending.save_acknowledgement,
-                        saved: true,
+                      const code = secret;
+                      setSecret("");
+                      const pending = await ownerPost("/api/auth/claim", {
+                        code,
                       });
                       if (attempt !== generation.current) return;
-                      setPending(undefined);
-                      setSecret("");
-                      await refresh(attempt);
+                      setPending(pending);
                     })
                   }
                 >
-                  I saved this in my password manager
+                  Submit console setup/recovery code
                 </button>
-                <button
-                  onClick={() => {
-                    setPending(undefined);
-                    setSecret("");
-                  }}
-                >
-                  Discard display
-                </button>
-              </div>
-            ) : (
-              <form
-                className="space-y-3"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void run(async (attempt) => {
-                    const token = secret;
-                    setSecret("");
-                    const session = await ownerPost("/api/auth/login", {
-                      operator_token: token,
-                    });
-                    if (attempt !== generation.current) return;
-                    setCsrf(session.csrf_token);
-                    setLoggedIn(true);
-                  });
-                }}
-              >
-                <label>
-                  Operator token or console code
-                  <input
-                    className="block w-full bg-zinc-800 p-2"
-                    type="password"
-                    autoComplete="off"
-                    value={secret}
-                    onChange={(e) => setSecret(e.target.value)}
-                  />
-                </label>
-                <button disabled={busy || !secret}>
-                  Log in with saved operator token
-                </button>{" "}
-                {!status?.environment_managed && (
-                  <button
-                    type="button"
-                    disabled={busy || !secret}
-                    onClick={() =>
-                      run(async (attempt) => {
-                        const code = secret;
-                        setSecret("");
-                        const pending = await ownerPost("/api/auth/claim", {
-                          code,
-                        });
-                        if (attempt !== generation.current) return;
-                        setPending(pending);
-                      })
-                    }
-                  >
-                    Submit console setup/recovery code
-                  </button>
-                )}
-              </form>
-            )}
-          </>
-        )}
+              )}
+            </form>
+          )}
+        </>
       </div>
-      {loggedIn && children}
     </>
   );
 }

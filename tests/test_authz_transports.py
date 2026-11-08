@@ -58,6 +58,7 @@ ROUTES = [
     ("POST", "/api/agents", "o", 501),
     ("DELETE", "/api/agents/missing", "o", 501),
     ("POST", "/api/agents/missing/activate", "o", 404),
+    ("PATCH", "/api/agents/missing", "o", 400),
     ("POST", "/api/agents/missing/rotate", "o", 501),
     ("GET", "/api/webhooks", "o", 200),
     ("GET", "/api/webhooks/missing", "o", 404),

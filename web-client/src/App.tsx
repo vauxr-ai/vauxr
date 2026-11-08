@@ -8,7 +8,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Layout from "./components/Layout";
 import Sidebar, { type SectionId } from "./components/Sidebar";
 import TalkPanel, { type TalkMode } from "./components/TalkPanel";
-import ResizableSplit from "./components/ResizableSplit";
+import { AppearanceProvider } from "./components/Appearance";
+import Companion from "./components/Companion";
+import { companionStatus } from "./hooks/companionStatus";
+import { useActiveRoute } from "./hooks/useActiveRoute";
 import StatusBar from "./components/StatusBar";
 import EventLog from "./components/EventLog";
 import ConfigPanel from "./components/ConfigPanel";
@@ -27,13 +30,29 @@ const CONNECTED_STATES = [
 
 export default function App() {
   return (
-    <OwnerGate>
-      <OwnerApp />
-    </OwnerGate>
+    <AppearanceProvider>
+      <OwnerGate>
+        <OwnerApp />
+      </OwnerGate>
+    </AppearanceProvider>
   );
 }
 
 function OwnerApp() {
+  const [activeSection, setActiveSection] = useState<SectionId>("agents");
+  const [companionOpen, setCompanionOpen] = useState(false);
+  const [viewContext, setViewContext] = useState("Agents");
+  const activeRoute = useActiveRoute();
+  const [enrollingBrowser, setEnrollingBrowser] = useState(false);
+  useEffect(() => {
+    setViewContext(
+      activeSection === "devices"
+        ? "Devices"
+        : activeSection === "settings"
+          ? "Settings"
+          : "Agents",
+    );
+  }, [activeSection]);
   const [connectionEpoch, setConnectionEpoch] = useState(0);
   const [modeLoaded, setModeLoaded] = useState(false);
   const [modeBusy, setModeBusy] = useState(false);
@@ -54,7 +73,6 @@ function OwnerApp() {
 
   const [deviceId, setDeviceId] = useState("");
 
-  const [activeSection, setActiveSection] = useState<SectionId>("connection");
   const [talkMode, setTalkMode] = useState<TalkMode>("hold");
   const talkModeRef = useRef(talkMode);
   talkModeRef.current = talkMode;
@@ -101,20 +119,25 @@ function OwnerApp() {
       (pcm: Int16Array) => {
         if (!talkingRef.current || !captureReadyRef.current) return;
         if (talkMode === "toggle") {
-          segmenter.current.push(pcm, () => {
-            acceptPlayback.current = false;
-            audio.stopPlayback();
-            ws.sendJson(ABORT_MESSAGE);
-            awaitingReady.current = true;
-            responseExpected.current = false;
-            ws.sendVoiceStart();
-            ws.setState("listening");
-          }, ws.sendAudioFrame, () => {
-            responseExpected.current = true;
-            ws.sendJson({ type: "voice.end" });
-            ws.setState("processing");
-            pendingLatencyStart.current = performance.now();
-          });
+          segmenter.current.push(
+            pcm,
+            () => {
+              acceptPlayback.current = false;
+              audio.stopPlayback();
+              ws.sendJson(ABORT_MESSAGE);
+              awaitingReady.current = true;
+              responseExpected.current = false;
+              ws.sendVoiceStart();
+              ws.setState("listening");
+            },
+            ws.sendAudioFrame,
+            () => {
+              responseExpected.current = true;
+              ws.sendJson({ type: "voice.end" });
+              ws.setState("processing");
+              pendingLatencyStart.current = performance.now();
+            },
+          );
         } else ws.sendAudioFrame(pcm);
       },
       [ws, talkMode],
@@ -174,7 +197,11 @@ function OwnerApp() {
     if (!responseExpected.current || awaitingReady.current) return;
     // A response can only begin after our utterance has ended. Ignore late
     // response frames while recording the replacement utterance.
-    if (captureReadyRef.current && (talkMode === "hold" || segmenter.current.active)) return;
+    if (
+      captureReadyRef.current &&
+      (talkMode === "hold" || segmenter.current.active)
+    )
+      return;
     acceptPlayback.current = true;
     audio.setPlaybackRate(rate);
   };
@@ -199,7 +226,7 @@ function OwnerApp() {
     (url: string, dev: string, token: string) => {
       credential.current = token;
       setModeLoaded(false);
-      setConnectionEpoch(epoch => epoch + 1);
+      setConnectionEpoch((epoch) => epoch + 1);
       setWsUrl(url);
 
       setDeviceId(dev);
@@ -219,7 +246,9 @@ function OwnerApp() {
     setInputLevel(0);
     pendingLatencyStart.current = null;
     setFollowUpListening(false);
-    audio.stopCapture(); audio.stopPlayback(); realtime.stop();
+    audio.stopCapture();
+    audio.stopPlayback();
+    realtime.stop();
     ws.sendJson(ABORT_MESSAGE);
     if (ws.state !== "disconnected") ws.setState("connected");
   }, [audio, realtime, ws]);
@@ -232,18 +261,30 @@ function OwnerApp() {
     const controller = new AbortController();
     const refresh = async (event?: Event) => {
       const detail = (event as CustomEvent | undefined)?.detail;
-      if (event && (detail?.source === "talk" ||
-          (detail?.scope !== "global" && detail?.deviceId !== deviceId))) return;
+      if (
+        event &&
+        (detail?.source === "talk" ||
+          (detail?.scope !== "global" && detail?.deviceId !== deviceId))
+      )
+        return;
       const attempt = ++modeRequest.current;
       if (!event) setModeBusy(true);
       try {
-        const response = await ownerFetch(`/api/devices/${encodeURIComponent(deviceId)}/speech`, { signal: controller.signal });
+        const response = await ownerFetch(
+          `/api/devices/${encodeURIComponent(deviceId)}/speech`,
+          { signal: controller.signal },
+        );
         if (!response.ok) throw new Error("Unable to load device voice mode");
         const data = await response.json();
-        if (attempt !== modeRequest.current || controller.signal.aborted) return;
+        if (attempt !== modeRequest.current || controller.signal.aborted)
+          return;
         const current = talkModeRef.current;
-        const standard = event && current !== "realtime" ? current
-          : localStorage.getItem(`vauxr-talk-${deviceId}`) === "toggle" ? "toggle" : "hold";
+        const standard =
+          event && current !== "realtime"
+            ? current
+            : localStorage.getItem(`vauxr-talk-${deviceId}`) === "toggle"
+              ? "toggle"
+              : "hold";
         const next = data.voice?.mode === "realtime" ? "realtime" : standard;
         if (next !== current) {
           stopVoiceRef.current();
@@ -253,33 +294,58 @@ function OwnerApp() {
         setModeError("");
       } catch (error) {
         if (!controller.signal.aborted) setModeError(String(error));
-      } finally { if (attempt === modeRequest.current && !controller.signal.aborted) setModeBusy(false); }
+      } finally {
+        if (attempt === modeRequest.current && !controller.signal.aborted)
+          setModeBusy(false);
+      }
     };
     void refresh();
     window.addEventListener("speech-settings-changed", refresh);
-    return () => { controller.abort(); modeRequest.current++; window.removeEventListener("speech-settings-changed", refresh); };
+    return () => {
+      controller.abort();
+      modeRequest.current++;
+      window.removeEventListener("speech-settings-changed", refresh);
+    };
   }, [deviceId, connectionEpoch]);
 
   const changeMode = async (next: TalkMode) => {
     if (modeBusy || next === talkMode) return;
     stopVoice();
-    setModeBusy(true); setModeError("");
+    setModeBusy(true);
+    setModeError("");
     const attempt = ++modeRequest.current;
     try {
-      const response = await ownerFetch(`/api/devices/${encodeURIComponent(deviceId)}/speech`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: next === "realtime" ? "realtime" : "standard" }),
-      });
+      const response = await ownerFetch(
+        `/api/devices/${encodeURIComponent(deviceId)}/speech`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: next === "realtime" ? "realtime" : "standard",
+          }),
+        },
+      );
       if (!response.ok) throw new Error("Unable to save voice mode");
       if (attempt !== modeRequest.current) return;
       setTalkMode(next);
       setModeLoaded(true);
-      if (next !== "realtime") localStorage.setItem(`vauxr-talk-${deviceId}`, next);
-      window.dispatchEvent(new CustomEvent("speech-settings-changed", { detail: { source: "talk", deviceId } }));
-    } catch (error) { if (attempt === modeRequest.current) setModeError(String(error)); }
-    finally { if (attempt === modeRequest.current) setModeBusy(false); }
+      if (next !== "realtime")
+        localStorage.setItem(`vauxr-talk-${deviceId}`, next);
+      window.dispatchEvent(
+        new CustomEvent("speech-settings-changed", {
+          detail: { source: "talk", deviceId },
+        }),
+      );
+    } catch (error) {
+      if (attempt === modeRequest.current) setModeError(String(error));
+    } finally {
+      if (attempt === modeRequest.current) setModeBusy(false);
+    }
   };
-  useEffect(() => realtime.volume(outputVolume, outputMuted), [outputVolume, outputMuted, realtime.state]);
+  useEffect(
+    () => realtime.volume(outputVolume, outputMuted),
+    [outputVolume, outputMuted, realtime.state],
+  );
 
   const startActualTalking = useCallback(async () => {
     if (talkingRef.current) return;
@@ -339,7 +405,8 @@ function OwnerApp() {
 
   const handleTalkStart = useCallback(async () => {
     if (talkMode === "realtime") {
-      if (realtime.state === "stopped") await realtime.start(deviceId, credential.current);
+      if (realtime.state === "stopped")
+        await realtime.start(deviceId, credential.current);
       else realtime.stop();
       return;
     }
@@ -392,15 +459,32 @@ function OwnerApp() {
     typeof window !== "undefined" &&
     (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia);
 
-  const sectionContent = renderSection(activeSection, {
-    isConnected,
-    onConnect: handleConnect,
-    onDisconnect: ws.disconnect,
-    wsUrl,
-    wsToken: "",
-    wsState: "connected",
-    addLog: ws.addLog,
+  // These are observed browser states, not capability claims for physical devices.
+  const capturing =
+    talking ||
+    followUpListening ||
+    (talkMode === "realtime" && realtime.state !== "stopped");
+  const voiceStatus = companionStatus({
+    connected: isConnected,
+    capturing,
+    enrolling: enrollingBrowser,
+    state: ws.state,
+    realtime: talkMode === "realtime" ? realtime.state : "stopped",
+    error: ws.connectionError,
+    outputMuted,
   });
+  const pageTitle =
+    activeSection === "devices"
+      ? "Devices"
+      : activeSection === "settings"
+        ? "Settings"
+        : "Agents";
+  const pageDescription =
+    activeSection === "devices"
+      ? "Manage connected devices and their voice configuration."
+      : activeSection === "settings"
+        ? "Voice defaults, actions and owner access."
+        : "Manage the routes that connect your devices to an agent.";
 
   return (
     <Layout
@@ -412,103 +496,108 @@ function OwnerApp() {
           deviceId={deviceId}
         />
       }
+      expanded={companionOpen}
       main={
-        <ResizableSplit
-          top={
-            <div className="flex h-full min-h-0 flex-col gap-5 overflow-y-auto px-6 py-6">
-              {micUnavailable && <MicWarning />}
-              <div hidden={activeSection !== "connection"}>
-                <ConfigPanel
-                  connected={isConnected}
-                  onConnect={handleConnect}
-                  onDisconnect={ws.disconnect}
-                />
-                <AccessPanel />
-              </div>
-              {activeSection !== "connection" && sectionContent}
+        <div className="resource-page">
+          <header className="page-heading">
+            <p className="eyebrow">Workspace</p>
+            <h1>{pageTitle}</h1>
+            <p>{pageDescription}</p>
+          </header>
+          {activeSection === "devices" ? (
+            <DevicesPanel
+              wsUrl={wsUrl}
+              token=""
+              wsState="connected"
+              addLog={ws.addLog}
+              onContext={setViewContext}
+              logs={ws.log}
+            />
+          ) : activeSection === "settings" ? (
+            <>
+              <SettingsPanel
+                wsUrl={wsUrl}
+                token=""
+                wsState="connected"
+                addLog={ws.addLog}
+              />
+              <AccessPanel />
+            </>
+          ) : (
+            <AgentsPanel onContext={setViewContext} />
+          )}
+          <details className="card diagnostics">
+            <summary>Browser session diagnostics</summary>
+            <StatusBar state={ws.state} transcript={transcript} />
+            <div className="h-64">
+              <EventLog entries={ws.log} onClear={ws.clearLog} />
             </div>
-          }
-          bottom={
-            <div className="flex h-full min-h-0 flex-col">
-              <div className="border-b border-white/5 px-6 py-2">
-                <StatusBar state={ws.state} transcript={transcript} />
-              </div>
-              <div className="min-h-0 flex-1">
-                <EventLog entries={ws.log} onClear={ws.clearLog} />
-              </div>
-            </div>
-          }
-        />
+          </details>
+        </div>
       }
-      talk={<div className="h-full">
-        {(modeError || realtime.error) && <p role="alert">{modeError || realtime.error}</p>}
-        <TalkPanel
-          modeBusy={modeBusy || (!!deviceId && !modeLoaded)}
-          transcript={talkMode === "realtime" ? realtime.transcript : transcript}
-          status={talkMode === "realtime" ? realtime.state === "listening" ? "Listening — speak naturally to interrupt." : realtime.state : undefined}
-          connectionState={ws.state}
-          isConnected={isConnected}
-          micUnavailable={micUnavailable}
-          talking={talkMode === "realtime" ? realtime.state !== "stopped" : talking}
-          followUpListening={followUpListening}
-          inputLevel={inputLevel}
-          outputVolume={outputVolume}
-          outputMuted={outputMuted}
-          talkMode={talkMode}
-          latencyMs={latencyMs}
-          onTalkStart={handleTalkStart}
-          onTalkEnd={handleTalkEnd}
-          onSetVolume={handleSetVolume}
-          onToggleMute={handleToggleMute}
-          onSetTalkMode={changeMode}
-          onInterrupt={handleInterrupt}
-        />
-      </div>}
+      talk={
+        <Companion
+          open={companionOpen}
+          onOpen={setCompanionOpen}
+          context={viewContext}
+          route={activeRoute}
+          state={voiceStatus}
+          connection={
+            <ConfigPanel
+              compact={!companionOpen}
+              connected={isConnected}
+              connecting={enrollingBrowser || ws.state === "connecting"}
+              onEnrollmentChange={setEnrollingBrowser}
+              onConnect={(url, id, token) => {
+                handleConnect(url, id, token);
+                setCompanionOpen(true);
+              }}
+              onDisconnect={ws.disconnect}
+            />
+          }
+        >
+          {micUnavailable && <MicWarning />}
+          {(modeError || realtime.error || ws.connectionError) && (
+            <p className="voice-error" role="alert">
+              {modeError || realtime.error || ws.connectionError}
+            </p>
+          )}
+          <TalkPanel
+            compact={!companionOpen}
+            modeBusy={modeBusy || (!!deviceId && !modeLoaded)}
+            transcript={
+              talkMode === "realtime" ? realtime.transcript : transcript
+            }
+            status={
+              talkMode === "realtime"
+                ? realtime.state === "listening"
+                  ? "Listening — speak naturally to interrupt."
+                  : realtime.state
+                : undefined
+            }
+            connectionState={ws.state}
+            isConnected={isConnected}
+            micUnavailable={micUnavailable}
+            talking={
+              talkMode === "realtime" ? realtime.state !== "stopped" : talking
+            }
+            followUpListening={followUpListening}
+            inputLevel={inputLevel}
+            outputVolume={outputVolume}
+            outputMuted={outputMuted}
+            talkMode={talkMode}
+            latencyMs={latencyMs}
+            onTalkStart={handleTalkStart}
+            onTalkEnd={handleTalkEnd}
+            onSetVolume={handleSetVolume}
+            onToggleMute={handleToggleMute}
+            onSetTalkMode={changeMode}
+            onInterrupt={handleInterrupt}
+          />
+        </Companion>
+      }
     />
   );
-}
-
-interface SectionProps {
-  isConnected: boolean;
-  onConnect: (url: string, deviceId: string, token: string) => void;
-  onDisconnect: () => void;
-  wsUrl: string;
-  wsToken: string;
-  wsState: ReturnType<typeof useWebSocket>["state"];
-  addLog: ReturnType<typeof useWebSocket>["addLog"];
-}
-
-function renderSection(id: SectionId, props: SectionProps) {
-  switch (id) {
-    case "connection":
-      return (
-        <ConfigPanel
-          connected={props.isConnected}
-          onConnect={props.onConnect}
-          onDisconnect={props.onDisconnect}
-        />
-      );
-    case "agents":
-      return <AgentsPanel />;
-    case "devices":
-      return (
-        <DevicesPanel
-          wsUrl={props.wsUrl}
-          token={props.wsToken}
-          wsState={props.wsState}
-          addLog={props.addLog}
-        />
-      );
-    case "settings":
-      return (
-        <SettingsPanel
-          wsUrl={props.wsUrl}
-          token={props.wsToken}
-          wsState={props.wsState}
-          addLog={props.addLog}
-        />
-      );
-  }
 }
 
 function MicWarning() {

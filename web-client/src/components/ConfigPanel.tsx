@@ -19,12 +19,18 @@ export function validateVoiceUrl(value: string) {
   return url.href;
 }
 interface Props {
+  compact?: boolean;
   connected: boolean;
+  connecting?: boolean;
+  onEnrollmentChange?: (pending: boolean) => void;
   onConnect: (url: string, deviceId: string, token: string) => void;
   onDisconnect: () => void;
 }
 export default function ConfigPanel({
+  compact = false,
   connected,
+  connecting = false,
+  onEnrollmentChange,
   onConnect,
   onDisconnect,
 }: Props) {
@@ -33,6 +39,7 @@ export default function ConfigPanel({
   );
   const [message, setMessage] = useState("");
   const [active, setActive] = useState(false);
+  const [enrolling, setEnrolling] = useState(false);
   const release = useRef<() => void>();
   const stopRequested = useRef(false);
   const disconnect = useRef(onDisconnect);
@@ -55,7 +62,10 @@ export default function ConfigPanel({
     };
   }, []);
   async function connect(recover: boolean) {
+    if (active || enrolling) return;
+    setEnrolling(true);
     setMessage("");
+    onEnrollmentChange?.(true);
     try {
       const endpoint = validateVoiceUrl(url);
       if (!isSecureContext || !navigator.locks || !crypto.subtle)
@@ -77,6 +87,8 @@ export default function ConfigPanel({
             const identity = await browserIdentity(recover);
             if (stopRequested.current) return;
             onConnect(endpoint, identity.deviceId, identity.token!);
+            onEnrollmentChange?.(false);
+            setEnrolling(false);
             let polling = false;
             timer = window.setInterval(
               async () => {
@@ -91,7 +103,7 @@ export default function ConfigPanel({
                   }
                 } catch {
                   setMessage(
-                    "Browser access could not be verified. Disconnected. Retry after one minute; revoked or lost credentials require explicit recovery.",
+                    "Browser access could not be verified. Disconnected. Retry after one minute; revoked or lost credentials require explicit re-enrollment.",
                   );
                   disconnect.current();
                   release.current?.();
@@ -116,62 +128,69 @@ export default function ConfigPanel({
       );
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Browser enrollment failed.");
+    } finally {
+      setEnrolling(false);
+      onEnrollmentChange?.(false);
     }
   }
   return (
-    <div className="auth-panel card space-y-4 p-5">
-      <h2>Browser voice connection</h2>
-      <p>
-        Connect enrolls this browser through your owner session as a separate
-        scoped device. Its key and credential stay in this browser profile's
-        IndexedDB; one tab uses voice at a time. Reload requires Connect. Logout
-        revokes browser access and clears its credential; recovery reuses its
-        saved key.
-      </p>
-      <label>
-        Voice WebSocket URL
-        <input
-          className="block w-full bg-zinc-800 p-2"
-          value={url}
-          disabled={active}
-          onChange={(e) => setUrl(e.target.value)}
-        />
-      </label>
-      <p>
-        {connected
-          ? "Connected"
-          : active
-            ? "Connecting or disconnected transport; disconnect before retrying."
-            : "Disconnected"}
-      </p>
+    <div className={`auth-panel voice-connection ${compact ? "compact" : ""}`}>
       {message && <p role="alert">{message}</p>}
       {active ? (
         <button
           onClick={() => {
             stopRequested.current = true;
+            onEnrollmentChange?.(false);
             onDisconnect();
             release.current?.();
           }}
         >
-          Disconnect
+          {connecting ? "Cancel connection" : "Disconnect"}
         </button>
       ) : (
-        <>
-          <button onClick={() => connect(false)}>Connect browser voice</button>{" "}
-          <button
-            onClick={() => {
-              if (
-                window.confirm(
-                  "Retire this browser identity’s current access and re-enroll with its saved key?",
-                )
-              )
-                void connect(true);
-            }}
-          >
-            Recover browser identity
-          </button>
-        </>
+        <button disabled={enrolling} onClick={() => void connect(false)}>
+          Connect browser voice
+        </button>
       )}
+      <details>
+        <summary>Browser voice connection</summary>
+        <p>
+          Connect enrolls this browser as a separate voice device. Its key and
+          credential stay in this browser profile; one tab uses voice at a time.
+          Reload requires Connect. Logout revokes browser access and clears its
+          credential. Re-enrollment uses the saved key.
+        </p>
+        <label>
+          Voice WebSocket URL
+          <input
+            className="block w-full"
+            value={url}
+            disabled={active}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+        </label>
+        <p>
+          {connected
+            ? "Connected"
+            : active
+              ? "Connecting or disconnected transport; disconnect before retrying."
+              : "Disconnected"}
+        </p>
+        <button
+          disabled={active}
+          onClick={() => {
+            if (
+              window.confirm(
+                "Retire this browser identity’s current access and re-enroll with its saved key?",
+              )
+            ) {
+              void connect(true);
+            }
+          }}
+        >
+          Re-enroll this browser
+        </button>
+      </details>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import type { ConnectionState } from "../hooks/useWebSocket";
 export type TalkMode = "hold" | "toggle" | "realtime";
 
 interface Props {
+  compact?: boolean;
   transcript?: string;
   status?: string;
   modeBusy?: boolean;
@@ -29,7 +30,8 @@ interface Props {
 }
 
 const STATE_HELPER: Record<ConnectionState, string> = {
-  disconnected: "Connect a server to start talking.",
+  connecting: "Connecting browser voice…",
+  disconnected: "Connect browser voice, then choose when to listen.",
   connected: "Hold the button or press Spacebar.",
   listening: "Vauxr is listening — release to send.",
   processing: "Thinking…",
@@ -57,21 +59,28 @@ export default function TalkPanel(props: Props) {
   } = props;
 
   const buttonDisabled =
-    !isConnected ||
-    micUnavailable || props.modeBusy === true;
+    !isConnected || micUnavailable || props.modeBusy === true;
 
   const helper = !isConnected
     ? STATE_HELPER.disconnected
-    : props.status || (talkMode !== "hold"
-      ? talking ? "Listening continuously — speak to interrupt." : "Click to start listening."
-      : STATE_HELPER[connectionState]);
+    : props.status ||
+      (connectionState === "processing" || connectionState === "speaking"
+        ? STATE_HELPER[connectionState]
+        : talkMode !== "hold"
+          ? talking
+            ? "Listening continuously — speak to interrupt."
+            : "Click to start listening."
+          : STATE_HELPER[connectionState]);
 
   return (
     <aside
       aria-label="Talk panel"
-      className="flex h-full flex-col overflow-y-auto border-l border-white/5 bg-zinc-950/40 backdrop-blur-sm"
+      className={`talk-panel flex flex-col ${props.compact ? "talk-compact" : ""}`}
     >
-      <div className="flex flex-1 flex-col items-center justify-center gap-8 px-5 py-6">
+      <div
+        hidden={props.compact && !isConnected}
+        className="voice-stage flex flex-col items-center justify-center gap-8"
+      >
         <div className="flex flex-col items-center gap-5">
           <TalkButton
             toggle={talkMode !== "hold"}
@@ -96,7 +105,6 @@ export default function TalkPanel(props: Props) {
           </p>
         </div>
 
-        <p aria-live="polite" className="max-h-40 w-full overflow-y-auto break-words text-sm text-zinc-300">{props.transcript}</p>
         {connectionState === "speaking" && (
           <button
             type="button"
@@ -109,7 +117,16 @@ export default function TalkPanel(props: Props) {
         )}
       </div>
 
-      <div className="space-y-5 border-t border-white/5 px-5 py-5">
+      <details className="voice-transcript w-full rounded-lg border border-white/5 p-3 text-sm">
+        <summary>Transcript (optional)</summary>
+        <p
+          aria-live="polite"
+          className="max-h-40 overflow-y-auto break-words text-zinc-300"
+        >
+          {props.transcript || "Your transcript will appear here."}
+        </p>
+      </details>
+      <div className="voice-settings space-y-5 border-t border-white/5 px-5 py-5">
         <div className="space-y-2">
           <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">
             Talk mode
@@ -132,7 +149,11 @@ export default function TalkPanel(props: Props) {
                     : "text-zinc-400 hover:text-zinc-200"
                 }`}
               >
-                {m === "hold" ? "Standard push-to-talk" : m === "toggle" ? "Standard hands-free" : "Realtime"}
+                {m === "hold"
+                  ? "Standard push-to-talk"
+                  : m === "toggle"
+                    ? "Standard hands-free"
+                    : "Realtime"}
               </button>
             ))}
           </div>

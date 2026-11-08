@@ -91,7 +91,8 @@ it("denies administration without an owner session and requires deliberate save 
   await user.click(screen.getByText("Submit console setup/recovery code"));
   await screen.findByText("generated-only-once");
   expect(fetcher.mock.calls.some(([p]) => p === "/api/auth/save")).toBe(false);
-  expect(localStorage.length).toBe(0);
+  expect(localStorage.getItem("vauxr-appearance")).toBe("system");
+  expect(localStorage.length).toBe(1);
   expect(sessionStorage.length).toBe(0);
   await user.click(screen.getByText("I saved this in my password manager"));
   await waitFor(() =>
@@ -105,6 +106,8 @@ it("denies administration without an owner session and requires deliberate save 
   await user.click(screen.getByText("Log in with saved operator token"));
   await screen.findByRole("main");
   expect(screen.getByText("Browser voice connection")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Settings", exact: true }));
+  await screen.findByText("Refresh pairing and identities");
   const listing = fetcher.mock.calls.find(
     ([p]) => p === "/api/enrollment/v1/list",
   )!;

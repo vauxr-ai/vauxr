@@ -2,7 +2,9 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import TalkPanel from "./TalkPanel";
 
-function renderPanel(overrides: Partial<React.ComponentProps<typeof TalkPanel>> = {}) {
+function renderPanel(
+  overrides: Partial<React.ComponentProps<typeof TalkPanel>> = {},
+) {
   const handlers = {
     onTalkStart: vi.fn(),
     onTalkEnd: vi.fn(),
@@ -32,7 +34,9 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof TalkPanel>> 
 describe("TalkPanel", () => {
   it("renders helper text for the connected/idle state", () => {
     renderPanel({ connectionState: "connected" });
-    expect(screen.getByTestId("talk-helper")).toHaveTextContent(/hold the button/i);
+    expect(screen.getByTestId("talk-helper")).toHaveTextContent(
+      /hold the button/i,
+    );
   });
 
   it("renders helper text for the listening state", () => {
@@ -55,7 +59,9 @@ describe("TalkPanel", () => {
 
   it("hides Interrupt when not speaking", () => {
     renderPanel({ connectionState: "connected" });
-    expect(screen.queryByRole("button", { name: /interrupt/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /interrupt/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("highlights the active talk mode and switches when clicked", async () => {
@@ -78,7 +84,8 @@ describe("TalkPanel", () => {
   it("renders an em-dash when latency is null", () => {
     renderPanel({ latencyMs: null });
     const latencyLabel = screen.getByText(/^latency$/i);
-    const latencyValue = latencyLabel.parentElement!.querySelector("span:last-child");
+    const latencyValue =
+      latencyLabel.parentElement!.querySelector("span:last-child");
     expect(latencyValue).toHaveTextContent("—");
   });
 
@@ -90,15 +97,17 @@ describe("TalkPanel", () => {
   });
 });
 
-
-it.each(["toggle", "realtime"] as const)("%s starts once on click and supports a focused Space press", async mode => {
-  const handlers = renderPanel({ talkMode: mode });
-  const button = screen.getByRole("button", { name: "Start listening" });
-  await userEvent.click(button);
-  expect(handlers.onTalkStart).toHaveBeenCalledTimes(1);
-  await userEvent.keyboard(" ");
-  expect(handlers.onTalkStart).toHaveBeenCalledTimes(2);
-});
+it.each(["toggle", "realtime"] as const)(
+  "%s starts once on click and supports a focused Space press",
+  async (mode) => {
+    const handlers = renderPanel({ talkMode: mode });
+    const button = screen.getByRole("button", { name: "Start listening" });
+    await userEvent.click(button);
+    expect(handlers.onTalkStart).toHaveBeenCalledTimes(1);
+    await userEvent.keyboard(" ");
+    expect(handlers.onTalkStart).toHaveBeenCalledTimes(2);
+  },
+);
 
 it("push-to-talk releases on blur and can interrupt processing", () => {
   const handlers = renderPanel({ connectionState: "processing" });
@@ -109,3 +118,22 @@ it("push-to-talk releases on blur and can interrupt processing", () => {
   fireEvent.blur(button);
   expect(handlers.onTalkEnd).toHaveBeenCalledTimes(1);
 });
+
+it.each([
+  ["processing", "Thinking…"],
+  ["speaking", "Vauxr is responding."],
+] as const)(
+  "shows %s during hands-free capture and keeps explicit stop available",
+  async (state, helper) => {
+    const handlers = renderPanel({
+      talkMode: "toggle",
+      talking: true,
+      connectionState: state,
+    });
+    expect(screen.getByTestId("talk-helper")).toHaveTextContent(helper);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Stop listening" }),
+    );
+    expect(handlers.onTalkStart).toHaveBeenCalledTimes(1);
+  },
+);

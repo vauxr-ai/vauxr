@@ -342,6 +342,27 @@ async def activate_agent(request: web.Request) -> web.Response:
 
 
 @_require_auth
+async def rename_agent(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict) or set(body) != {"name"}:
+        return web.json_response({"error": "provide only the agent name"}, status=400)
+    try:
+        renamed = agent_registry.rename(request.match_info["agent_id"], body["name"])
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    except OSError:
+        return web.json_response(
+            {"error": "Unable to save the agent name. Refresh before retrying."}, status=503
+        )
+    if not renamed:
+        return web.json_response({"error": "agent not found"}, status=404)
+    return web.json_response({"id": request.match_info["agent_id"], "name": body["name"].strip()})
+
+
+@_require_auth
 async def rotate_token(request: web.Request) -> web.Response:
     # Replaced by the independently scoped enrollment/lifecycle packages.
     return web.json_response({"error": "operation not implemented"}, status=501)
@@ -566,6 +587,7 @@ def attach_http_routes(app: web.Application) -> None:
     app.router.add_post("/api/agents", create_agent)
     app.router.add_delete("/api/agents/{agent_id}", delete_agent)
     app.router.add_post("/api/agents/{agent_id}/activate", activate_agent)
+    app.router.add_patch("/api/agents/{agent_id}", rename_agent)
     app.router.add_post("/api/agents/{agent_id}/rotate", rotate_token)
     app.router.add_get("/api/webhooks", list_webhooks)
     app.router.add_get("/api/webhooks/{webhook_id}", get_webhook_configuration)

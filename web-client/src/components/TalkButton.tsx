@@ -35,9 +35,9 @@ const KEYFRAMES = `
 
 function computeMode(props: Props): TalkButtonMode {
   if (props.disabled) return "disabled";
-  if (props.active) return "listening";
   if (props.processing) return "processing";
   if (props.speaking) return "speaking";
+  if (props.active) return "listening";
   if (props.followUp) return "follow-up";
   return "idle";
 }
