@@ -180,3 +180,24 @@ it("keeps another plugin’s unsaved form when one plugin saves", async () => {
   expect(screen.getByLabelText("second label")).toHaveValue("second draft");
   expect(screen.getByText("Unsaved plugin edits")).toBeInTheDocument();
 });
+
+it("focuses the committed Settings screen without stealing the next keyboard action", async () => {
+  const user = userEvent.setup();
+  const frames: FrameRequestCallback[] = [];
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => {
+    frames.push(callback);
+    return frames.length;
+  });
+  vi.stubGlobal("fetch", vi.fn(async (path: string) => response(
+    path === "/api/settings/speech" ? { providers: [] } : { defaults: {} },
+  )));
+  render(<SettingsPanel wsUrl="" token="" wsState="disconnected" addLog={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Text to speech/ }));
+  expect(screen.getByRole("heading", { name: "Text to speech settings", exact: true })).toHaveFocus();
+  const next = screen.getByRole("button", { name: /^Speech to text/ });
+  next.focus();
+  frames.forEach(callback => callback(0));
+  expect(next).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByRole("heading", { name: "Speech to text settings", exact: true })).toHaveFocus();
+});

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import InterfaceEditor from "./InterfaceEditor";
 import PluginsPanel from "./PluginsPanel";
@@ -75,6 +75,13 @@ export default function SettingsPanel(
   const [screen, setScreen] = useState("stt");
   const [dirty, setDirty] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
+  const previousScreen = useRef(screen);
+  useLayoutEffect(() => {
+    if (previousScreen.current !== screen) {
+      previousScreen.current = screen;
+      heading.current?.focus();
+    }
+  }, [screen]);
   useEffect(() => {
     props.onDirtyChange?.(dirty);
     return () => props.onDirtyChange?.(false);
@@ -99,7 +106,6 @@ export default function SettingsPanel(
               if (dirty && !confirm("Discard unsaved Settings edits?")) return;
               setDirty(false);
               setScreen(s.id);
-              requestAnimationFrame(() => heading.current?.focus());
             }}
           >
             <Icon name={s.icon} />
