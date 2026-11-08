@@ -558,7 +558,7 @@ function OwnerApp() {
         <Sidebar
           active={activeSection}
           onSelect={(section) => {
-            if (section !== activeSection && settingsDirty && !window.confirm("Discard unsaved webhook edits?")) return;
+            if (section !== activeSection && settingsDirty && !window.confirm("Discard unsaved Settings edits?")) return;
             setActiveSection(section);
           }}
           connectionState={ws.state}

@@ -118,7 +118,8 @@ def test_route_inventory_complete():
                  ("POST", "/api/enrollment/v1/{action}"), ("POST", "/api/lifecycle/v1/{action}"),
                  ("POST", "/api/integrations/v1/{action}"),
                  ("POST", "/api/companion/{action}"), ("GET", "/api/support"), ("POST", "/api/support"),
-                 ("GET", "/api/plugins"), ("GET", "/api/plugins/openclaw/package")}
+                 ("GET", "/api/plugins"), ("GET", "/api/plugins/openclaw/package"),
+                 ("GET", "/api/interface"), ("POST", "/api/interface"), ("POST", "/api/interface/preview")}
     expected.add(("GET", "/firmware-delivery/{token}/{filename}"))
     assert actual == expected
     # Speech uses one injected boundary for six path/method combinations.

@@ -132,6 +132,15 @@ async def execute(device_id: str, action: dict) -> dict:
             or (item.fingerprint and item.fingerprint != fingerprint())):
         raise ValueError("UI context changed; read context again")
     op = action.get("op")
+    if op in ("interface_read", "interface_save"):
+        from vauxr import interface
+        if item.context["route"] != "settings":
+            raise ValueError("Open Settings to edit the static interface")
+        if op == "interface_read" and set(action) == {"op", "revision"}:
+            return interface.read()
+        if op == "interface_save" and set(action) == {"op", "revision", "document_revision", "title", "html", "css"}:
+            return interface.save({key: action[key] for key in ("title", "html", "css")} | {"revision":action["document_revision"]})
+        raise ValueError("invalid interface source change")
     if op == "read":
         if set(action) != {"op", "revision"}:
             raise ValueError("invalid context read")

@@ -71,7 +71,7 @@ describe("SettingsPanel", () => {
 
     await waitFor(() => {
       const post = fetchSpy.mock.calls.find(
-        (c) => (c[1] as RequestInit | undefined)?.method === "POST",
+        (c) => String(c[0]).endsWith("/api/webhooks") && (c[1] as RequestInit | undefined)?.method === "POST",
       );
       expect(post).toBeDefined();
       expect(JSON.parse((post![1] as RequestInit).body as string)).toEqual({
