@@ -2,7 +2,7 @@ import { ownerFetch } from "../auth/api";
 import SupportSettings from "./SupportSettings";
 import IntegrationMetadata from "./IntegrationMetadata";
 import AddAgent from "./AddAgent";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useId } from "react";
 import { useAgents, type ApiAgent } from "../hooks/useAgents";
 import Icon from "./Icon";
 import Modal from "./Modal";
@@ -20,6 +20,8 @@ export default function AgentsPanel({
   onSelection?: (selection: { id: string; name: string } | null) => void;
 }) {
   const api = useAgents();
+  const runtimeTabsId = useId();
+  const [runtimeTab, setRuntimeTab] = useState("configuration");
   const deleteReturnFocus = useRef<HTMLButtonElement>(null);
   const [deleteId,setDeleteId]=useState("");
   const [deleteError,setDeleteError]=useState("");
@@ -282,8 +284,22 @@ export default function AgentsPanel({
         <button disabled={diagnostics.active || busy} onClick={() => void activate(diagnostics)}>
           {diagnostics.active ? "Default" : "Set as default"}
         </button>
-        <p>Provider changes apply to new turns. Reconnect WebRTC after changing providers. Readiness checks availability, not model inference; unavailable providers do not fall back automatically.</p>
         {error && <p role="alert">{error}</p>}
+        <div className="runtime-tabs" role="tablist" aria-label="Agent runtime sections">
+          {["configuration", "diagnostics"].map((tab,index) => <button type="button" role="tab" key={tab}
+            id={`${runtimeTabsId}-${tab}`} aria-controls={`${runtimeTabsId}-${tab}-panel`} aria-selected={runtimeTab === tab} tabIndex={runtimeTab === tab ? 0 : -1}
+            onClick={() => setRuntimeTab(tab)} onKeyDown={event => {
+              if (!["ArrowLeft","ArrowRight","Home","End"].includes(event.key)) return;
+              event.preventDefault(); const next = event.key === "Home" ? "configuration" : event.key === "End" ? "diagnostics" : index ? "configuration" : "diagnostics";
+              setRuntimeTab(next); document.getElementById(`${runtimeTabsId}-${next}`)?.focus();
+            }}>{tab === "configuration" ? "Configuration" : "Diagnostics"}</button>)}
+        </div>
+        <section className="runtime-panel" role="tabpanel" id={`${runtimeTabsId}-configuration-panel`} aria-labelledby={`${runtimeTabsId}-configuration`} hidden={runtimeTab !== "configuration"}>
+        {diagnostics.type === "support" ? <SupportSettings /> : diagnostics.type === "langchain" ? <SupportSettings agentId={diagnostics.id} /> : null}
+          {!["support","langchain"].includes(diagnostics.type) && <p>Runtime configuration is managed by this agent’s integration. See Diagnostics for its configuration source and connection guidance.</p>}
+        </section>
+        <section className="runtime-panel" role="tabpanel" id={`${runtimeTabsId}-diagnostics-panel`} aria-labelledby={`${runtimeTabsId}-diagnostics`} hidden={runtimeTab !== "diagnostics"}>
+        <p>Provider changes apply to new turns. Reconnect WebRTC after changing providers. Readiness checks availability, not model inference; unavailable providers do not fall back automatically.</p>
         <p>
           {diagnostics.type === "langchain"
             ? "LangChain · registered"
@@ -311,7 +327,7 @@ export default function AgentsPanel({
           ready; check the agent’s voice pipeline and device diagnostics.
         </p>
         <IntegrationMetadata metadata={diagnostics.integration_metadata} />
-        {diagnostics.type === "support" ? <SupportSettings /> : diagnostics.type === "langchain" ? <SupportSettings agentId={diagnostics.id} /> : null}
+        </section>
       </Modal>}
       <p className="text-sm text-zinc-400">
         Connect external agents in Settings → Apps &amp; Integrations.

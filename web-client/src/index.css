@@ -986,10 +986,9 @@ dialog.modal.agent-detail-modal[open] { height:min(840px,calc(100dvh - 24px)); }
 dialog.modal.agent-create-modal[open] { height:min(780px,calc(100dvh - 32px)); }
 .agent-detail-modal[open], .agent-create-modal[open] { display:flex; flex-direction:column; overflow:hidden; }
 .agent-detail-modal .modal-heading, .agent-create-modal .modal-heading { flex:none; }
-.agent-detail-modal .modal-body, .agent-create-modal .modal-body { flex:1; min-height:0; overflow-y:auto; align-content:start; }
+.agent-detail-modal .modal-body, .agent-create-modal .modal-body { flex:1; min-height:0; overflow:visible; align-content:start; }
 .agent-voice-modal .modal-body:has(.loading-indicator) { display:flex; flex-direction:column; }
 .loading-indicator { display:grid; place-content:center; flex:1; min-height:160px; width:100%; }
-.agent-voice-modal .loading-indicator { min-height:360px; }
 .loading-spinner { width:36px; height:36px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:loading-spin .8s linear infinite; }
 @keyframes loading-spin { to { transform:rotate(360deg); } }
 .auth-panel button.button-primary, button.button-primary { background:linear-gradient(125deg,#8750d0 0%,#8544e1 42%,#6226b8 100%); box-shadow:inset 0 1px 0 #ffffff38,0 5px 18px #763edb40; transition:background .2s,transform .18s,box-shadow .2s; }
@@ -1000,3 +999,91 @@ button.button-primary:focus-visible { outline:2px solid var(--accent); outline-o
 @media(prefers-reduced-motion:reduce) { .loading-spinner { animation-duration:2s; } button.button-primary { transition:none !important; } button.button-primary:hover:not(:disabled),button.button-primary:active:not(:disabled) { transform:none !important; } }
 .agent-voice-modal .agent-pipeline-settings:has(.loading-indicator) { flex:1; display:flex; flex-direction:column; }
 .agent-voice-modal .loading-indicator { min-height:0; }
+
+/* Reserve loading geometry, but let the graph share the available viewport. */
+dialog.modal.agent-voice-modal[open] { height:min(700px,calc(100dvh - 24px)); }
+.agent-voice-modal .modal-heading { padding:16px 20px; }
+.agent-voice-modal .modal-body { display:flex; flex-direction:column; gap:8px; padding:16px 20px; overflow:visible; }
+.agent-voice-modal .modal-body > h3 { flex:none; }
+.agent-voice-modal .agent-pipeline-settings,
+.agent-voice-modal .agent-pipeline-editor { display:flex; flex-direction:column; flex:1; min-height:0; gap:8px; }
+.agent-voice-modal .pipeline-editor-content { display:flex; flex:1; min-height:0; }
+.agent-voice-modal .agent-pipeline { display:flex; flex-direction:column; flex:1; min-height:0; padding:12px; }
+.agent-voice-modal .pipeline-state { flex:none; margin-bottom:8px; }
+.agent-voice-modal .pipeline-graph { flex:1; min-height:0; grid-template-rows:repeat(2,minmax(0,1fr)); }
+.agent-voice-modal .pipeline-graph-realtime { grid-template-rows:minmax(0,1fr); }
+.agent-voice-modal .pipeline-provider { padding:0; }
+.agent-voice-modal .pipeline-entity { gap:4px; }
+.agent-voice-modal .pipeline-icon { width:44px; height:44px; border-radius:14px; }
+.agent-voice-modal .pipeline-icon svg { width:28px; height:28px; }
+.agent-voice-modal .pipeline-save { flex:none; padding-top:8px; margin-top:auto; }
+.agent-voice-modal [role=alert],.agent-voice-modal [role=status] { font-size:12px; line-height:1.35; }
+.agent-voice-modal .pipeline-output .pipeline-entity:has(.pipeline-sample) { padding-bottom:28px; }
+.agent-voice-modal .pipeline-sample-status { min-height:24px; line-height:12px; }
+
+.runtime-tabs { display:flex; gap:8px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+.runtime-tabs button { flex:1; min-height:44px; }
+.runtime-tabs [aria-selected=true] { color:var(--accent); background:#8b5cf61a; }
+.runtime-panel[hidden] { display:none; }
+dialog.modal.agent-diagnostics-modal[open] { height:min(720px,calc(100dvh - 24px)); }
+.agent-diagnostics-modal .modal-heading { padding:16px 20px; }
+.agent-diagnostics-modal .modal-body { padding:16px 20px; gap:12px; overflow:visible; }
+.runtime-panel { display:grid; align-content:start; gap:12px; min-width:0; font-size:13px; line-height:1.4; }
+.runtime-panel > section > p { font-size:12px; }
+.runtime-panel code { overflow-wrap:anywhere; }
+.agent-diagnostics-modal .agent-runtime-form { gap:10px; }
+.agent-diagnostics-modal .modal-body label { gap:4px; }
+.agent-diagnostics-modal .loading-indicator { min-height:60px; }
+@media(max-width:600px) {
+ .agent-voice-modal .modal-body,.agent-diagnostics-modal .modal-body { padding:12px; }
+ .agent-voice-modal .modal-heading,.agent-diagnostics-modal .modal-heading { padding:12px; }
+ .agent-voice-modal .pipeline-tabs button { padding:6px 8px; font-size:12px; }
+ .agent-voice-modal .agent-pipeline { padding:10px; }
+ .agent-voice-modal .pipeline-state button { padding:4px 8px; }
+}
+.agent-create-modal .modal-heading { padding:16px; }
+.agent-create-modal .modal-body { padding:16px; gap:12px; overflow:visible; }
+.agent-create-modal .agent-type-choices { grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.agent-create-modal .agent-type-choice { min-height:132px; padding:12px 6px; gap:8px; }
+.agent-create-modal .agent-type-art { width:56px; height:56px; }
+.agent-create-modal .agent-type-choice strong { font-size:13px; }
+.agent-create-modal .agent-type-choice small { font-size:11px; }
+.agent-create-modal .is-connecting .agent-type-choice { min-height:90px; padding:8px 4px; gap:4px; }
+.agent-create-modal .is-connecting .agent-type-art { width:32px; height:32px; }
+.agent-create-modal .modal-body > p,.agent-create-modal .modal-body > section { font-size:13px; line-height:1.4; }
+.agent-create-modal .modal-body form { gap:10px; }
+@media(max-width:600px) {
+ .agent-create-modal .agent-type-choices:not(.is-connecting) { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ .agent-create-modal .agent-type-choice { min-height:120px; }
+ .agent-create-modal .modal-body { gap:10px; padding:12px; }
+ .agent-create-modal .modal-body > section { font-size:12px; }
+}
+@media(max-width:760px) {
+ .companion.is-open { padding:10px; }
+ .companion.is-open > p,.companion.is-open .companion-controls > p,.companion.is-open .companion-setting > p { display:none; }
+ .companion.is-open .companion-body { gap:4px; }
+ .companion.is-open .companion-controls { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px; }
+ .companion.is-open .companion-controls > * { margin:0; grid-column:1 / -1; }
+ .companion.is-open .companion-controls label { font-size:12px; }
+ .companion.is-open .companion-controls p { font-size:11px; line-height:1.3; }
+ .companion.is-open .companion-text { display:flex; align-items:end; gap:8px; }
+ .companion.is-open .companion-text label { flex:1; min-width:0; }
+ .companion.is-open .companion-text textarea { min-height:44px; height:44px; padding:6px; }
+ .companion.is-open .companion-text button { min-height:44px; margin:0; }
+ .companion.is-open .companion-setting { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px; align-items:end; }
+ .companion.is-open .companion-setting p { grid-column:1 / -1; }
+ .companion.is-open .companion-setting input { width:100%; min-width:0; }
+ .companion.is-open .companion-setting button { min-height:44px; }
+ .companion.is-open .voice-stage { padding:8px 0; gap:8px; }
+ .companion.is-open .voice-stage > div { gap:6px; }
+ .companion.is-open .voice-stage button.rounded-full { width:64px; height:64px; }
+ .companion.is-open .voice-stage p { font-size:11px; }
+ .companion.is-open .voice-settings { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; padding:8px 0; }
+ .companion.is-open .voice-settings > * { margin:0; min-width:0; }
+ .companion.is-open .voice-settings > :first-child,.companion.is-open .voice-settings > :last-child { grid-column:1 / -1; }
+ .companion.is-open .voice-settings [role=radiogroup] { flex-direction:row; }
+ .companion.is-open .voice-settings [role=radio] { min-height:44px; font-size:11px; }
+ .companion.is-open .voice-transcript { margin:0; padding:6px; }
+ .companion.is-open .diagnostics { padding:6px; }
+ .companion.is-open .voice-connection > details { margin-top:0; padding-top:6px; }
+}

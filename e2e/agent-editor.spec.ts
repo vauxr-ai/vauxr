@@ -214,6 +214,7 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
         await page.keyboard.press('Tab');
         expect(await diagnostics.evaluate(el => el.contains(document.activeElement))).toBe(true);
       }
+      await diagnostics.getByRole('tab',{name:'Diagnostics',exact:true}).click();
       await expect(diagnostics.getByText(`Agent ID: ${agentId}`,{exact:true})).toBeVisible();
       await page.screenshot({path:resolve(artifactDir,`agent-diagnostics-${width}-${theme}.png`)});
       await page.keyboard.press('Escape'); await expect(diagnosticsTrigger).toBeFocused();

@@ -30,6 +30,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await openAgentAction(page, "Runtime settings for Household integration");
     const diagnostics = page.getByRole("dialog", { name: "Agent runtime settings", exact: true });
     await expect(diagnostics).toHaveClass(/agent-diagnostics-modal/);
+    await diagnostics.getByRole("tab",{name:"Diagnostics",exact:true}).click();
     const metadata = diagnostics.getByRole("region", { name: "Integration configuration" });
     await expect(metadata.getByText(/Registered route/)).toBeVisible();
     await expect(metadata.getByText(/does not prove connectivity/)).toBeVisible();
@@ -55,6 +56,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await expect(page.getByRole("region", { name: "Integration configuration" })).toHaveCount(0);
     await closeAgentDetail(page);
     await openAgentAction(page, "Runtime settings for Renamed household");
+    await diagnostics.getByRole("tab",{name:"Diagnostics",exact:true}).click();
     await expect(metadata.getByText(/does not prove connectivity/)).toBeVisible();
   });
 }

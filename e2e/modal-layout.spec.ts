@@ -1,0 +1,73 @@
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { test, expect, login, openAgentAction, seedRealtimeAgent } from './auth-fixture';
+import type { Locator, Page } from '@playwright/test';
+
+// Check real geometry, including hidden clipping: overflow:hidden is not a fix.
+async function fits(dialog: Locator, page: Page) {
+  await expect(dialog).toBeVisible();
+  const geometry = await dialog.evaluate(root => {
+    const r = root.getBoundingClientRect();
+    const rendered = (el: Element) => {
+      if (!el.getClientRects().length) return false;
+      for (let parent=el.parentElement;parent && parent!==root;parent=parent.parentElement) {
+        if (parent instanceof HTMLDetailsElement && !parent.open && !parent.querySelector(":scope > summary")?.contains(el)) return false;
+      }
+      return true;
+    };
+    const overflowing = [root, ...root.querySelectorAll('*')].filter(el => {
+      if (!(el instanceof HTMLElement) || !rendered(el) || ['INPUT','TEXTAREA','SVG'].includes(el.tagName)) return false;
+      const s = getComputedStyle(el);
+      if (s.clipPath === 'inset(50%)' || el.classList.contains('sr-only')) return false;
+      return (el === root || el.classList.contains('modal-body') || /auto|scroll|hidden|clip/.test(s.overflowY)) && el.clientHeight > 0 && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1);
+    }).map(el => ({tag:el.tagName, classes:el.className, height:el.clientHeight, content:el.scrollHeight}));
+    const controls = [...root.querySelectorAll('button,input,select,textarea,[role="tab"]')].filter(rendered).map(el => {
+      const b = el.getBoundingClientRect(); return {name:el.getAttribute('aria-label') || el.textContent?.trim(), fits:b.left >= r.left && b.right <= r.right + 1 && b.top >= r.top && b.bottom <= r.bottom + 1};
+    }).filter(c => !c.fits);
+    return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,overflowing,controls};
+  });
+  expect.soft(geometry.left).toBeGreaterThanOrEqual(0);
+  expect.soft(geometry.top).toBeGreaterThanOrEqual(0);
+  expect.soft(geometry.right).toBeLessThanOrEqual(page.viewportSize()!.width);
+  expect.soft(geometry.bottom).toBeLessThanOrEqual(page.viewportSize()!.height);
+  expect.soft(geometry.overflowing, await dialog.getAttribute('aria-label') || await dialog.textContent()).toEqual([]);
+  expect.soft(geometry.controls).toEqual([]);
+}
+
+for (const width of [390,1366]) for (const theme of ['light','dark']) test(`every modal fits without inner scrolling ${width} ${theme}`, async ({page,server}) => {
+  test.setTimeout(90000);page.setDefaultTimeout(8000);
+  await page.setViewportSize({width,height:width===390?844:768});
+  seedRealtimeAgent(server);
+  const storePath=server.data+'/agents.json'; const store=JSON.parse(readFileSync(storePath,'utf8'));store.agents.push({id:'removable-fixture',name:'Removable integration',type:'openclaw',createdAt:'2026-11-08'});writeFileSync(storePath,JSON.stringify(store));
+  await server.restart(); await login(page,server);
+  await page.getByLabel('Appearance').selectOption(theme);
+  const shot=async(name:string)=>{mkdirSync('/tmp/vauxr-modal-fit-screenshots',{recursive:true});await page.screenshot({path:`/tmp/vauxr-modal-fit-screenshots/${name}-${width}-${theme}.png`});};
+  const close=async(dialog:Locator)=>{await dialog.getByRole('button',{name:'Close dialog',exact:true}).click();await page.keyboard.press('Escape');};
+  await page.getByRole('button',{name:'+ Add Agent',exact:true}).click();
+  const add=page.getByRole('dialog',{name:'Add Agent',exact:true});
+  await expect(add.getByRole('button',{name:'Choose Vauxr Support',exact:true})).toBeVisible();
+  await fits(add,page);
+  for(const type of ['OpenClaw','Vauxr Support']) {await add.getByRole('button',{name:`Choose ${type}`,exact:true}).click();await fits(add,page);}
+  await shot('create'); await close(add);
+  await page.getByRole('button',{name:'Edit avatar for Vauxr Support',exact:true}).click();
+  const avatar=page.getByRole('dialog',{name:'Edit agent avatar',exact:true});await fits(avatar,page);await shot('avatar');await close(avatar);
+  await openAgentAction(page,'Voice pipeline for Vauxr Support');
+  const voice=page.getByRole('dialog',{name:'Voice pipeline',exact:true});await expect(voice.locator('.pipeline-graph')).toBeVisible();await fits(voice,page);await shot('standard');
+  for(const label of ['Edit Speech To Text','Edit Text To Speech','Edit Vauxr Support']) {
+    const button=voice.getByRole('button',{name:label,exact:true});
+    await expect(button).toHaveCount(1); {await button.click();const popup=voice.locator('.pipeline-popover');await fits(popup,page);await page.keyboard.press('Escape');await expect(button).toBeFocused();}
+  }
+  await close(voice);
+  await openAgentAction(page,'Voice pipeline for Synthetic realtime integration');
+  await expect(voice.locator('.pipeline-graph')).toBeVisible();await voice.getByRole('tab',{name:/Live/}).click();await fits(voice,page);await shot('live');
+  await voice.getByRole('button',{name:'Edit Realtime Provider',exact:true}).click();await fits(voice.locator('.pipeline-popover'),page);await page.keyboard.press('Escape');await close(voice);
+  await openAgentAction(page,'Runtime settings for Vauxr Support');
+  const runtime=page.getByRole('dialog',{name:'Agent runtime settings',exact:true});await expect(runtime.getByLabel(/^(Support|Model) provider$/)).toBeEnabled();await runtime.getByLabel(/^(Support|Model) provider$/).selectOption('ollama');await fits(runtime,page);await shot('runtime');
+  const config=runtime.getByRole('tab',{name:'Configuration',exact:true}); await config.focus();await page.keyboard.press('ArrowRight');const diagnostics=runtime.getByRole('tab',{name:'Diagnostics',exact:true});await expect(diagnostics).toBeFocused();await fits(runtime,page);await shot('runtime-diagnostics');await page.keyboard.press('Home');await expect(config).toBeFocused();await close(runtime);
+  await openAgentAction(page,'Runtime settings for Synthetic realtime integration');await runtime.getByRole('tab',{name:'Diagnostics',exact:true}).click();await fits(runtime,page);await close(runtime);
+  const row=page.locator('main li').filter({has:page.getByRole('heading',{name:'Removable integration',level:3,exact:true})});await row.locator('summary').click();await row.getByRole('button',{name:'Delete agent',exact:true}).click();const remove=page.getByRole('dialog',{name:'Delete agent',exact:true});await fits(remove,page);await close(remove);
+  await page.getByRole('button',{name:'Connect browser',exact:true}).click();await expect(page.locator('#voice-companion').getByLabel('Conversation agent')).toBeEnabled();
+  const expand=page.getByRole('button',{name:/Expand (voice|text) companion/});if(await expand.count()) await expand.click();
+  if(width===390){const companion=page.getByRole('dialog',{name:/companion/i});await expect(companion).toHaveCount(1);await fits(companion,page);await shot('companion');}
+  await page.getByRole('button',{name:/Collapse (voice|text) companion/}).click();
+  await page.getByRole('button',{name:'Devices',exact:true}).click();const card=page.locator('main li').first();await card.getByRole('button').first().click();await card.getByRole('button',{name:'Device Diagnostics',exact:true}).click();const device=page.getByRole('dialog',{name:'Device Diagnostics',exact:true});await fits(device,page);await shot('device-diagnostics');await close(device);
+});

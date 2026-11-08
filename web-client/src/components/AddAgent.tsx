@@ -69,7 +69,7 @@ export default function AddAgent({
             </p>
           )}
           <RefreshButton label="Refresh registered agents" busy={busy} onClick={load} />
-          <div className="agent-type-choices" role="group" aria-label="Agent type">
+          <div className={`agent-type-choices ${selected === "@openclaw" ? "is-connecting" : ""}`} role="group" aria-label="Agent type">
             <button type="button" className="agent-type-choice" aria-label="Choose OpenClaw" aria-pressed={selected === "@openclaw"} disabled={busy} onClick={() => setSelected("@openclaw")}>
               <span className="agent-type-art"><img src="/agent-types/openclaw.svg" alt=""/></span><strong>OpenClaw</strong><small>Connect your integration</small>
             </button>

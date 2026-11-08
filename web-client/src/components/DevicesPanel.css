@@ -54,3 +54,16 @@
  .device-diagnostics-modal { width:calc(100vw - 16px); padding:14px; }
  .device-metric-grid { grid-template-columns:1fr; }
 }
+/* Keep all diagnostic actions visible without a phone-height scrolling sheet. */
+.device-diagnostics-modal .modal-heading { padding:16px; }
+.device-diagnostics-modal .modal-body { padding:16px; gap:10px; }
+.device-diagnostics-modal .device-diagnostic-grid { gap:10px; }
+.device-diagnostics-modal .device-diagnostic-grid > section,.device-diagnostics-modal .device-diagnostic-grid > form { padding:10px; gap:8px; }
+@media(max-width:600px) {
+ .device-diagnostics-modal { padding:0; }
+ .device-diagnostics-modal .modal-body { padding:12px; }
+ .device-diagnostics-modal .device-diagnostic-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+ .device-diagnostics-modal .device-diagnostic-grid button { font-size:12px; padding:8px; min-height:44px; }
+ .device-diagnostics-modal .device-diagnostic-grid h3 { font-size:13px; }
+ .device-diagnostics-modal .device-field input,.device-diagnostics-modal .device-field select { padding:8px; }
+}

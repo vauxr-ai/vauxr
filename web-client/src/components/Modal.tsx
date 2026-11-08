@@ -36,7 +36,7 @@ export default function Modal({
           dialog.current!.querySelectorAll<HTMLElement>(
             'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [href], [tabindex="0"]',
           ),
-        ).filter((el) => el.getClientRects().length > 0);
+        ).filter((el) => el.tabIndex >= 0 && el.getClientRects().length > 0);
         const first = controls[0],
           last = controls[controls.length - 1];
         if (event.shiftKey && document.activeElement === first) {
