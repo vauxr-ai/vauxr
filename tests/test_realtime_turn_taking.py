@@ -264,7 +264,8 @@ async def test_ws_pipeline_records_turn_into_log(monkeypatch: pytest.MonkeyPatch
 
     cs = AgentServer()
 
-    def send_transcript_stub(device_id: str, _text: str) -> bool:
+    def send_transcript_stub(device_id: str, _text: str, *, listener=None) -> bool:
+        assert cs.get_response_listener(device_id) is listener
         import asyncio
 
         async def feed() -> None:
