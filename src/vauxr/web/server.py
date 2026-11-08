@@ -589,6 +589,9 @@ def attach_http_routes(app: web.Application) -> None:
 
     attach_speech_routes(app, _authorize_speech_management, transport_boundary)
     attach_owner(app)
+    from vauxr.web.companion import attach_companion
+
+    attach_companion(app, transport_boundary)
     attach_enrollment(app)
     attach_lifecycle(app)
     attach_integration(app)

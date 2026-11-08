@@ -9,6 +9,7 @@ import Layout from "./components/Layout";
 import Sidebar, { type SectionId } from "./components/Sidebar";
 import TalkPanel, { type TalkMode } from "./components/TalkPanel";
 import { AppearanceProvider } from "./components/Appearance";
+import CompanionControls, { type Selection } from "./components/CompanionControls";
 import Companion from "./components/Companion";
 import { companionStatus } from "./hooks/companionStatus";
 import { useActiveRoute } from "./hooks/useActiveRoute";
@@ -43,6 +44,8 @@ function OwnerApp() {
   const [companionOpen, setCompanionOpen] = useState(false);
   const [viewContext, setViewContext] = useState("Agents");
   const activeRoute = useActiveRoute();
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const browserCredential = useCallback(() => credential.current, []);
   const [enrollingBrowser, setEnrollingBrowser] = useState(false);
   useEffect(() => {
     setViewContext(
@@ -562,7 +565,7 @@ function OwnerApp() {
               <AccessPanel />
             </>
           ) : (
-            <AgentsPanel onContext={setViewContext} />
+            <AgentsPanel onContext={setViewContext} onSelection={setSelection} />
           )}
           <details className="card diagnostics">
             <summary>Browser session diagnostics</summary>
@@ -594,6 +597,10 @@ function OwnerApp() {
             />
           }
         >
+          <CompanionControls browserId={deviceId} credential={browserCredential}
+            epoch={connectionEpoch} route={activeSection}
+            selection={activeSection === "agents" ? selection : null}
+            onSwitch={stopVoice} />
           {micUnavailable && <MicWarning />}
           {(voiceConflict ||
             modeError ||

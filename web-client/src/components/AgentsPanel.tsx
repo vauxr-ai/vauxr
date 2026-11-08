@@ -6,8 +6,10 @@ import SpeechSettings from "./SpeechSettings";
 
 export default function AgentsPanel({
   onContext,
+  onSelection,
 }: {
   onContext?: (context: string) => void;
+  onSelection?: (selection: { id: string; name: string } | null) => void;
 }) {
   const api = useAgents();
   const [agents, setAgents] = useState<ApiAgent[]>([]);
@@ -21,6 +23,9 @@ export default function AgentsPanel({
   useEffect(() => {
     onContext?.(selected?.name || "Agents");
   }, [selected?.name, onContext]);
+  useEffect(() => {
+    onSelection?.(selected ? { id: selected.id, name: selected.name } : null);
+  }, [selected?.id, selected?.name, onSelection]);
   const refresh = async () => {
     try {
       setAgents(await api.listAgents());
@@ -33,6 +38,9 @@ export default function AgentsPanel({
   };
   useEffect(() => {
     void refresh();
+    const update = () => { void refresh(); };
+    window.addEventListener("companion-resource-changed", update);
+    return () => window.removeEventListener("companion-resource-changed", update);
   }, []);
 
   async function activate(agent: ApiAgent) {

@@ -9,7 +9,10 @@ const mocks = vi.hoisted(() => ({
   request: vi.fn(),
 }));
 vi.mock("./auth/OwnerGate", () => ({ default: ({ children }: any) => children }));
-vi.mock("./auth/api", () => ({ ownerFetch: (...args: any[]) => mocks.request(...args) }));
+vi.mock("./auth/api", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./auth/api")>(),
+  ownerFetch: (...args: any[]) => mocks.request(...args),
+}));
 vi.mock("./hooks/useAudio", () => ({ useAudio: (opts: any) => { mocks.pcm = opts.onPcmChunk; return mocks.audio; } }));
 vi.mock("./hooks/useWebSocket", () => ({ useWebSocket: (opts: any) => { mocks.control = opts; return mocks.ws; } }));
 vi.mock("./components/Layout", () => ({ default: ({ main, talk }: any) => <>{main}{talk}</> }));

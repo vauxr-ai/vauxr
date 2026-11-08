@@ -87,6 +87,12 @@ class AgentServer:
         if (active is None or active.id != agent_id or conn is None or conn.ws.closed
                 or not current(conn.principal)):
             raise RuntimeError("Selected Agent is not connected; connect and activate the OpenClaw integration")
+        from vauxr.companion import untrusted
+
+        context = untrusted(device_id)
+        payload = dict(payload or {})
+        if operation == "consult" and context:
+            payload["request"] = str(payload.get("request", "")) + context
         request_id = secrets.token_hex(16)
         future = asyncio.get_running_loop().create_future()
         self._realtime_requests[request_id] = (conn, device_id, future)
@@ -101,7 +107,13 @@ class AgentServer:
             if name is not None:
                 frame["deviceDisplayName"] = name
             await _send_json(conn.ws, frame)
-            return await asyncio.wait_for(future, timeout)
+            result = await asyncio.wait_for(future, timeout)
+            if operation == "bootstrap":
+                context = untrusted(device_id)
+            if operation == "bootstrap" and context:
+                result = {**result, "messages": [*result.get("messages", []),
+                          {"role": "user", "content": context}]}
+            return result
         finally:
             # Cancelling the waiting media session never sends backend cancellation.
             self._realtime_requests.pop(request_id, None)
@@ -134,11 +146,13 @@ class AgentServer:
 
         # device_id comes from the authenticated device turn. Display metadata
         # must never replace it in sessions, response listeners or routing.
+        from vauxr.companion import untrusted
+
         frame = {
             "type": "agent.transcript",
             "deviceId": device_id,
             "sessionKey": f"vauxr:{device_id}",
-            "text": text,
+            "text": text + untrusted(device_id),
         }
         name = load_device_display_name(get_config().data_dir, device_id)
         if name is not None:
