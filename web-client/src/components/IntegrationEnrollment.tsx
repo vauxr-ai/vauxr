@@ -13,11 +13,13 @@ interface Request {
 
 export default function IntegrationEnrollment() {
   const [requests, setRequests] = useState<Request[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function refresh() {
     const result = await ownerPost("/api/integrations/v1/list");
     setRequests(result.requests);
+    setLoaded(true);
   }
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -39,7 +41,9 @@ export default function IntegrationEnrollment() {
         and may repeat. Approve only a setup you deliberately started.
       </p>
       <button disabled={busy} onClick={() => void run(refresh)}>Refresh integration requests</button>
-      {error && <p role="alert">{error}</p>}
+      {busy && <p role="status">Checking integration request…</p>}
+      {error && <p role="alert">{error} Refresh requests to reconcile a possibly accepted approval before retrying.</p>}
+      {loaded && requests.length === 0 && <p>No integration requests. Start enrollment in the OpenClaw client, then refresh.</p>}
       {requests.map(request => (
         <RequestRow key={request.request_id} request={request} busy={busy}
           act={(action, code) => run(async () => {

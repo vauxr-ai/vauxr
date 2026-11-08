@@ -158,6 +158,7 @@ export default function AgentsPanel({
               <p>
                 Agent ID: <code>{selected.id}</code>
               </p>
+              <p>{selected.active ? "Fallback for unassigned devices only. Explicit device assignments and your independent companion selection are unchanged." : "Inactive as the shared fallback. Explicit assignments and integration permissions are separate."} Route activation does not prove the integration is online or ready; check effective voice configuration below and device diagnostics.</p>
               <SpeechSettings key={selected.id} agentId={selected.id} />
               <form
                 onSubmit={async (event) => {
@@ -229,6 +230,8 @@ export default function AgentsPanel({
       )}
       <section className="card auth-panel enrollment-section">
         <h2>Connect an agent</h2>
+        <p>OpenClaw enrollment is the supported connection workflow. Start enrollment in your OpenClaw Vauxr integration; this page approves its request rather than creating an agent or installing a plugin.</p>
+        <p>OpenClaw Direct, when configured by the server operator, is an existing alternative route. No connection, credential or plugin editor is available here.</p>
         <p>
           Approve an integration request from OpenClaw. Credentials are managed
           in Settings → Pairing and access.

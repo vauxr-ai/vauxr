@@ -43,6 +43,7 @@ export default function AccessPanel() {
   });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [subject, setSubject] = useState("");
   const [role, setRole] = useState("device");
   const retain = (rows: Operation[]) => {
@@ -70,6 +71,7 @@ export default function AccessPanel() {
     const d = await jsonResponse(await ownerFetch("/api/devices"));
     setDevices(Array.isArray(d) ? d : d.devices);
     setAgents(await jsonResponse(await ownerFetch("/api/agents")));
+    setLoaded(true);
   }
   useEffect(() => {
     void run(refresh);
@@ -112,7 +114,7 @@ export default function AccessPanel() {
       subject: op.subject,
     });
     retain(
-      rows.map((row) => (row.operation_id === op.operation_id ? result : row)),
+      rows.map((row) => (row.operation_id === op.operation_id ? { ...row, ...result } : row)),
     );
   }
   return (
@@ -129,7 +131,9 @@ export default function AccessPanel() {
       <button disabled={busy} onClick={() => run(refresh)}>
         Refresh pairing and identities
       </button>
-      {error && <p role="alert">{error}</p>}
+      {busy && <p role="status">Loading or submitting access request…</p>}
+      {error && <><p role="alert">{error}</p><p>Refresh status before retrying; a lost response does not prove failure.</p></>}
+      {loaded && !pairs.some(p => p.kind === "physical") && <p>No physical pairing requests.</p>}
       {pairs
         .filter((p) => p.kind === "physical")
         .map((p) => (
@@ -168,6 +172,7 @@ export default function AccessPanel() {
           />
         ))}
       <h3>Device credentials</h3>
+      {loaded && devices.length === 0 && <p>No devices reported. Use a retained exact ID below for an offline identity.</p>}
       {devices.map((d) => (
         <div key={d.id}>
           <span>
@@ -188,9 +193,9 @@ export default function AccessPanel() {
       <h3>Integration credentials</h3>
       <p>
         New connections require owner-approved integration enrollment. Existing integration
-        rotation/revocation uses lifecycle v1; it never reveals a agent token.
+        rotation/revocation uses lifecycle v1; it never reveals an agent token.
       </p>
-      {agents.map((c) => (
+      {agents.filter((agent) => agent.id !== "openclaw-direct").map((c) => (
         <div key={c.id}>
           {c.name} — {c.id}
           {["rotate", "revoke"].map((a) => (
@@ -243,13 +248,14 @@ export default function AccessPanel() {
         last five minutes; offline rotations expire after 24 hours, and delivery
         starts a maximum five-minute save deadline.
       </p>
+      {operations.length === 0 && <p>No retained operations in this tab.</p>}
       {operations.map((op) => (
         <div key={op.operation_id} className="border-t border-white/10 py-3">
           <p>
             {op.role} {op.subject}: {op.action} —{" "}
             {op.state || "outcome unknown"}
           </p>
-          <p>{stateHelp[op.state || ""]}</p>
+          <p>{stateHelp[op.state || ""] || "Outcome unknown. Refresh status using this operation ID; no save acknowledgement has been confirmed."}</p>
           <small>
             {op.operation_id}
             {op.expires_at
@@ -269,7 +275,7 @@ export default function AccessPanel() {
                   });
                   retain(
                     operations.map((o) =>
-                      o.operation_id === op.operation_id ? result : o,
+                      o.operation_id === op.operation_id ? { ...o, ...result } : o,
                     ),
                   );
                 })

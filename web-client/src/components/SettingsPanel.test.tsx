@@ -2,6 +2,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsPanel from "./SettingsPanel";
 
+vi.mock("./AccessPanel", () => ({ default: () => <div>Pairing and access</div> }));
+
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return {
     ok,
@@ -24,11 +26,12 @@ afterEach(() => {
 });
 
 describe("SettingsPanel", () => {
-  it("asks to connect when disconnected", () => {
+  it("loads administration while browser voice is disconnected", async () => {
     render(
       <SettingsPanel wsUrl="" token="" wsState="disconnected" addLog={vi.fn()} />,
     );
-    expect(screen.getByText(/connect to a server to manage webhooks/i)).toBeInTheDocument();
+    expect(await screen.findByText("No webhooks yet.")).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.some(call => String(call[0]).endsWith("/api/webhooks"))).toBe(true);
   });
 
   it("lists webhooks and can create one", async () => {
@@ -58,7 +61,7 @@ describe("SettingsPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Webhooks")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Webhooks" })).toBeInTheDocument();
     });
 
     await user.click(screen.getByRole("button", { name: /add webhook/i }));
@@ -172,7 +175,7 @@ describe("SettingsPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Webhooks")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Webhooks" })).toBeInTheDocument();
     });
 
     await user.click(screen.getByRole("button", { name: /add webhook/i }));
