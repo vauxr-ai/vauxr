@@ -32,7 +32,7 @@ for (const width of [390, 1366])
     await expect(detail.getByRole("region", {name:"Agent voice", exact:true})).toHaveCount(0);
     await closeAgentDetail(page);
     await page.getByRole("button", {name:"Voice pipeline for Household assistant",exact:true}).click();
-    await expect(detail.getByLabel("Enable Live", {exact:true})).toBeDisabled();
+    await expect(detail.getByRole("tab", {name:"Live / Realtime", exact:true})).toHaveCount(0);
     await expect(detail.getByRole("region", { name: "Agent model runtime", exact: true })).toHaveCount(0);
     await expect(detail.getByRole("button", { name: "Remove agent", exact: true })).toHaveCount(0);
     await closeAgentDetail(page);

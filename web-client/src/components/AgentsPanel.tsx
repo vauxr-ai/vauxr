@@ -257,12 +257,8 @@ export default function AgentsPanel({
       {voiceAgent && <Modal title="Voice pipeline" className="agent-detail-modal agent-detail agent-voice-modal"
         returnFocus={voiceReturnFocus} onClose={() => setVoiceId("")}>
         <h3>{voiceAgent.name}</h3>
-        <SpeechSettings key={`voice-${voiceAgent.id}`} agentId={voiceAgent.id} agentName={voiceAgent.name}
-          browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential}
-          onEditAgent={() => {
-            (returnFocus as {current: HTMLButtonElement | null}).current = voiceReturnFocus.current;
-            setVoiceId(""); setSelectedId(voiceAgent.id); setNameDraft(voiceAgent.name); setEditingName(true);
-          }} />
+        <SpeechSettings key={`voice-${voiceAgent.id}`} agentId={voiceAgent.id} agentName={voiceAgent.name} agentType={voiceAgent.type}
+          browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential} />
       </Modal>}
       {avatarOpen && selected && <Modal title="Edit agent avatar" className="avatar-editor-modal" returnFocus={avatarReturnFocus}
         onClose={() => {if (!avatarBusy) setAvatarOpen(false);}}>

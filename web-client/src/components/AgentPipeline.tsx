@@ -1,11 +1,13 @@
 import "./AgentPipeline.css";
+import type { MouseEvent } from "react";
 
-function Entity({kind, title, detail, onEdit}: {kind: string; title: string; detail?: string; onEdit?: () => void}) {
-  return <div className="pipeline-entity">
+function Entity({kind, title, detail, onEdit}: {kind: string; title: string; detail?: string; onEdit?: (event: MouseEvent<HTMLButtonElement>) => void}) {
+  const content = <>
     <span className="pipeline-icon"><svg aria-hidden="true" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       {kind === "device" ? <><rect x="8" y="3" width="16" height="26" rx="5"/><path d="M13 7h6M14 25h4M12 14v4m4-7v10m4-7v4"/></> : kind === "agent" ? <><path d="m16 3 12 7v13l-12 7-12-7V10Z"/><path d="m4 10 12 7 12-7M16 17v13M10 7l12 7"/><circle cx="16" cy="10" r="2"/></> : kind === "stt" ? <><rect x="3" y="4" width="26" height="24" rx="7"/><path d="M9 10v8m-3-5v2m6-3v4m5-5h7m-7 5h5M9 23h14"/></> : kind === "tts" ? <><path d="M16 6 8 12H3v8h5l8 6ZM21 11c3 3 3 7 0 10m4-14c6 5 6 13 0 18"/></> : <><rect x="3" y="5" width="26" height="22" rx="7"/><path d="M8 14v4m4-8v12m4-9v6m4-10v14m4-9v4"/></>}
     </svg></span>
-    <strong>{title}</strong><small>{detail || "Not configured"}</small>{kind === "device" && <details className="pipeline-device-info"><summary className="pipeline-edit" aria-label="Voice Device details">Details</summary><small>Set microphone, speaker and voice overrides for individual devices in Devices.</small></details>}{onEdit && <button type="button" className="pipeline-edit" onClick={onEdit} aria-label={`Edit ${title}`}>Edit <span aria-hidden="true">↗</span></button>}
+    <strong>{title}</strong><small>{detail || "Not configured"}</small></>;
+  return <div className="pipeline-entity">{onEdit ? <button type="button" className="pipeline-entity-button" onClick={onEdit} aria-label={`Edit ${title}`} aria-haspopup="dialog">{content}</button> : content}{kind === "device" && <details className="pipeline-device-info"><summary className="pipeline-edit" aria-label="Voice Device details">Details</summary><small>Set microphone, speaker and voice overrides for individual devices in Devices.</small></details>}
   </div>;
 }
 export type PipelineGraphProps = {
@@ -16,9 +18,9 @@ export type PipelineGraphProps = {
   stt?: string;
   tts?: string;
   realtime?: string;
-  onEdit?: (kind: "stt" | "tts" | "realtime") => void;
+  onEdit?: (kind: "stt" | "tts" | "realtime", anchor: HTMLButtonElement) => void;
   onEditDevice?: () => void;
-  onEditAgent?: () => void;
+  onEditAgent?: (event: MouseEvent<HTMLButtonElement>) => void;
 };
 
 function Connections({side, live}: {side: "left" | "right"; live: boolean}) {
@@ -40,16 +42,20 @@ export function PipelineGraph({mode, deviceLabel = "Voice Device", deviceDetail 
     <p className="pipeline-flow-description">{live ? `${deviceLabel} ↔ Realtime Provider ↔ ${agentName}` : `${deviceLabel} → Speech To Text → ${agentName} → Text To Speech → ${deviceLabel}`}</p>
     <div className="pipeline-endpoint pipeline-device"><Entity kind="device" title={deviceLabel} detail={deviceDetail} onEdit={onEditDevice}/></div>
     <Connections side="left" live={live}/>
-    <div className="pipeline-provider pipeline-input"><Entity kind={live ? "realtime" : "stt"} title={live ? "Realtime Provider" : "Speech To Text"} detail={live ? realtime : stt} onEdit={onEdit ? () => onEdit(live ? "realtime" : "stt") : undefined}/></div>
-    {!live && <div className="pipeline-provider pipeline-output"><Entity kind="tts" title="Text To Speech" detail={tts} onEdit={onEdit ? () => onEdit("tts") : undefined}/></div>}
+    <div className="pipeline-provider pipeline-input"><Entity kind={live ? "realtime" : "stt"} title={live ? "Realtime Provider" : "Speech To Text"} detail={live ? realtime : stt} onEdit={onEdit ? event => onEdit(live ? "realtime" : "stt", event.currentTarget) : undefined}/></div>
+    {!live && <div className="pipeline-provider pipeline-output"><Entity kind="tts" title="Text To Speech" detail={tts} onEdit={onEdit ? event => onEdit("tts", event.currentTarget) : undefined}/></div>}
     <Connections side="right" live={live}/>
     <div className="pipeline-endpoint pipeline-agent"><Entity kind="agent" title={agentName} detail="Agent" onEdit={onEditAgent}/></div>
   </div>;
 }
 
-export default function AgentPipeline({mode, agentName, stt, tts, realtime, enabled, isDefault, onEdit, onEditAgent}: {mode: string; agentName: string; stt?: string; tts?: string; realtime?: string; enabled: boolean; isDefault: boolean; onEdit?: (kind: string) => void; onEditAgent?: () => void}) {
+export default function AgentPipeline({enabled, isDefault, onToggleEnabled, onSetDefault, ...graph}: PipelineGraphProps & {enabled: boolean; isDefault: boolean; onToggleEnabled: () => void; onSetDefault: () => void}) {
+  const label = graph.mode === "realtime" ? "Live" : "Standard";
   return <div className="agent-pipeline">
-    <div className="pipeline-state"><span className={enabled ? "enabled" : ""}>{enabled ? "Enabled" : "Disabled"}</span>{isDefault && enabled && <span className="default">Default</span>}</div>
-    <PipelineGraph mode={mode} agentName={agentName} stt={stt} tts={tts} realtime={realtime} onEdit={onEdit} onEditAgent={onEditAgent ?? (() => document.querySelector<HTMLButtonElement>('[aria-label="Edit agent name"]')?.click())}/>
+    <div className="pipeline-state">
+      <button type="button" aria-label={`Enable ${label}`} aria-pressed={enabled} className={enabled ? "enabled" : ""} onClick={onToggleEnabled}>{enabled ? "Enabled" : "Disabled"}</button>
+      <button type="button" aria-label={`Default ${label}`} aria-pressed={enabled && isDefault} className={enabled && isDefault ? "default" : ""} disabled={!enabled} onClick={onSetDefault}>{isDefault && enabled ? "Default" : "Set as default"}</button>
+    </div>
+    <PipelineGraph {...graph}/>
   </div>;
 }
