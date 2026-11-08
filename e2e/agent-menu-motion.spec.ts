@@ -55,7 +55,16 @@ for (const width of [390,1366]) for (const theme of ['light','dark']) {
     await expect(menu.getByRole('button',{name:'Delete agent',exact:true})).toBeDisabled();
     await expect(tooltip).toHaveCSS('opacity','1');
     const tipBox=(await tooltip.boundingBox())!;
-    expect(tipBox.y+tipBox.height).toBeLessThanOrEqual(panel.y);
+    if(width===390) expect(tipBox.y).toBeGreaterThanOrEqual(panel.y+panel.height);
+    else expect(tipBox.y+tipBox.height).toBeLessThanOrEqual(panel.y);
+    expect(tipBox.y).toBeGreaterThanOrEqual(0);
+    expect(tipBox.y+tipBox.height).toBeLessThanOrEqual(width===390?844:768);
+    // A rectangle may be in bounds yet hidden behind sticky navigation.
+    expect(await tooltip.evaluate(el=>{
+      const previous=el.style.pointerEvents;el.style.pointerEvents='auto';
+      try {const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}
+      finally {el.style.pointerEvents=previous;}
+    })).toBe(true);
     expect(tipBox.x).toBeGreaterThanOrEqual(0);
     await page.screenshot({path:`${artifacts}/tooltip-${width}-${theme}.png`});
     await page.keyboard.press('Escape');
