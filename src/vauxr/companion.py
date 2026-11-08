@@ -65,7 +65,7 @@ def publish(principal: Principal, body: dict) -> dict:
         if (body["route"] != "agents" or body["resource_type"] != "agent"
                 or body["setting_key"] != "name" or not isinstance(body["resource_id"], str)):
             raise ValueError("invalid context")
-        if not re.fullmatch(r"(?:(?:int_)?[a-f0-9]{32}|openclaw-direct)", body["resource_id"]):
+        if not re.fullmatch(r"(?:(?:int_)?[a-f0-9]{32}|openclaw-direct|vauxr-support)", body["resource_id"]):
             raise ValueError("invalid context")
         agent = registry.get_by_id(body["resource_id"])
         if agent is None or not _safe_name(agent.name) or body["current_value"] != agent.name:

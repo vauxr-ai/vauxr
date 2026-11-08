@@ -117,7 +117,7 @@ def test_route_inventory_complete():
     expected |= {("GET", "/api/auth/{action}"), ("POST", "/api/auth/{action}"),
                  ("POST", "/api/enrollment/v1/{action}"), ("POST", "/api/lifecycle/v1/{action}"),
                  ("POST", "/api/integrations/v1/{action}"),
-                 ("POST", "/api/companion/{action}")}
+                 ("POST", "/api/companion/{action}"), ("GET", "/api/support"), ("POST", "/api/support")}
     expected.add(("GET", "/firmware-delivery/{token}/{filename}"))
     assert actual == expected
     # Speech uses one injected boundary for six path/method combinations.

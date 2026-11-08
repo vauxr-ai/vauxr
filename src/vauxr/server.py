@@ -688,6 +688,7 @@ async def _startup(app: web.Application) -> None:
     get_speech_store()  # Validate the speech registry before accepting turns.
     # Load agent registry.
     agent_registry.load()
+    agent_registry.ensure_support()
     agent_registry.validate_authority()
     registry.load_configs(strict=True)
     from pathlib import Path

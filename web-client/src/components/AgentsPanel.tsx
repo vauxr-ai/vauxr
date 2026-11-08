@@ -1,3 +1,4 @@
+import SupportSettings from "./SupportSettings";
 import IntegrationMetadata from "./IntegrationMetadata";
 import IntegrationEnrollment from "./IntegrationEnrollment";
 import { useEffect, useState } from "react";
@@ -119,7 +120,7 @@ export default function AgentsPanel({
                     </button>
                   </h3>
                   <p>
-                    {agent.type === "openclaw-direct"
+                    {agent.type === "support" ? "Built-in · independent runtime" : agent.type === "openclaw-direct"
                       ? "OpenClaw direct"
                       : "OpenClaw connection"}
                   </p>
@@ -147,7 +148,7 @@ export default function AgentsPanel({
             <>
               <h2>{selected.name}</h2>
               <p>
-                {selected.type === "openclaw-direct"
+                {selected.type === "support" ? "Built-in · independent runtime" : selected.type === "openclaw-direct"
                   ? "OpenClaw direct"
                   : "OpenClaw connection"}{" "}
                 · {selected.active ? "Active route" : "Inactive route"}
@@ -161,6 +162,7 @@ export default function AgentsPanel({
               </p>
               <p>{selected.active ? "Fallback for unassigned devices only. Explicit device assignments and your independent companion selection are unchanged." : "Inactive as the shared fallback. Explicit device assignments remain separate."} Route activation does not prove the integration is online or ready; check effective voice configuration below and device diagnostics.</p>
               <IntegrationMetadata metadata={selected.integration_metadata} />
+              {selected.type === "support" && <SupportSettings />}
               <SpeechSettings key={selected.id} agentId={selected.id} />
               <form
                 onSubmit={async (event) => {

@@ -129,7 +129,7 @@ class AgentServer:
         active = agent_registry.get_active()
         if active is None:
             return False
-        if active.type == "openclaw-direct":
+        if active.type in ("openclaw-direct", "support"):
             return True
         conn = self._connections.get(active.id)
         return conn is not None and not conn.ws.closed and current(conn.principal)
@@ -141,6 +141,27 @@ class AgentServer:
         if active is None:
             log.warning("No active agent — dropping transcript")
             return False
+        if active.type == "support":
+            from vauxr.agents.support import answer
+
+            target = listener or self._response_listeners.get(device_id)
+            if target is None:
+                return False
+
+            async def respond() -> None:
+                try:
+                    reply = await answer(device_id, text)
+                    selected = agent_registry.get_for_device(device_id)
+                    if (selected is not None and selected.id == active.id
+                            and self._response_listeners.get(device_id) is target):
+                        target["on_delta"]("support", reply)
+                        target["on_end"]("support")
+                except Exception:
+                    if self._response_listeners.get(device_id) is target:
+                        target["on_error"]("support", "Support runtime unavailable; check setup")
+
+            asyncio.create_task(respond())
+            return True
         if active.type == "openclaw-direct":
             return False
         conn = self._connections.get(active.id)
