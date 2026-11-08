@@ -992,8 +992,8 @@ dialog.modal.agent-create-modal[open] { height:min(780px,calc(100dvh - 32px)); }
 .agent-voice-modal .loading-indicator { min-height:360px; }
 .loading-spinner { width:36px; height:36px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:loading-spin .8s linear infinite; }
 @keyframes loading-spin { to { transform:rotate(360deg); } }
-.auth-panel button.button-primary, button.button-primary { background:linear-gradient(125deg,#a16af1 0%,#8544e1 42%,#6226b8 100%); box-shadow:inset 0 1px 0 #ffffff38,0 5px 18px #763edb40; transition:background .2s,transform .18s,box-shadow .2s; }
-.auth-panel button.button-primary:hover:not(:disabled), button.button-primary:hover:not(:disabled) { background:linear-gradient(110deg,#b47cfc 0%,#9654ed 42%,#7634d0 100%); transform:translateY(-2px); box-shadow:inset 0 1px 0 #ffffff55,0 9px 25px #763edb60; }
+.auth-panel button.button-primary, button.button-primary { background:linear-gradient(125deg,#8750d0 0%,#8544e1 42%,#6226b8 100%); box-shadow:inset 0 1px 0 #ffffff38,0 5px 18px #763edb40; transition:background .2s,transform .18s,box-shadow .2s; }
+.auth-panel button.button-primary:hover:not(:disabled), button.button-primary:hover:not(:disabled) { background:linear-gradient(110deg,#9256df 0%,#8b4edb 42%,#7634d0 100%); transform:translateY(-2px); box-shadow:inset 0 1px 0 #ffffff55,0 9px 25px #763edb60; }
 .auth-panel button.button-primary:active:not(:disabled), button.button-primary:active:not(:disabled) { transform:translateY(0) scale(.98); box-shadow:inset 0 2px 5px #3e127533,0 2px 8px #763edb40; }
 button.button-primary:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
 @media(max-width:600px) { .agent-type-choices { grid-template-columns:repeat(2,minmax(0,1fr)); } .agent-type-choice { min-width:0; padding:16px 8px; } }
