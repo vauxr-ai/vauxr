@@ -11,6 +11,19 @@ on:
     types: [published]
 
 jobs:
+  design-lint:
+    name: DESIGN.md lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web-client/package-lock.json
+      - run: npm --prefix web-client ci
+      - run: npm --prefix web-client run design:lint
+
   # On every push/PR: run the Python test suite
   pytest:
     name: Unit tests (pytest)
