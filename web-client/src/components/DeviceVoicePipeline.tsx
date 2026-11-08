@@ -1,3 +1,4 @@
+import VoiceSample, { type BrowserVoiceProps } from "./VoiceSample";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ownerFetch } from "../auth/api";
 import { PipelineGraph } from "./AgentPipeline";
@@ -14,7 +15,7 @@ type View = {
 };
 
 /** Device-only editor; writes are serialized and reads cannot replace newer edits. */
-export default function DeviceVoicePipeline({ deviceId, onModeChange, transport }: {
+export default function DeviceVoicePipeline({ deviceId, onModeChange, transport, ...browserVoice }: BrowserVoiceProps & {
   deviceId: string; onModeChange: (mode: "standard" | "realtime" | null) => void; transport: ReactNode;
 }) {
   const [data, setData] = useState<View | null>(null);
@@ -88,7 +89,7 @@ export default function DeviceVoicePipeline({ deviceId, onModeChange, transport 
         <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "Hide voice pipeline overrides" : "Override agent voice pipeline defaults"}</button>
         {expanded && <fieldset disabled={busy} className="device-voice-overrides">
           {data.policy.chat_only ? <p>Chat-only agent. Select a voice-enabled agent to use this device’s microphone and speaker.</p> : <>
-            <PipelineGraph mode={mode} agentName={agent?.name || data.policy.fallback_agent || "Agent"} stt={data.effective?.stt_backend} tts={data.effective?.tts_backend} realtime={data.voice?.realtime_backend} />
+            <PipelineGraph ttsIcon={<VoiceSample {...browserVoice} backend={tts} voice={data.effective?.voice_id || ""} mode={mode}/>} mode={mode} agentName={agent?.name || data.policy.fallback_agent || "Agent"} stt={data.effective?.stt_backend} tts={data.effective?.tts_backend} realtime={data.voice?.realtime_backend} />
             {data.effective && mode !== "realtime" && <p className="device-muted">Effective: {data.effective.stt_backend} / {data.effective.tts_backend} / {data.effective.voice_id}</p>}
             {transport}
             {select("Voice mode", data.overrides.mode || "", data.defaults.mode === "realtime" ? "Live" : "Standard", [...new Set([...data.policy.available_modes, ...(data.overrides.mode ? [data.overrides.mode] : [])])].map(value => ({value, label: value === "realtime" ? "Live / Realtime" : "Standard"})), value => save({ mode: value || null }))}

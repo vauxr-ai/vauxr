@@ -185,6 +185,8 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       for (let n=0;n<9;n++) { await page.keyboard.press('Tab'); expect(await ttsPopover.evaluate(el=>el.contains(document.activeElement))).toBe(true); }
       const popoverBounds = await ttsPopover.boundingBox();
       expect(popoverBounds!.x).toBeGreaterThanOrEqual(0); expect(popoverBounds!.x+popoverBounds!.width).toBeLessThanOrEqual(width);
+      await page.keyboard.press('Escape');
+      await expect(voice.getByRole('button',{name:'Edit Text To Speech',exact:true})).toBeFocused();
       const before = readFileSync(resolve(server.data,'speech.json'),'utf8');
       const preview = page.waitForResponse(r => r.url().endsWith('/api/speech/preview') && r.request().method()==='POST');
       await page.getByRole('button',{name:'Test selected voice'}).click();
@@ -203,7 +205,6 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       await page.getByRole('button',{name:'Test selected voice'}).scrollIntoViewIfNeeded();
       mkdirSync(artifactDir,{recursive:true});
       await page.screenshot({path:resolve(artifactDir,`agent-editor-${width}-${theme}.png`)});
-      await page.keyboard.press('Escape');
       await expect(voice).toBeVisible();
       await page.keyboard.press('Escape');
       const diagnosticsTrigger = page.getByRole('button',{name:`Runtime settings for ${renamed}`,exact:true});
@@ -216,6 +217,32 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       await expect(diagnostics.getByText(`Agent ID: ${agentId}`,{exact:true})).toBeVisible();
       await page.screenshot({path:resolve(artifactDir,`agent-diagnostics-${width}-${theme}.png`)});
       await page.keyboard.press('Escape'); await expect(diagnosticsTrigger).toBeFocused();
+      await page.getByRole('button',{name:'Devices',exact:true}).click();
+      const card = page.locator('main li').first();
+      await card.getByRole('button').first().click();
+      await card.getByRole('button',{name:'Override agent voice pipeline defaults'}).click();
+      const graph = card.getByRole('group',{name:'Standard voice pipeline',exact:true});
+      const sample = graph.getByRole('button',{name:'Test selected voice'});
+      await expect(sample).toBeEnabled();
+      const persisted = readFileSync(resolve(server.data,'speech.json'),'utf8');
+      const devicePreview = page.waitForResponse(r=>r.url().endsWith('/api/speech/preview') && r.request().method()==='POST');
+      await sample.focus(); await page.keyboard.press('Enter');
+      const deviceResponse = await devicePreview;
+      expect(deviceResponse.status()).toBe(200);
+      expect(deviceResponse.request().postDataJSON().voice).toBe('fixture_a');
+      const deviceWav = await deviceResponse.body();
+      expect(deviceWav.subarray(0,4).toString()).toBe('RIFF');
+      expect(deviceWav.subarray(deviceWav.indexOf(Buffer.from('data'))+8)).toEqual(peer.pcm);
+      await expect.poll(()=>page.evaluate(()=>(window as any).decodedSamples.filter((s:any)=>s.src.startsWith('blob:') && s.duration>0).length)).toBeGreaterThan(1);
+      expect(readFileSync(resolve(server.data,'speech.json'),'utf8')).toBe(persisted);
+      await graph.screenshot({path:resolve(artifactDir,`device-tts-${width}-${theme}.png`)});
+      await page.getByRole('button',{name:'Disconnect',exact:true}).click();
+      await expect(sample).toBeDisabled();
+      const tooltipTrigger = graph.locator('.pipeline-sample-trigger');
+      await tooltipTrigger.focus();
+      await expect(graph.getByRole('tooltip')).toHaveText('Connect browser voice to test a sample.');
+      await expect(graph.getByRole('tooltip')).toBeVisible();
+
     } finally { await peer.close(); }
   });
 }

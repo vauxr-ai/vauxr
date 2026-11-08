@@ -91,3 +91,32 @@ it("refreshes open voice overrides after companion mode changes without saving c
   expect(screen.queryByRole("combobox", {name:"TTS backend"})).toBeNull();
   expect(calls).toHaveLength(0);
 });
+
+it("previews the effective override voice only through the authenticated browser and aborts on disconnect", async () => {
+  speech.backends[1].voices.push("sam");
+  speech.effective.voice_id = "sam";
+  let previewSignal: AbortSignal | undefined;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url, init) => {
+    if (String(url) === "/api/speech/preview") {
+      expect(JSON.parse(String(init?.body))).toEqual({device_id:"browser-client",tts_backend:"piper",voice:"sam"});
+      expect(new Headers(init?.headers).get("X-Vauxr-Browser")).toBe("browser-proof");
+      previewSignal = init?.signal as AbortSignal;
+      return new Promise<Response>(() => {});
+    }
+    return originalFetch(url,init);
+  });
+  const {rerender} = panel({browserDeviceId:"browser-client",browserConnected:true,browserCredential:()=>"browser-proof"});
+  await open();
+  await userEvent.click(screen.getByRole("button",{name:"Override agent voice pipeline defaults"}));
+  const graph = screen.getByRole("group",{name:"Standard voice pipeline"});
+  const sample = within(graph).getByRole("button",{name:"Test selected voice"});
+  await userEvent.click(sample);
+  expect(previewSignal?.aborted).toBe(false);
+  expect(command).not.toHaveBeenCalled(); expect(announce).not.toHaveBeenCalled();
+  expect(calls).toHaveLength(0);
+  rerender(<DevicesPanel wsUrl="ws://localhost" token="" wsState="connected" addLog={vi.fn()} browserDeviceId="browser-client" browserConnected={false} browserCredential={()=>"browser-proof"}/>);
+  expect(previewSignal?.aborted).toBe(true);
+  expect(sample).toBeDisabled();
+  expect(sample).toHaveAccessibleDescription("Connect browser voice to test a sample.");
+});

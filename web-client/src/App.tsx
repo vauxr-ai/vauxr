@@ -574,7 +574,7 @@ function OwnerApp() {
             <p>{pageDescription}</p>
           </header>
           {activeSection === "devices" ? (
-            <DevicesPanel
+            <DevicesPanel browserDeviceId={deviceId} browserConnected={isConnected} browserCredential={browserCredential}
               wsUrl={wsUrl}
               token=""
               wsState="connected"

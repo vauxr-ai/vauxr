@@ -1,7 +1,8 @@
+import VoiceSample from "./VoiceSample";
 import AgentPipelineEditor from "./AgentPipelineEditor";
 import RefreshButton from "./RefreshButton";
 import { ownerFetch } from "../auth/api";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 
 export type Backend = {
   id: string;
@@ -115,16 +116,6 @@ export default function SpeechSettings({
   agentId?: string;
   onModeChange?: (mode: "standard" | "realtime" | null) => void;
 }) {
-  const [previewStatus, setPreviewStatus] = useState("");
-  const [previewBusy, setPreviewBusy] = useState(false);
-  const preview = useRef<{controller?: AbortController; audio?: HTMLAudioElement; url?: string}>({});
-  const stopPreview = useCallback(() => {
-    preview.current.controller?.abort();
-    preview.current.audio?.pause();
-    if (preview.current.url) URL.revokeObjectURL(preview.current.url);
-    preview.current = {};
-    setPreviewBusy(false);
-  }, []);
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -265,46 +256,6 @@ export default function SpeechSettings({
     (b) => b.id === (agentId ? defaults?.tts_backend : effective?.tts_backend),
   );
   const selectedVoice = selectedTts ? defaults?.voices[selectedTts.id] || selectedTts.voices[0] || "" : "";
-  const canPreview = !!(browserConnected && browserDeviceId && browserCredential?.() && selectedTts?.kind === "tts" && selectedTts.readiness === "ready" && selectedTts.voices.includes(selectedVoice));
-  useEffect(() => {
-    stopPreview();
-    setPreviewStatus("");
-    return stopPreview;
-  }, [selectedVoice, selectedTts?.id, browserConnected, browserDeviceId, shownMode, stopPreview]);
-  async function testVoice() {
-    stopPreview();
-    if (!canPreview || !selectedTts) return;
-    const controller = new AbortController();
-    preview.current = { controller };
-    setPreviewBusy(true);
-    setPreviewStatus("Preparing voice sample…");
-    try {
-      const response = await ownerFetch("/api/speech/preview", {
-        method: "POST", headers: { "Content-Type": "application/json", "X-Vauxr-Browser": browserCredential?.() || "" },
-        body: JSON.stringify({device_id: browserDeviceId, tts_backend: selectedTts.id, voice: selectedVoice}),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const failure = await response.json().catch(() => ({}));
-        throw new Error(failure.error || `Voice preview failed (${response.status})`);
-      }
-      const blob = await response.blob();
-      if (controller.signal.aborted) return;
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      preview.current = { controller, audio, url };
-      audio.onended = () => { if (!controller.signal.aborted) { stopPreview(); setPreviewStatus("Voice sample finished."); } };
-      audio.onerror = () => { if (!controller.signal.aborted) { stopPreview(); setPreviewStatus("Voice sample playback failed."); } };
-      await audio.play();
-      if (controller.signal.aborted) { audio.pause(); return; }
-      if (!controller.signal.aborted) setPreviewStatus("Playing in this browser.");
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        stopPreview();
-        setPreviewStatus(err instanceof Error ? err.message : "Voice preview failed.");
-      }
-    }
-  }
   const style = "rounded border border-white/10 bg-zinc-900 p-2 text-sm";
   const backendOptions = (kind: Backend["kind"]): SpeechOption[] =>
     (data?.backends || [])
@@ -322,12 +273,7 @@ export default function SpeechSettings({
     {data?.policy && defaults && <AgentPipelineEditor key={agentId} agentId={agentId} agentType={agentType} agentName={agentName || agentId}
       policy={data.policy} defaults={defaults} backends={data.backends} hasProviderDraft={Object.keys(providerDraft).length > 0} saved={saved} busy={busy} mode={shownMode} onModeChange={setEditMode}
       onDraft={patch => void update(patch)} onSave={patch => update({...providerDraft, ...patch})} onRefresh={() => void update()}
-      preview={<div className="speech-preview">
-        <button type="button" disabled={!canPreview || previewBusy} onClick={() => void testVoice()} aria-label="Test selected voice"><svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18"><path d="M11 4 5 9H2v6h3l6 5V4Zm4 4c3 2 3 6 0 8m3-11c5 4 5 10 0 14" fill="none" stroke="currentColor" strokeWidth="2"/></svg> Test</button>
-        {previewBusy && <button type="button" onClick={() => { stopPreview(); setPreviewStatus("Voice sample stopped."); }}>Stop</button>}
-        {!browserConnected && <p>Connect browser voice to test a sample.</p>}
-        {previewStatus && <p role="status">{previewStatus}</p>}
-      </div>}/>}
+      preview={<VoiceSample browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential} backend={selectedTts} voice={selectedVoice} mode={shownMode}/>}/>}
   </section>;
   return (
     <section

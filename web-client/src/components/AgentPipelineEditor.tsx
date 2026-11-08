@@ -126,7 +126,7 @@ export default function AgentPipelineEditor({agentId, agentType, agentName, poli
       }}>{item === "realtime" ? "Live / Realtime" : "Standard"}</button>)}
     </div><RefreshButton label="Discard pipeline edits and refresh" busy={busy || saving} onClick={() => { setProfileDraft(null); setOpen(null); onRefresh(); }}/></div>
     <fieldset disabled={busy || saving} className="pipeline-editor-content" role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${mode}`}>
-      <AgentPipeline mode={mode} agentName={agentName} stt={defaults.stt_backend} tts={defaults.tts_backend} realtime={defaults.realtime_backend}
+      <AgentPipeline ttsIcon={preview} mode={mode} agentName={agentName} stt={defaults.stt_backend} tts={defaults.tts_backend} realtime={defaults.realtime_backend}
         enabled={enabled.includes(mode)} isDefault={defaultMode === mode} onToggleEnabled={toggleEnabled} onSetDefault={() => setDefaultMode(mode)}
         onEdit={(kind, anchor) => setOpen({kind, anchor})} onEditAgent={event => setOpen({kind: "agent", anchor: event.currentTarget})}/>
     </fieldset>
@@ -145,7 +145,6 @@ export default function AgentPipelineEditor({agentId, agentType, agentName, poli
       </> : <>
         <Choices label={open.kind === "realtime" ? "Realtime provider / model" : `${open.kind.toUpperCase()} backend`} value={selected?.id || ""} options={backends.filter(item => item.kind === open.kind).map(item => ({value: item.id, label: item.id, detail: `${item.model} · ${item.readiness}`}))} onChange={value => chooseBackend(open.kind as Backend["kind"], value)}/>
         {(open.kind === "tts" || open.kind === "realtime") && <Choices label={open.kind === "tts" ? "Voice" : "Realtime voice"} value={voice} options={(selected?.voices || []).map(value => ({value, label: value}))} onChange={value => onDraft(open.kind === "realtime" ? {realtime_voice: value} : {voices: {[selected!.id]: value}})}/>}
-        {open.kind === "tts" && preview}
         {open.kind === "realtime" && <p>Voice samples are available for Standard text-to-speech providers only.</p>}
       </>}
     </EntityPopover>}

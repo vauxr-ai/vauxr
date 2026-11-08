@@ -97,3 +97,13 @@
 
 .agent-detail .pipeline-popover .pipeline-choice { flex-direction:row; flex:none; text-align:left; }
 .auth-panel .pipeline-popover input[type="radio"] { appearance:auto; width:18px; height:18px; min-height:0; margin:0; padding:0; border-radius:50%; }
+
+.pipeline-sample { display:flex; flex-direction:column; align-items:center; gap:6px; width:100%; min-width:0; }
+.pipeline-sample-trigger { position:relative; display:inline-flex; border-radius:18px; }
+.pipeline-sample-button { cursor:pointer; padding:0; }
+.pipeline-sample-button:disabled { cursor:not-allowed; opacity:.5; }
+.pipeline-sample-trigger:focus-visible,.pipeline-sample-button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.pipeline-sample-tooltip { position:absolute; z-index:5; bottom:calc(100% + 8px); left:50%; transform:translateX(-50%); width:155px; padding:8px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--text); box-shadow:0 4px 20px #0003; font-size:11px; visibility:hidden; pointer-events:none; }
+.pipeline-sample-trigger:hover .pipeline-sample-tooltip,.pipeline-sample-trigger:focus-within .pipeline-sample-tooltip { visibility:visible; }
+.pipeline-sample-stop { min-height:44px; padding:6px; border-radius:10px; }
+.pipeline-sample-status { font-size:11px; color:var(--muted); overflow-wrap:anywhere; }

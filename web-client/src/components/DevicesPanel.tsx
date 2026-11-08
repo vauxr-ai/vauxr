@@ -1,3 +1,4 @@
+import type { BrowserVoiceProps } from "./VoiceSample";
 import RefreshButton from "./RefreshButton";
 import AccessPanel from "./AccessPanel";
 import EventLog from "./EventLog";
@@ -83,7 +84,7 @@ interface SaveStatus {
   message?: string;
 }
 
-interface Props {
+interface Props extends BrowserVoiceProps {
   logs?: LogEntry[];
   onContext?: (context: string) => void;
   wsUrl: string;
@@ -112,6 +113,7 @@ export default function DevicesPanel({
   addLog,
   onContext,
   logs = [],
+  ...browserVoice
 }: Props) {
   // Device administration is owner-session based, not contingent on a voice socket.
   const baseUrl = wsUrl ? deriveHttpUrl(wsUrl) : window.location.origin;
@@ -292,6 +294,7 @@ export default function DevicesPanel({
             {devices.map((d) => (
               <DeviceCard
                 key={d.id}
+                {...browserVoice}
                 device={d}
                 expanded={!!expanded[d.id]}
                 onToggle={() => toggleExpanded(d.id)}
@@ -311,7 +314,7 @@ export default function DevicesPanel({
   );
 }
 
-interface DeviceCardProps {
+interface DeviceCardProps extends BrowserVoiceProps {
   logs: LogEntry[];
   device: ApiDeviceWithConfig;
   expanded: boolean;
@@ -335,6 +338,7 @@ function DeviceCard({
   addLog,
   httpBase,
   webhooks,
+  ...browserVoice
 }: DeviceCardProps) {
   const [effectiveMode, setEffectiveMode] = useState<"standard" | "realtime" | null | "unknown">("unknown");
   const chatOnly = effectiveMode === null || (effectiveMode === "unknown" && device.chat_only === true);
@@ -490,7 +494,7 @@ function DeviceCard({
             {commandStatus && <p role="status">{commandStatus}</p>}
             {ctlError && !diagnosticsOpen && <p role="alert">{ctlError}</p>}
           </section>
-          <DeviceVoicePipeline deviceId={device.id} onModeChange={setEffectiveMode} transport={<label className="device-field">Voice transport<select aria-label="Voice transport" value={voiceMode === "websocket" ? "websocket" : "webrtc"} disabled={saving || chatOnly} onChange={event => onPatch(device.id, {transport_mode:event.target.value as "websocket" | "webrtc"}, `Voice transport → ${event.target.value}`)}><option value="websocket">WebSocket only · no barge-in</option><option value="webrtc">WebRTC · Standard or Live</option></select></label>} />
+          <DeviceVoicePipeline {...browserVoice} deviceId={device.id} onModeChange={setEffectiveMode} transport={<label className="device-field">Voice transport<select aria-label="Voice transport" value={voiceMode === "websocket" ? "websocket" : "webrtc"} disabled={saving || chatOnly} onChange={event => onPatch(device.id, {transport_mode:event.target.value as "websocket" | "webrtc"}, `Voice transport → ${event.target.value}`)}><option value="websocket">WebSocket only · no barge-in</option><option value="webrtc">WebRTC · Standard or Live</option></select></label>} />
           <section aria-label="Device features" className="device-section space-y-3">
             <h3>Device features</h3>
             <fieldset disabled={saving || chatOnly} className="device-follow-up"><legend>Follow-up</legend><div role="group" aria-label="Follow-up mode">{FOLLOW_UP_OPTIONS.map(value => <button key={value} type="button" aria-pressed={mode === value} onClick={() => onPatch(device.id, {follow_up_mode:value}, `follow_up_mode → ${value}`)}>{value === "auto" ? "Auto" : value === "always" ? "Always" : "Never"}</button>)}</div></fieldset>
