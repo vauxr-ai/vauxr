@@ -55,10 +55,11 @@ export default function Icon({ name, size = 18, className, ...rest }: Props) {
     case "agents":
       return (
         <svg {...common}>
-          <rect x="3" y="3" width="7" height="7" rx="1.5" />
-          <rect x="14" y="3" width="7" height="7" rx="1.5" />
-          <rect x="3" y="14" width="7" height="7" rx="1.5" />
-          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+          <path d="M5 15v-4a7 7 0 0 1 14 0v4" />
+          <rect x="3" y="10" width="4" height="7" rx="2" />
+          <rect x="17" y="10" width="4" height="7" rx="2" />
+          <path d="M19 17c0 3-3 4-6 4h-2" />
+          <path d="m10 11 2 2 2-2" />
         </svg>
       );
     case "devices":

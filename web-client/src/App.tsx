@@ -595,13 +595,7 @@ function OwnerApp() {
           ) : (
             <AgentsPanel onContext={setViewContext} onSelection={setSelection} />
           )}
-          <details className="card diagnostics">
-            <summary>Browser session diagnostics</summary>
-            <StatusBar state={ws.state} transcript={transcript} />
-            <div className="h-64">
-              <EventLog entries={ws.log} onClear={ws.clearLog} />
-            </div>
-          </details>
+
         </div>
       }
       talk={
@@ -678,6 +672,13 @@ function OwnerApp() {
             onSetTalkMode={changeMode}
             onInterrupt={handleInterrupt}
           />
+          {companionOpen && <details className="card diagnostics">
+            <summary>Browser session diagnostics</summary>
+            <StatusBar state={ws.state} transcript={transcript} />
+            <div className="h-64">
+              <EventLog entries={ws.log} onClear={ws.clearLog} />
+            </div>
+          </details>}
         </Companion>
       }
     />

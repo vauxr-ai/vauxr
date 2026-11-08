@@ -23,6 +23,10 @@ def attach_speech_routes(
     authorize: ManagementAuthorization,
     boundary: Callable[[SpeechHandler], SpeechHandler],
 ) -> None:
+    from vauxr.settings.http import attach_settings_routes
+
+    attach_settings_routes(app, authorize, boundary)
+
     async def settings(request: web.Request) -> web.Response:
         if not await authorize(request):
             return web.json_response({"error": "unauthorized"}, status=401)

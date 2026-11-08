@@ -1,3 +1,4 @@
+import AccessPanel from "./AccessPanel";
 import EventLog from "./EventLog";
 import SpeechSettings from "./SpeechSettings";
 import { ownerFetch } from "../auth/api";
@@ -126,6 +127,7 @@ export default function DevicesPanel({
   const api = useHttpApi(baseUrl, token);
   const { listWebhooks } = useWebhooks(baseUrl, token);
 
+  const [addingDevice,setAddingDevice] = useState(false);
   const [devices, setDevices] = useState<ApiDeviceWithConfig[]>([]);
   const [webhooks, setWebhooks] = useState<ApiWebhook[]>([]);
   const [error, setError] = useState("");
@@ -254,6 +256,8 @@ export default function DevicesPanel({
 
   return (
     <div className="card overflow-hidden">
+      <div className="p-4"><button onClick={()=>setAddingDevice(!addingDevice)} aria-expanded={addingDevice}>{addingDevice ? "Close Add Device" : "+ Add Device"}</button></div>
+      {addingDevice && <AccessPanel mode="pairing"/>}
       <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
         <div>
           <h2 className="text-base font-semibold text-zinc-100">Devices</h2>

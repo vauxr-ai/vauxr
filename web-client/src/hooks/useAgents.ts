@@ -2,14 +2,14 @@ import { ownerFetch } from "../auth/api";
 import { useCallback } from "react";
 
 export interface IntegrationMetadata {
-  framework: "openclaw" | "support" | "langgraph";
+  framework: "openclaw" | "support" | "langgraph" | "langchain";
   configuration: "enrolled" | "operator-managed" | "registered" | "builtin" | "local";
 }
 
 export interface ApiAgent {
   id: string;
   name: string;
-  type: "openclaw" | "openclaw-direct" | "support" | "langgraph";
+  type: "openclaw" | "openclaw-direct" | "support" | "langgraph" | "langchain";
   active: boolean;
   createdAt: string;
   builtin?: boolean;

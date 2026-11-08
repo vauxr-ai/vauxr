@@ -17,8 +17,8 @@ export default function SupportSettings({agentId}:{agentId?:string}) {
     return () => control.abort();
   }, [endpointPath]);
   return <section aria-label={agentId ? "Agent model runtime" : "Support runtime"} className="space-y-3">
-    <h3>{agentId ? "Standalone LangGraph runtime" : "Independent Support runtime"}</h3>
-    <p>{agentId ? "Standalone LangGraph with named household actions from Settings. No OpenClaw connection required." : "Built in and available without OpenClaw."} Configure a separately installed local runtime and local model. No provider or model is selected automatically. Supports bounded page navigation, selected-agent display-name changes and highlighting through Vauxr tools. Other requests receive advice.</p>
+    <h3>{agentId ? "Agent model runtime" : "Independent Support runtime"}</h3>
+    <p>{agentId ? "Registered agent with its own runtime and declared tools. No OpenClaw connection required." : "Built in and available without OpenClaw."} Configure a separately installed local runtime and local model. No provider or model is selected automatically. Supports bounded page navigation, selected-agent display-name changes and highlighting through Vauxr tools. Other requests receive advice.</p>
     <p role="status">{status}</p>
     <form className="grid gap-3" onSubmit={async event => {
       event.preventDefault(); setBusy(true);

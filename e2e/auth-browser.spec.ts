@@ -1,3 +1,4 @@
+import { openSettings } from "./auth-fixture";
 // Isolated real aiohttp + clean Chromium. Synthetic clients only; no physical hardware.
 import { test, expect } from "@playwright/test";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
@@ -173,6 +174,8 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
     signature: signed("prove"),
   });
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button",{name:"Devices",exact:true}).click();
+  await page.getByRole("button",{name:"+ Add Device",exact:true}).click();
   await page.getByText("Refresh pairing and identities").click();
   const row = page
     .locator("div.border-t")
@@ -290,6 +293,7 @@ test("owner setup, signed pairing, scoped browser lifecycle, tabs, reload and lo
   await page.getByRole("button", { name: "Disconnect", exact: true }).click();
   // Offline rotation UI: retain queued state, then connect to deliver/save/ACK.
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page,"Access & security");
   await page.getByText("Known offline identity").click();
   await page.getByLabel("Subject ID").fill(identity.deviceId);
   page.once("dialog", (dialog) => dialog.accept());
@@ -453,7 +457,7 @@ test("non-loopback HTTP administration works while browser microphone remains re
   ).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Webhooks", exact: true }),
+    page.getByRole("heading", { name: "Speech to text", exact: true }),
   ).toBeVisible();
   const speechRequests: { url: string; authorization?: string; csrf?: string }[] = [];
   page.on("request", request => {
@@ -462,18 +466,16 @@ test("non-loopback HTTP administration works while browser microphone remains re
       csrf: request.headers()["x-csrf-token"],
     });
   });
-  const globalSpeech = page.getByRole("region", { name: "Global speech", exact: true });
-  await expect(globalSpeech.getByLabel("TTS backend")).toBeVisible();
-  await globalSpeech.getByLabel("STT backend").selectOption("parakeet");
-  await expect(globalSpeech.getByLabel("TTS backend")).toBeEnabled();
-  await globalSpeech.getByLabel("TTS backend").selectOption("kokoro");
-  await expect(globalSpeech.getByText("Effective: parakeet / kokoro / af")).toBeVisible();
-  await expect(globalSpeech.getByRole("option", { name: "kokoro · kokoro-test · unavailable" })).toBeAttached();
-  await globalSpeech.getByRole("combobox", { name: "Voice", exact: true }).selectOption("bf");
-  await expect(globalSpeech.getByText("Effective: parakeet / kokoro / bf")).toBeVisible();
+  await page.getByLabel("Default deployment",{exact:true}).selectOption("parakeet");
+  await expect(page.getByText("Global voice default saved.")).toBeVisible();
+  await openSettings(page,"Text to speech");
+  await page.getByLabel("Default deployment",{exact:true}).selectOption("kokoro");
+  await expect(page.getByLabel("Default voice",{exact:true})).toHaveValue("af");
+  await page.getByLabel("Default voice",{exact:true}).selectOption("bf");
+  await expect(page.getByText("Global voice default saved.")).toBeVisible();
   await page.reload();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await expect(globalSpeech.getByText("Effective: parakeet / kokoro / bf")).toBeVisible();
+  await openSettings(page,"Text to speech");
+  await expect(page.getByLabel("Default voice",{exact:true})).toHaveValue("bf");
   // Serve an offline device projection to expose the existing expandable device card;
   // speech GET/PATCH still reach the real isolated server and persistent store.
   await page.route("**/api/devices", route => route.fulfill({ json: [{

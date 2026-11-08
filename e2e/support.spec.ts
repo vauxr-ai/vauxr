@@ -7,9 +7,9 @@ for (const width of [390, 1366]) test(`built-in Support is independent and hones
   });
   await login(page, server);
   await page.getByRole("button", {name:"View agent Vauxr Support", exact:true}).click();
-  const setup = page.getByRole("region", {name:"Support runtime", exact:true});
+  const setup = page.getByRole("region", {name:/^(Support runtime|Agent model runtime)$/, exact:true});
   await expect(setup).toContainText("Setup needed");
-  await expect(setup.getByLabel("Support provider")).toHaveValue("");
+  await expect(setup.getByRole("combobox")).toHaveValue("");
   await page.getByRole("button", {name:"Connect browser", exact:true}).click();
   const companion = page.locator("#voice-companion");
   await expect(companion.getByLabel("Conversation agent")).toBeEnabled();

@@ -1,3 +1,4 @@
+import { openIntegrations } from "./auth-fixture";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { test, expect, login, requestIntegration, client } from "./auth-fixture";
@@ -18,6 +19,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await page.getByLabel("Appearance").selectOption(theme);
     const { request, secret } = await requestIntegration(server, "Household companion with a long visible name");
     const enrollment = page.getByRole("region", { name: "Integration enrollment", exact: true });
+    await openIntegrations(page);
     await enrollment.getByText("Refresh integration requests").click();
     const row = enrollment.getByRole("region", { name: `Integration request ${request.request_id}`, exact: true });
     await row.getByLabel("Integration matching code").fill(request.user_code);
@@ -25,6 +27,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await row.getByText("Approve matching integration").click();
     const delivery = await client(server, "deliver", secret);
     await client(server, "ack", { ...secret, credential: delivery.credential, saved: true });
+    await page.getByRole("button", {name:"Agents",exact:true}).click();
     await page.getByText("Refresh agents", { exact: true }).click();
     await page.getByRole("button", { name: "View agent Household companion with a long visible name" }).click();
     let sockets = 0;
