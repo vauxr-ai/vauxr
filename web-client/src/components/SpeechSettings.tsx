@@ -332,7 +332,7 @@ export default function SpeechSettings({
         configured model.
       </p>
       {!data && !error && <p role="status">Loading voice configuration…</p>}
-      {!data && error && <button onClick={() => void update()}>Retry voice configuration</button>}
+      {!data && error && <RefreshButton label="Retry voice configuration" busy={busy} onClick={() => update()} />}
       {busy && <p role="status">Checking voice configuration…</p>}
       {saved && <p role="status">{saved}</p>}
       {error && <><p role="alert">{error}</p><p>Refresh to check the stored configuration before retrying a change.</p></>}

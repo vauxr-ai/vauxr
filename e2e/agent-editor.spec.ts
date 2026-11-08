@@ -98,6 +98,12 @@ for (const width of [390, 1366]) for (const theme of ['light', 'dark']) {
       await voice.getByRole('tab',{name:'Standard',exact:true}).scrollIntoViewIfNeeded();
       await page.screenshot({path:resolve(artifactDir,`agent-pipeline-${width}-${theme}-standard.png`)});
       await voice.locator('.agent-pipeline').screenshot({path:resolve(artifactDir,`agent-graph-${width}-${theme}-standard.png`)});
+      const deviceDetails = voice.locator('.pipeline-device-info summary').first();
+      await deviceDetails.focus(); await page.keyboard.press('Space');
+      await expect(voice.locator('.pipeline-device-info').first()).toHaveAttribute('open','');
+      await page.keyboard.press('Space');
+      await voice.getByRole('button',{name:'Edit Speech To Text',exact:true}).click();
+      await expect(voice.getByLabel('STT backend',{exact:true})).toBeFocused();
       const standard = voice.getByRole('tab',{name:'Standard',exact:true});
       await standard.focus(); await page.keyboard.press('ArrowRight');
       await expect(voice.getByRole('tab',{name:'Live / Realtime',exact:true})).toBeFocused();

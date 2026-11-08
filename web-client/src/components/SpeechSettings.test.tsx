@@ -498,3 +498,12 @@ it.each([false, true])("cleans up local playback on disconnect and reports playb
     URL.revokeObjectURL = originalRevoke;
   }
 });
+
+it("recovers initial load failure through the accessible refresh action", async () => {
+  const fetcher = vi.fn().mockRejectedValueOnce(new Error("Offline")).mockResolvedValue({ok:true,json:async()=>view});
+  vi.stubGlobal("fetch", fetcher);
+  render(<SpeechSettings />);
+  fireEvent.click(await screen.findByRole("button", {name:"Retry voice configuration"}));
+  await screen.findByLabelText("TTS backend");
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
