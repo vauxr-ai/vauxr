@@ -106,7 +106,8 @@ it("denies administration without an owner session and requires deliberate save 
   await user.click(screen.getByText("Log in with saved operator token"));
   await screen.findByRole("main");
   expect(screen.getByText("Browser voice connection")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Settings", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Devices", exact: true }));
+  await user.click(screen.getByRole("button", { name: "+ Add Device", exact: true }));
   await screen.findByText("Refresh pairing and identities");
   const listing = fetcher.mock.calls.find(
     ([p]) => p === "/api/enrollment/v1/list",

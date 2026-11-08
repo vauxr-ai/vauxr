@@ -119,8 +119,19 @@ def test_route_inventory_complete():
                  ("POST", "/api/integrations/v1/{action}"),
                  ("POST", "/api/companion/{action}"), ("GET", "/api/support"), ("POST", "/api/support"),
                  ("GET", "/api/plugins"), ("GET", "/api/plugins/openclaw/package"),
-                 ("GET", "/api/interface"), ("POST", "/api/interface"), ("POST", "/api/interface/preview"), ("POST", "/api/local-agents"),
+                 ("GET", "/api/interface"), ("POST", "/api/interface"), ("POST", "/api/interface/preview"), ("GET", "/api/local-agents"), ("POST", "/api/local-agents"),
                  ("GET", "/api/local-agents/{agent_id}/runtime"), ("POST", "/api/local-agents/{agent_id}/runtime"), ("DELETE", "/api/local-agents/{agent_id}")}
+    expected |= {
+        ("GET", "/api/settings/providers"),
+        ("PUT", "/api/settings/providers/profiles/{profile_id}"),
+        ("POST", "/api/settings/providers/profiles/{profile_id}/discover"),
+        ("PUT", "/api/settings/providers/speech-auth"),
+        ("GET", "/api/settings/speech"),
+        ("PUT", "/api/settings/speech/{backend_id}"),
+        ("POST", "/api/settings/speech/{backend_id}/discover"),
+        ("GET", "/api/settings/plugins"),
+        ("PUT", "/api/settings/plugins/{plugin_id}"),
+    }
     expected.add(("GET", "/firmware-delivery/{token}/{filename}"))
     assert actual == expected
     # Speech uses one injected boundary for six path/method combinations.

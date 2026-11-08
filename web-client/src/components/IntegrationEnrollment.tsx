@@ -55,7 +55,7 @@ export default function IntegrationEnrollment() {
           })} />
       ))}
       <p>Approval lets the client receive its own credential once. Access starts only after
-        its save acknowledgement. Then refresh routing agents and explicitly activate it.
+        its save acknowledgement. Then refresh routing agents and explicitly set it as default.
         Rotate or revoke existing access in Pairing and access.</p>
     </section>
   );
@@ -83,7 +83,7 @@ function RequestRow({ request, busy, act }: {
       <p>Agent: {request.agent_id}</p>
       <p>State: {request.state}. Deadline: {new Date(request.expires_at * 1000).toLocaleString()}</p>
       {request.state === "delivered" && <p>Delivery attempted; durable save has NOT been acknowledged.</p>}
-      {request.state === "completed" && <p>Client acknowledged saving; ready for explicit route activation.</p>}
+      {request.state === "completed" && <p>Client acknowledged saving; ready for explicit default-agent selection.</p>}
       {live && request.state === "pending" && <>
         <label>Integration matching code
           <input value={code} autoComplete="off" spellCheck={false} maxLength={8}
@@ -101,7 +101,7 @@ function RequestRow({ request, busy, act }: {
             <li>Connect to its own agent and respond to existing voice requests on that
               agent when active.</li>
           </ul>
-          <p>Agent activation selects voice routing; it does not grant these permissions
+          <p>Setting the default agent selects fallback voice routing; it does not grant these permissions
             or gate device access. Device playback is reserved; no playback URL endpoint is available.</p>
           <p>This does not grant owner administration; credential creation, disclosure, rotation
             or revocation; device configuration, button mappings or speech/provider settings;

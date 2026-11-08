@@ -23,13 +23,17 @@ def catalog() -> list[dict[str, str]]:
         "source": "https://github.com/vauxr-ai/vauxr-openclaw/tree/" + REVISION,
         "sha256": hashlib.sha256(package()).hexdigest(), "download": "/api/plugins/openclaw/package",
         "filename": "vauxr-openclaw-9b3b0f5f.tgz",
-    }, {"id":"langgraph", "name":"LangGraph", "distribution":"bundled"}]
+    }, {"id":"langchain", "name":"LangChain", "distribution":"bundled"}]
 
 
 def attach_plugins(
     app: web.Application,
     boundary: Callable[[Callable[[web.Request], Awaitable[web.StreamResponse]]], Callable[[web.Request], Awaitable[web.StreamResponse]]],
 ) -> None:
+    from vauxr.plugins.settings import attach_plugin_settings
+
+    attach_plugin_settings(app, boundary)
+
     async def handle(request: web.Request) -> web.Response:
         if session_principal(request) is None:
             return web.json_response({"error": "unauthorized"}, status=401)

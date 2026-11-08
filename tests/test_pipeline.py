@@ -270,7 +270,8 @@ async def test_agent_mode_streaming_with_idle_gap(monkeypatch: pytest.MonkeyPatc
         await asyncio.sleep(0.005)
         listener["on_end"]("run-1")
 
-    def send_transcript_stub(device_id: str, text: str) -> bool:
+    def send_transcript_stub(device_id: str, text: str, *, listener=None) -> bool:
+        assert cs.get_response_listener(device_id) is listener
         asyncio.create_task(feed_deltas())
         return True
 
@@ -391,3 +392,27 @@ async def test_run_text_turn_skips_stt(monkeypatch: pytest.MonkeyPatch) -> None:
     assert any(m.get("type") == "transcript" and m.get("text") == "turn off the lights" for m in msgs)
     assert any(m.get("type") == "audio.end" for m in msgs)
     assert oc.calls and oc.calls[0][1] == "turn off the lights"
+
+
+async def test_registered_langchain_standard_dispatch_owns_listener(monkeypatch):
+    """Standard must admit the local runtime after binding its response owner."""
+    from vauxr.agents import langchain
+    agent_registry.register(agent_registry.Agent(
+        "registered", "Registered", "langchain", False, "created", definition_id="household"))
+    agent_registry.activate("registered")
+    observed = []
+    async def answer(agent_id, device_id, text, **_kwargs):
+        observed.append((agent_id, device_id, text))
+        return "The requested action was delivered."
+    monkeypatch.setattr(langchain, "answer", answer)
+    _patch_stt(monkeypatch, "Run my action")
+    tts_calls = []
+    _patch_tts(monkeypatch, calls=tts_calls)
+    ws = FakeWs(); dev_reg.register("dev1", ws=ws)
+    server = AgentServer()
+    await run_voice_turn("dev1", [b"\x00" * 100], ws, None, server, asyncio.Event())
+    assert observed == [("registered", "dev1", "Run my action")]
+    assert "The requested action was delivered." in "".join(tts_calls)
+    assert ws.binary and ws.json_messages()[-1]["type"] == "audio.end"
+    assert not any(item["type"] == "error" for item in ws.json_messages())
+    assert server.get_response_listener("dev1") is None

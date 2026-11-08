@@ -85,14 +85,21 @@ async def run_chat(
             future.set_exception(ChatError("Agent request failed; check action status before retrying"))
 
     listener = {"on_delta": delta, "on_end": end, "on_error": error}
+    local_task: asyncio.Task | None = None
     try:
         async with asyncio.timeout(120):
-            if agent.type == "langgraph":
-                from vauxr.agents.langgraph import answer
-                response = await answer(agent.id, device_id, text)
-            elif agent.type == "support":
-                from vauxr.agents.support import answer
-                response = await answer(device_id, text)
+            if agent.type == "langchain":
+                from vauxr.agents.langchain import answer
+                def is_current() -> bool:
+                    selected = agents.get_for_device(device_id)
+                    return (not abort.is_set() and current(principal)
+                            and selected is not None and selected.id == agent.id
+                            and get_store().owner.get("generation") == owner_generation)
+                local_task = asyncio.create_task(answer(agent.id, device_id, text, is_current=is_current))
+                completed, _ = await asyncio.wait((local_task, future), return_when=asyncio.FIRST_COMPLETED)
+                if future in completed:
+                    await future
+                response = await local_task
             elif agent.type == "openclaw-direct":
                 if direct is None:
                     raise ChatError("Selected agent is not connected")
@@ -122,6 +129,9 @@ async def run_chat(
     except Exception:  # noqa: BLE001 -- peer errors must never disclose credentials
         raise ChatError("Agent request failed; check action status before retrying") from None
     finally:
+        if local_task is not None and not local_task.done():
+            local_task.cancel()
+            await asyncio.gather(local_task, return_exceptions=True)
         server.remove_response_listener(device_id, listener)
         server.release_media_turn(abort)
         connections.release(authority)

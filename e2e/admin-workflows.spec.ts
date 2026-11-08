@@ -30,12 +30,13 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.getByLabel("Appearance").selectOption(theme);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    await expect(page.getByText("No webhooks yet.")).toBeVisible();
+    await expect(page.getByRole("heading", {name:"Speech to text",exact:true})).toBeVisible();
     const sections = page.getByRole("navigation", { name: "Settings sections" });
-    await sections.getByRole("link", { name: "Voice providers/defaults" }).focus();
+    await sections.getByRole("button", { name: /^Text to speech/ }).click();
+    await sections.getByRole("button", { name: /^Speech to text/ }).focus();
     await page.keyboard.press("Enter");
-    await expect(page.locator("#voice-defaults")).toBeFocused();
-    await expect(page.getByLabel("STT backend", { exact: true })).toHaveValue(provider);
+    await expect(page.getByRole("heading",{name:"Speech to text settings",exact:true})).toBeFocused();
+    await expect(page.getByLabel("Default deployment", { exact: true })).toHaveValue(provider);
     for (const select of await page.locator(".administration select").all()) {
       if (!await select.isVisible()) continue;
       expect(await select.evaluate(element => {
@@ -45,7 +46,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
       })).toBe(true);
     }
     await capture("providers");
-    await sections.getByRole("link", { name: "Webhooks", exact: true }).click();
+    await sections.getByRole("button", { name: /^Webhooks/ }).click();
     const hooks = page.getByRole("region", { name: "Webhooks", exact: true });
     await hooks.getByRole("button", { name: "Add webhook" }).click();
     await hooks.getByLabel("Name", { exact: true }).fill("Disposable household action with a long populated name");

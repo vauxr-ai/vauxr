@@ -4,6 +4,7 @@ for (const width of [390,1366]) test(`isolated source preview and publish at ${w
   await page.addInitScript(()=>{(window as any).micCalls=0;navigator.mediaDevices.getUserMedia=async()=>{(window as any).micCalls++;throw Error("Mic off");};});
   await login(page,server);
   await page.getByRole("button",{name:"Settings",exact:true}).click();
+  await page.getByRole("navigation",{name:"Settings sections"}).getByRole("button",{name:/^Interfaces/}).click();
   const editor=page.getByRole("region",{name:"Interface editor",exact:true});
   const html=editor.getByLabel("HTML source",{exact:true});
   await expect(html).toBeVisible();
@@ -25,6 +26,7 @@ for (const width of [390,1366]) test(`isolated source preview and publish at ${w
   await expect(editor).toContainText("Interface published");
   await page.reload();
   await page.getByRole("button",{name:"Settings",exact:true}).click();
+  await page.getByRole("navigation",{name:"Settings sections"}).getByRole("button",{name:/^Interfaces/}).click();
   await expect(editor.getByLabel("HTML source",{exact:true})).toContainText("Safe household view");
   await expect(page.frameLocator('iframe[title="Isolated interface preview"]').getByRole("heading",{name:"Safe household view"})).toBeVisible();
   expect(await page.evaluate(()=>(window as any).micCalls)).toBe(0);

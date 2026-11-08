@@ -1,4 +1,5 @@
 """Owner administration for implemented local integrations, without credential minting."""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,19 +14,23 @@ from aiohttp import web
 
 from vauxr import companion
 from vauxr.agents import registry
-from vauxr.agents.support import EMPTY, validate
+from vauxr.agents.support import runtime_view, validate
 from vauxr.config import get_config
 from vauxr.config_files import unique_object, update_json
+from vauxr.plugins.agents import definition, definitions
 from vauxr.web.owner import session_principal
 
 
 def attach_local_agents(
     app: web.Application,
-    boundary: Callable[[Callable[[web.Request], Awaitable[web.StreamResponse]]], Callable[[web.Request], Awaitable[web.StreamResponse]]],
+    boundary: Callable[
+        [Callable[[web.Request], Awaitable[web.StreamResponse]]],
+        Callable[[web.Request], Awaitable[web.StreamResponse]],
+    ],
 ) -> None:
     async def handle(request: web.Request) -> web.Response:
         if session_principal(request) is None:
-            return web.json_response({"error":"unauthorized"}, status=401)
+            return web.json_response({"error": "unauthorized"}, status=401)
         try:
             if request.query_string:
                 raise ValueError()
@@ -42,37 +47,74 @@ def attach_local_agents(
                     raise ValueError()
             agent_id = request.match_info.get("agent_id")
             if agent_id is None:
-                if set(body) != {"framework", "name"} or body["framework"] != "langgraph":
+                if request.method == "GET":
+                    return web.json_response(
+                        {"definitions": definitions()}, headers={"Cache-Control": "no-store"}
+                    )
+                if set(body) != {"definition_id", "name"}:
+                    raise ValueError()
+                try:
+                    selected = definition(body["definition_id"])
+                except StopIteration:
+                    raise ValueError() from None
+                if selected["framework"] != "langchain":
                     raise ValueError()
                 name = body["name"]
                 if not companion._safe_name(name):
                     raise ValueError()
-                agent = registry.Agent(secrets.token_hex(16), name.strip(), "langgraph", False, datetime.now(UTC).isoformat())
+                agent = registry.Agent(
+                    secrets.token_hex(16),
+                    name.strip(),
+                    "langchain",
+                    False,
+                    datetime.now(UTC).isoformat(),
+                    definition_id=selected["id"],
+                )
                 registry.register(agent)
-                return web.json_response(asdict(agent), status=201, headers={"Cache-Control":"no-store"})
+                return web.json_response(asdict(agent), status=201, headers={"Cache-Control": "no-store"})
             agent = registry.get_by_id(agent_id)
-            if agent is None or agent.type != "langgraph":
-                return web.json_response({"error":"Local LangGraph agent not found"}, status=404)
+            if agent is None or agent.type != "langchain":
+                return web.json_response({"error": "Registered LangChain agent not found"}, status=404)
             path = Path(get_config().data_dir) / "local-agent-models.json"
             if request.method == "DELETE":
+                if agent.builtin:
+                    return web.json_response({"error": "Default bundled agent cannot be removed"}, status=409)
                 from vauxr.speech.store import get_store
+
                 store = get_store()
                 if agent.active or agent_id in store.assignments.values():
-                    return web.json_response({"error":"Choose another fallback and unassign all devices before removal"}, status=409)
+                    return web.json_response(
+                        {"error": "Choose another fallback and unassign all devices before removal"},
+                        status=409,
+                    )
                 registry.remove(agent_id)
                 if path.exists():
-                    update_json(path, lambda current: {k:v for k,v in current.items() if k != agent_id})
-                return web.json_response({"removed":True})
+                    update_json(path, lambda current: {k: v for k, v in current.items() if k != agent_id})
+                return web.json_response({"removed": True})
             if request.method == "POST":
                 config = validate(body)
-                update_json(path, lambda current: {**current,agent_id:config})
-            from vauxr.agents.langgraph import settings
+                if agent_id == "vauxr-support":
+                    update_json(Path(get_config().data_dir) / "support.json", lambda _: config)
+                else:
+                    update_json(path, lambda current: {**current, agent_id: config})
+            from vauxr.agents.langchain import settings
+
             config = settings(agent_id)
-            return web.json_response({**config,"status":"configured" if config != EMPTY else "setup_needed"}, headers={"Cache-Control":"no-store"})
+            return web.json_response(
+                runtime_view(config),
+                headers={"Cache-Control": "no-store"},
+            )
         except (ValueError, TypeError, KeyError, TimeoutError):
-            return web.json_response({"error":"Use a supported local framework, valid display name and explicit local runtime settings"}, status=400)
+            return web.json_response(
+                {
+                    "error": "Use a supported local framework, valid display name and explicit local runtime settings"
+                },
+                status=400,
+            )
         except OSError:
-            return web.json_response({"error":"Save unavailable; reload before retrying"}, status=503)
+            return web.json_response({"error": "Save unavailable; reload before retrying"}, status=503)
+
+    app.router.add_get("/api/local-agents", boundary(handle))
     app.router.add_post("/api/local-agents", boundary(handle))
     app.router.add_get("/api/local-agents/{agent_id}/runtime", boundary(handle))
     app.router.add_post("/api/local-agents/{agent_id}/runtime", boundary(handle))

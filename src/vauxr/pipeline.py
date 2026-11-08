@@ -237,15 +237,6 @@ async def _route_via_agent(
         async def send_audio_end(follow_up: bool) -> None:
             await _send_audio_end(ws, follow_up)
 
-    sent = agent_server.send_transcript(device_id, transcript_text)
-    if not sent:
-        await _send_json(
-            ws, {"type": "error", "code": "NO_AGENT", "message": "Active agent not connected"}
-        )
-        if not abort.is_set():
-            await send_audio_end(False)
-        return
-
     log.info("Awaiting agent response for %s", device_id)
     idle_pause_ms = get_config().streaming_tts.idle_pause_ms
     start_state = {"sent_start": False}
@@ -329,6 +320,12 @@ async def _route_via_agent(
     abort_waiter.add_done_callback(_on_abort)
 
     try:
+        # Bind the exact response owner before dispatch, including local runtimes.
+        if not agent_server.send_transcript(device_id, transcript_text, listener=listener):
+            await _send_json(ws, {"type": "error", "code": "NO_AGENT", "message": "Active agent not connected"})
+            if not abort.is_set():
+                await send_audio_end(False)
+            return
         try:
             full_reply = await asyncio.wait_for(response_done, timeout=_AGENT_RESPONSE_TIMEOUT_S)
         except TimeoutError:

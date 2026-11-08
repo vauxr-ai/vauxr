@@ -26,7 +26,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await expect(metadata.getByText(/Registered route/)).toBeVisible();
     await expect(metadata.getByText(/does not prove connectivity/)).toBeVisible();
     await expect(metadata.getByRole("button")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Active", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Default", exact: true })).toBeDisabled();
     await metadata.scrollIntoViewIfNeeded();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(sockets).toBe(0);

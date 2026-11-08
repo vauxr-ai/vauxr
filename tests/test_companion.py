@@ -238,6 +238,7 @@ async def test_independent_support_executes_real_local_model_tool_request(portal
     from vauxr.config_files import update_json
 
     _, _, _, first, _ = portal
+    agents.ensure_support()
     published = await (await post(portal, "context", context(first))).json()
     rounds = []
 

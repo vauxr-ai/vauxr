@@ -17,7 +17,7 @@ from vauxr.config_files import invalid, read_json, update_json
 if TYPE_CHECKING:
     from vauxr.auth.store import CredentialStore
 
-AgentType = Literal["openclaw", "openclaw-direct", "support", "langgraph"]
+AgentType = Literal["openclaw", "openclaw-direct", "langchain"]
 
 
 @dataclass
@@ -29,6 +29,7 @@ class Agent:
     createdAt: str
     builtin: bool | None = None
     integration: bool = False
+    definition_id: str | None = None
 
 
 AgentPublic = Agent
@@ -60,7 +61,7 @@ def _decode(data: object, path: Path) -> tuple[list[Agent], str]:
         if (
             not isinstance(row, dict)
             or not {"id", "name", "type", "createdAt"} <= row.keys()
-            or row.keys() - {"id", "name", "type", "createdAt", "builtin", "integration"}
+            or row.keys() - {"id", "name", "type", "createdAt", "builtin", "integration", "definition_id"}
         ):
             raise invalid(
                 path,
@@ -69,7 +70,7 @@ def _decode(data: object, path: Path) -> tuple[list[Agent], str]:
             )
         if (
             not all(isinstance(row[key], str) and row[key] for key in ("id", "name", "createdAt"))
-            or row["type"] not in ("openclaw", "openclaw-direct", "support", "langgraph")
+            or row["type"] not in ("openclaw", "openclaw-direct", "langchain")
             or type(row.get("integration", False)) is not bool
             or ("builtin" in row and type(row["builtin"]) is not bool)
         ):
@@ -78,10 +79,19 @@ def _decode(data: object, path: Path) -> tuple[list[Agent], str]:
             row["type"] == "openclaw-direct" and (not row.get("builtin") or row.get("integration"))
         ):
             raise invalid(path, field, "OpenClaw Direct must use its builtin ID and type")
-        if (row["type"] == "support") != (row["id"] == "vauxr-support") or (
-            row["type"] == "support" and (not row.get("builtin") or row.get("integration"))
+        if row["type"] == "langchain":
+            from vauxr.plugins.agents import definition
+            try:
+                definition(row.get("definition_id", ""))
+            except (StopIteration, TypeError):
+                raise invalid(path, field, "Unknown registered agent definition") from None
+        if row["id"] == "vauxr-support" and (
+            row["type"] != "langchain" or row.get("definition_id") != "vauxr-support"
+            or not row.get("builtin") or row.get("integration")
         ):
-            raise invalid(path, field, "Support must use its built-in identity")
+            raise invalid(path, field, "Default Support must retain its registered builtin identity")
+        if row["type"] == "langchain" and row.get("integration"):
+            raise invalid(path, field, "Registered local agents do not use integration credentials")
         agents.append(Agent(**row, active=row["id"] == data["active_agent"]))
     ids = {a.id for a in agents}
     if len(ids) != len(agents) or (data["active_agent"] and data["active_agent"] not in ids):
@@ -114,6 +124,22 @@ def load() -> None:
     path = _path()
     if path.exists():
         data = read_json(path)
+        def migrate(current: dict) -> dict:
+            import copy
+            migrated = copy.deepcopy(current)
+            if not isinstance(migrated, dict) or not isinstance(migrated.get("agents"), list):
+                _decode(current, path)
+            for row in migrated["agents"]:
+                if not isinstance(row, dict):
+                    _decode(current, path)
+                if row.get("type") in ("support", "langgraph"):
+                    row["definition_id"] = "vauxr-support" if row["type"] == "support" else "household"
+                    row["type"] = "langchain"
+            _decode(migrated, path)
+            return migrated
+        migrated = migrate(data)
+        if migrated != data:
+            data = update_json(path, migrate)
         agents, active = _decode(data, path)
         if get_config().openclaw.url and not any(a.id == "openclaw-direct" for a in agents):
             direct = Agent(
@@ -151,8 +177,8 @@ def ensure_support() -> None:
     _ensure_loaded()
     if get_by_id("vauxr-support") is not None:
         return
-    support = Agent("vauxr-support", "Vauxr Support", "support", False,
-                    datetime.fromtimestamp(0, tz=UTC).isoformat(), True)
+    support = Agent("vauxr-support", "Vauxr Support", "langchain", False,
+                    datetime.fromtimestamp(0, tz=UTC).isoformat(), True, definition_id="vauxr-support")
 
     def change(data: dict) -> dict:
         agents, active = _decode(data, _path())

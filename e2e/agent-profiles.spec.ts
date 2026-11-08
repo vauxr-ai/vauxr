@@ -1,0 +1,91 @@
+import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { test, expect, login } from "./auth-fixture";
+
+for (const width of [390, 1366]) test(`saved profile drives registered runtime after restart at ${width}`, async ({ page, server }) => {
+  test.setTimeout(60000);
+  page.setDefaultTimeout(10000);
+  const calls: any[] = [];
+  const transport = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    const body = JSON.parse(raw);
+    calls.push({ path: req.url, body });
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify(req.url === "/api/show" ? { details: {} } : {
+      done: true, message: { content: `Deterministic transport reply from ${body.model}` },
+    }));
+  });
+  await new Promise<void>(done => transport.listen(0, "127.0.0.1", done));
+  const port = (transport.address() as { port: number }).port;
+  try {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.addInitScript(() => {
+      (window as any).micCalls = 0; (window as any).playCalls = 0;
+      navigator.mediaDevices.getUserMedia = async () => { (window as any).micCalls++; throw Error("Mic prohibited"); };
+      HTMLMediaElement.prototype.play = async () => { (window as any).playCalls++; throw Error("Playback prohibited"); };
+    });
+    await login(page, server);
+    console.log(`Profile ${width}: logged in`);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: /^Model providers/ }).click();
+    await page.getByRole("button", { name: "+ Add provider profile", exact: true }).click();
+    await page.getByLabel("Profile ID", { exact: true }).fill("selected-local");
+    await page.getByLabel("Display name", { exact: true }).fill("Selected local fixture");
+    await page.getByLabel("Endpoint", { exact: true }).fill(`http://127.0.0.1:${port}`);
+    await page.getByLabel("Model ID", { exact: true }).fill("profile-model");
+    await page.getByRole("button", { name: "Save provider profile", exact: true }).click();
+    await expect(page.getByText(/Provider profile saved/)).toBeVisible();
+    console.log(`Profile ${width}: saved profile`);
+    await page.getByRole("button", { name: "Agents", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Default", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "+ Add Agent", exact: true }).click();
+    await expect(page.getByLabel("Registered implementation").locator("option")).toHaveText([
+      "Household assistant · langchain", "Vauxr Support · langchain",
+    ]);
+    console.log(`Profile ${width}: catalog verified`);
+    await page.getByLabel("Registered implementation").selectOption("household");
+    await page.getByLabel("Agent name", { exact: true }).fill("Profile household");
+    await page.getByRole("button", { name: "Create agent", exact: true }).click();
+    console.log(`Profile ${width}: created agent`);
+    const runtime = page.getByRole("region", { name: "Agent model runtime", exact: true });
+    await runtime.getByLabel("Model provider", { exact: true }).selectOption("profile");
+    await runtime.getByLabel("Model profile", { exact: true }).selectOption("selected-local");
+    await runtime.getByRole("button", { name: "Save agent runtime", exact: true }).click();
+    await expect(runtime.getByRole("status")).toContainText("Saved. Configured");
+    console.log(`Profile ${width}: runtime selected`);
+    const registry = JSON.parse(readFileSync(resolve(server.data, "agents.json"), "utf8"));
+    const agent = registry.agents.find((a: any) => a.name === "Profile household");
+    expect(JSON.parse(readFileSync(resolve(server.data, "local-agent-models.json"), "utf8"))[agent.id]).toEqual({ profile_id: "selected-local" });
+    expect(registry.active_agent).toBe("vauxr-support");
+    const field = await runtime.getByLabel("Model profile", { exact: true }).boundingBox();
+    expect(field!.width).toBeGreaterThan(200);
+    expect(field!.x + field!.width).toBeLessThanOrEqual(width);
+    await runtime.screenshot({ path: `/tmp/vauxr-b2-integrated-runtime-${width}.png` });
+    await server.restart();
+    await page.reload();
+    await page.getByRole("button", { name: "View agent Profile household", exact: true }).click();
+    await expect(runtime.getByLabel("Model profile", { exact: true })).toHaveValue("selected-local");
+    await page.getByRole("button", { name: "Connect browser", exact: true }).click();
+    const companion = page.locator("#voice-companion");
+    await companion.getByLabel("Conversation agent", { exact: true }).selectOption(agent.id);
+    await companion.getByLabel("Text message", { exact: true }).fill("Verify selected runtime");
+    await companion.getByRole("button", { name: "Send text", exact: true }).click();
+    await expect(companion.getByLabel("Agent text response", { exact: true })).toContainText("Deterministic transport reply from profile-model");
+    expect(calls.map(c => c.path)).toEqual(["/api/show", "/api/chat"]);
+    expect(calls[1].body.model).toBe("profile-model");
+    expect(calls[1].body.tools.map((t: any) => t.function.name)).toContain("vauxr_household_action");
+    expect(await page.evaluate(() => [(window as any).micCalls, (window as any).playCalls])).toEqual([0, 0]);
+    await page.screenshot({ path: `/tmp/vauxr-b2-integrated-response-${width}.png`, fullPage: true });
+    await companion.getByRole("button", { name: "Collapse voice companion", exact: true }).click();
+    const card = page.getByRole("listitem").filter({ has: page.getByRole("button", { name: "View agent Profile household", exact: true }) });
+    page.once("dialog", dialog => dialog.accept());
+    await card.getByRole("button", { name: "Set as default", exact: true }).click();
+    await expect(card.getByRole("button", { name: "Default", exact: true })).toBeDisabled();
+    expect(JSON.parse(readFileSync(resolve(server.data, "agents.json"), "utf8")).active_agent).toBe(agent.id);
+  } finally {
+    transport.closeAllConnections();
+    await new Promise<void>((done, reject) => transport.close(error => error ? reject(error) : done()));
+  }
+});

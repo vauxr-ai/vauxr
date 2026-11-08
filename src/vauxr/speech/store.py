@@ -216,12 +216,12 @@ class SpeechStore:
     def _local_standard(agent_id: str) -> bool:
         from vauxr.agents import registry
         agent = registry.get_by_id(agent_id)
-        return agent is not None and agent.type == "langgraph"
+        return agent is not None and agent.type == "langchain"
 
     def agent_defaults(self, agent_id: str) -> dict:
         policy = self.agents.get(agent_id)
         if not policy:
-            return {**self.defaults, "mode": "standard"} if (agent_id == "vauxr-support" or self._local_standard(agent_id)) else dict(self.defaults)
+            return {**self.defaults, "mode": "standard"} if self._local_standard(agent_id) else dict(self.defaults)
         selection = policy["selection"]
         return {
             **self.defaults,
@@ -236,7 +236,6 @@ class SpeechStore:
     def managed(self, device_id: str) -> bool:
         return (
             device_id in self.assignments
-            or self.agent_id(device_id) == "vauxr-support"
             or self._local_standard(self.agent_id(device_id))
             or self.agent_id(device_id) in self.agents
             or (bool(self.agents) and not self.agent_id(device_id))

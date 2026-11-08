@@ -1,3 +1,4 @@
+import { openIntegrations } from "./auth-fixture";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { test, expect, login, requestIntegration, client, socket } from "./auth-fixture";
@@ -22,6 +23,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await page.getByLabel("Appearance").selectOption(theme);
     const { request, secret } = await requestIntegration(server, "Household text companion");
     const enrollment = page.getByRole("region", { name: "Integration enrollment", exact: true });
+    await openIntegrations(page);
     await enrollment.getByText("Refresh integration requests").click();
     const row = enrollment.getByRole("region", { name: `Integration request ${request.request_id}`, exact: true });
     await row.getByLabel("Integration matching code").fill(request.user_code);
@@ -31,6 +33,7 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"]) {
     await client(server, "ack", { ...secret, credential: delivery.credential, saved: true });
     const agent = await socket(server, "/agent", { type: "agent.auth", token: delivery.credential });
     try {
+      await page.getByRole("button", {name:"Agents",exact:true}).click();
       await page.getByText("Refresh agents", { exact: true }).click();
       await page.getByRole("button", { name: "View agent Household text companion" }).click();
       const voice = page.getByRole("region", { name: "Agent voice", exact: true });
