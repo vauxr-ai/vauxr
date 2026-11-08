@@ -3,10 +3,6 @@ import { ownerFetch, jsonResponse, randomId } from "../auth/api";
 import { useAgents, type ApiAgent } from "../hooks/useAgents";
 
 export interface Selection { id: string; name: string }
-interface Proposal {
-  proposal_id: string; revision: string; resource_id: string;
-  old_value: string; new_value: string;
-}
 interface Props {
   browserId: string;
   credential: () => string;
@@ -22,7 +18,6 @@ export default function CompanionControls({ browserId, credential, epoch, route,
   const [agentId, setAgentId] = useState("");
   const [revision, setRevision] = useState("");
   const [draft, setDraft] = useState("");
-  const [proposal, setProposal] = useState<Proposal | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
@@ -47,7 +42,7 @@ export default function CompanionControls({ browserId, credential, epoch, route,
 
   useEffect(() => {
     const attempt = ++generation.current;
-    setRevision(""); setProposal(null); setError(""); setDraft("");
+    setRevision(""); setError(""); setDraft("");
     if (!browserId) return;
     // Serialize navigation updates, including reconnects; an older request cannot
     // overwrite a later selection just because its response arrived last.
@@ -74,6 +69,7 @@ export default function CompanionControls({ browserId, credential, epoch, route,
     <label>Conversation agent
       <select aria-describedby="companion-selected-agent" aria-label="Conversation agent" value={agentId} disabled={!browserId || busy || chatBusy}
         onChange={event => { const value = event.target.value; void run(async () => {
+          generation.current++; setRevision("");
           setReply(""); setChatError("");
           onSwitch();
           await request("select", { agent_id: value }); setAgentId(value); setRefresh(n => n + 1);
@@ -88,9 +84,14 @@ export default function CompanionControls({ browserId, credential, epoch, route,
       event.preventDefault();
       if (!browserId || !text.trim() || busy || chatBusy) return;
       const message = text.trim();
+      const attempt = generation.current;
       setChatBusy(true); setChatError(""); setReply("");
       void request("chat", { request_id: randomId(), text: message }).then(result => {
+        if (attempt !== generation.current) return;
         setReply(result.text); setText("");
+        setRefresh(n => n + 1);
+        window.dispatchEvent(new Event("companion-resource-changed"));
+        window.dispatchEvent(new Event("agent-route-changed"));
       }).catch(() => setChatError("Text request failed or its outcome is uncertain. Check action status before sending again."))
         .finally(() => setChatBusy(false));
     }}>
@@ -102,30 +103,20 @@ export default function CompanionControls({ browserId, credential, epoch, route,
       {chatError && <p role="alert">{chatError}</p>}
       {reply && <p className="companion-reply" role="status" aria-label="Agent text response">{reply}</p>}
     </form>
-    {selection && <div className="companion-proposal">
+    {selection && <div className="companion-setting">
       <p>Selected agent: {selection.name} · Display name</p>
-      <p className="text-xs">Context is untrusted page data. You enter this proposal; integration-generated UI proposals are not connected. Changes require your confirmation.</p>
-      <label>Proposed display name
-        <input aria-label="Proposed display name" maxLength={120} value={draft}
-          disabled={!revision || busy} onChange={event => { setDraft(event.target.value); setProposal(null); }} />
+      <label>Display name
+        <input aria-label="Display name" maxLength={120} value={draft}
+          disabled={!revision || busy || chatBusy} onChange={event => setDraft(event.target.value)} />
       </label>
-      <button disabled={!revision || !draft.trim() || busy} onClick={() => void run(async () => {
-        const attempt = generation.current;
-        const result = await request("propose", { revision, new_value: draft });
-        if (attempt === generation.current) setProposal(result);
-      })}>Review name change</button>
-      {proposal && <div role="group" aria-label="Confirm display name change">
-        <p>Agent {proposal.resource_id}</p>
-        <p>Display name: <strong>{proposal.old_value}</strong> → <strong>{proposal.new_value}</strong></p>
-        <button disabled={busy} onClick={() => void run(async () => {
-          const pending = proposal; setProposal(null); setRevision("");
-          await request("confirm", { revision: pending.revision, proposal_id: pending.proposal_id });
-          setRefresh(n => n + 1);
-          window.dispatchEvent(new Event("companion-resource-changed"));
-          window.dispatchEvent(new Event("agent-route-changed"));
-        })}>Confirm display name change</button>
-        <button onClick={() => setProposal(null)}>Cancel</button>
-      </div>}
+      <button disabled={!revision || !draft.trim() || busy || chatBusy} onClick={() => void run(async () => {
+        await jsonResponse(await ownerFetch(`/api/agents/${selection.id}`, {
+          method: "PATCH", body: JSON.stringify({ name: draft }),
+        }));
+        setRevision(""); setRefresh(n => n + 1);
+        window.dispatchEvent(new Event("companion-resource-changed"));
+        window.dispatchEvent(new Event("agent-route-changed"));
+      })}>Save display name</button>
     </div>}
     {error && <p role="alert">{error}</p>}
   </div>;

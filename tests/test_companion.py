@@ -47,25 +47,10 @@ async def post(portal, action, body):
     return await client.post("/api/companion/" + action, headers=headers, json=body)
 
 
-async def test_owner_confirm_persists_and_replay_navigation_concurrent_fail(portal):
-    client, headers, _store, first, _second = portal
-    for invalidate in ("navigation", "concurrent", "none"):
-        response = await post(portal, "context", context(agents.get_by_id(first.id)))
-        assert response.status == 200
-        revision = (await response.json())["revision"]
-        proposal = await post(portal, "propose", {"browser_id": "B1", "revision": revision, "new_value": "Changed"})
-        assert proposal.status == 200
-        proposal = await proposal.json()
-        assert proposal["old_value"] == agents.get_by_id(first.id).name
-        assert proposal["resource_id"] == first.id
-        if invalidate == "navigation":
-            assert (await post(portal, "context", {"browser_id": "B1", "route": "settings",
-                    "resource_type": None, "resource_id": None, "setting_key": None, "current_value": None})).status == 200
-        elif invalidate == "concurrent":
-            assert (await client.patch(f"/api/agents/{first.id}", headers=headers, json={"name": "Concurrent"})).status == 200
-        body = {"browser_id": "B1", "revision": revision, "proposal_id": proposal["proposal_id"]}
-        assert (await post(portal, "confirm", body)).status == (200 if invalidate == "none" else 409)
-        assert (await post(portal, "confirm", body)).status == 409
+async def test_existing_settings_rename_persists(portal):
+    client, headers, _, first, _ = portal
+    response = await client.patch(f"/api/agents/{first.id}", headers=headers, json={"name": "Changed"})
+    assert response.status == 200
     agents._reset_for_tests()
     assert agents.get_by_id(first.id).name == "Changed"
     assert agents.get_active().id == first.id
@@ -97,14 +82,6 @@ async def test_auth_owner_browser_kind_identity_csrf_and_cross_browser(portal):
     ]:
         response = await client.post("/api/companion/context", headers={**headers, **patch}, json=body)
         assert response.status == expected
-    response = await post(portal, "context", context(first))
-    revision = (await response.json())["revision"]
-    response = await post(portal, "propose", {"browser_id": "B1", "revision": revision, "new_value": "Safe"})
-    proposal = await response.json()
-    response = await client.post("/api/companion/confirm", headers={**headers, "X-Vauxr-Browser": "B2-secret"},
-        json={"browser_id": "B2", "revision": revision, "proposal_id": proposal["proposal_id"]})
-    assert response.status == 409
-    assert agents.get_by_id(first.id).name == first.name
 
 
 async def test_selector_persistence_isolation_and_conflict(portal):
@@ -161,22 +138,13 @@ async def test_actual_standard_and_live_dispatch_context_without_credentials(por
             assert result["messages"][-1]["role"] == "user"
             assert "Untrusted browser UI data" in result["messages"][-1]["content"]
             assert '"route": "settings"' in result["messages"][-1]["content"]
-    await server._handle_authenticated_message(conn, {"type": "agent.ui.proposal",
+    await server._handle_authenticated_message(conn, {"type": "agent.ui.name.update",
         "deviceId": "B1", "new_value": "Not executed"})
-    assert json.loads(conn.ws.send_str.call_args.args[0])["code"] == "FORBIDDEN"
+    assert json.loads(conn.ws.send_str.call_args.args[0])["error"] == "Name update unavailable"
     assert agents.get_by_id(first.id).name == "Household"
     # Credential retirement immediately removes context even if the UI stays open.
     get_store().replace(tuple(record for record in get_store().records if record.id != "B1-credential"))
     assert companion.untrusted("B1") == ""
-
-
-@pytest.mark.parametrize("value", ["", "\u200bhidden", "\u0085hidden", "x" * 121])
-async def test_proposed_names_are_bounded_and_sanitized(portal, value):
-    response = await post(portal, "context", context(portal[3]))
-    revision = (await response.json())["revision"]
-    response = await post(portal, "propose", {"browser_id": "B1", "revision": revision, "new_value": value})
-    assert response.status == 409
-    assert agents.get_by_id(portal[3].id).name == "Household"
 
 
 async def test_duplicate_keys_queries_and_unknown_actions_are_denied(portal):
@@ -206,3 +174,28 @@ async def test_fragmented_context_body_and_oversized_denial(portal):
     assert response.status == 200
     response = await client.post("/api/companion/context", headers=headers, data=b" " * 4097)
     assert response.status == 409
+
+
+async def test_trusted_plugin_rename_needs_no_ui_lease_and_preserves_identity(portal):
+    _, _, _, first, second = portal
+    server = AgentServer()
+    conn = _Connection(SimpleNamespace(closed=False, send_str=AsyncMock(), close=AsyncMock()))
+    conn.principal = authenticate("agent-secret")
+    conn.agent = first
+    server._connections[first.id] = conn
+    # No published view, transcript, selected target, revision or admission is needed.
+    for value in ("Kitchen helper", "Kitchen helper updated"):
+        await server._handle_authenticated_message(conn, {"type": "agent.ui.name.update",
+            "deviceId": "B1", "requestId": value, "resourceId": second.id, "newValue": value})
+        frame = json.loads(conn.ws.send_str.call_args.args[0])
+        assert frame["requestId"] == value
+        assert frame["result"] == {"resource_id": second.id, "name": value}
+    agents._reset_for_tests()
+    assert agents.get_by_id(second.id).name == "Kitchen helper updated"
+    assert agents.get_active().id == first.id
+    # Existing authenticated-connection identity checks remain enforced.
+    conn.agent = second
+    await server._handle_authenticated_message(conn, {"type": "agent.ui.name.update",
+        "deviceId": "B1", "requestId": "mismatch", "resourceId": first.id, "newValue": "Wrong"})
+    assert json.loads(conn.ws.send_str.call_args.args[0])["code"] == "FORBIDDEN"
+    assert agents.get_by_id(first.id).name == "Household"

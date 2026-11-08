@@ -168,7 +168,13 @@ class AgentServer:
                 return False
             admission = object()  # Keep correlation identity, never a reply closure/history.
             self._bound_response_admissions[device_id] = admission
-        self._response_origins.append(_ResponseOrigin(conn, device_id, admission=admission))
+        from vauxr.companion import turn_context
+
+        context = turn_context(device_id)
+        if context is not None:
+            frame["uiContext"] = context
+        self._response_origins.append(_ResponseOrigin(
+            conn, device_id, admission=admission))
         # Schedule the WS send on the event loop; the pipeline calls this
         # synchronously, so we return True optimistically once we've queued.
         asyncio.create_task(
@@ -252,8 +258,12 @@ class AgentServer:
                 if msg.type != WSMsgType.TEXT:
                     continue
                 try:
-                    payload = json.loads(msg.data)
-                except json.JSONDecodeError:
+                    if len(msg.data) > 65536:
+                        await ws.close()
+                        return
+                    from vauxr.config_files import unique_object
+                    payload = json.loads(msg.data, object_pairs_hook=unique_object)
+                except ValueError:
                     await _send_json(
                         ws,
                         {"type": "error", "code": "INVALID_MESSAGE", "message": "Invalid JSON"},
@@ -366,6 +376,7 @@ class AgentServer:
                 "agent.response.end",
                 "agent.response.error",
                 "agent.realtime.result",
+                "agent.ui.name.update",
             }
         ):
             audit_denial(authenticated)
@@ -382,6 +393,26 @@ class AgentServer:
         msg_type = msg["type"]
         is_selected = active is not None and active.id == conn.agent.id
         origin = None
+        if msg_type == "agent.ui.name.update":
+            request_id = msg.get("requestId")
+            try:
+                if (set(msg) != {"type", "deviceId", "requestId", "resourceId", "newValue"}
+                        or not isinstance(request_id, str) or not 1 <= len(request_id) <= 64
+                        or not isinstance(device_id, str) or not 1 <= len(device_id) <= 128
+                        or not isinstance(msg["resourceId"], str)):
+                    raise ValueError("invalid name update")
+                # The authenticated running integration is trusted. UI context identifies
+                # a target; it is not a per-action permission or turn lease.
+                if not agent_registry.rename(msg["resourceId"], msg["newValue"]):
+                    raise ValueError("agent unavailable")
+                await _send_json(conn.ws, {"type": "agent.ui.result", "requestId": request_id,
+                                           "deviceId": device_id,
+                                           "result": {"resource_id": msg["resourceId"],
+                                                      "name": msg["newValue"].strip()}})
+            except (ValueError, TypeError, KeyError, OSError):
+                await _send_json(conn.ws, {"type": "agent.ui.result", "requestId": request_id,
+                                           "deviceId": device_id, "error": "Name update unavailable"})
+            return
         if msg_type == "agent.realtime.result":
             if not isinstance(msg.get("requestId"), str):
                 await _send_json(
