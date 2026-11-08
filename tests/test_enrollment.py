@@ -1,8 +1,10 @@
 """Adversarial enrollment tests with synthetic keys and credentials only."""
 
+import base64
 import copy
 import json
 import logging
+import random
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
@@ -80,9 +82,28 @@ def approve(service, row, code, resolve):
     assert service.execute("approve", body, resolve) == {"status": "approved", "device_id": row["device_id"]}
 
 
+@pytest.fixture
+def projection_setup(monkeypatch, request):
+    # Scope synthetic entropy to this projection test, including owner setup:
+    # random four-digit codes can otherwise collide with unrelated verifier hashes.
+    entropy = random.Random(7391)
+    monkeypatch.setattr(enrollment.secrets, "token_hex", lambda n: entropy.randbytes(n).hex())
+    monkeypatch.setattr(
+        enrollment.secrets, "token_urlsafe",
+        lambda n: base64.urlsafe_b64encode(entropy.randbytes(n)).rstrip(b"=").decode("ascii"),
+    )
+    monkeypatch.setattr(enrollment.secrets, "randbelow", lambda n: 7391)
+    monkeypatch.setattr(enrollment.time, "time", lambda: 1_800_000_000.0)
+    monkeypatch.setattr(
+        Ed25519PrivateKey, "generate",
+        lambda: Ed25519PrivateKey.from_private_bytes(bytes(range(32))),
+    )
+    return request.getfixturevalue("setup")
+
+
 @pytest.mark.parametrize("actor", ["owner", "integration"])
-def test_complete_secret_projection_restart_and_scope(setup, actor, caplog):
-    service, owner, cookie = setup
+def test_complete_secret_projection_restart_and_scope(projection_setup, actor, caplog):
+    service, owner, cookie = projection_setup
     caplog.set_level(logging.INFO)
     resolve = owner_resolver(owner, cookie) if actor == "owner" else integration_resolver(service)
     key, row, code = ready(service)
