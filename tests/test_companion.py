@@ -199,3 +199,81 @@ async def test_trusted_plugin_rename_needs_no_ui_lease_and_preserves_identity(po
         "deviceId": "B1", "requestId": "mismatch", "resourceId": first.id, "newValue": "Wrong"})
     assert json.loads(conn.ws.send_str.call_args.args[0])["code"] == "FORBIDDEN"
     assert agents.get_by_id(first.id).name == "Household"
+
+
+async def test_direct_ui_rename_rejects_stale_revision_without_confirmation(portal):
+    _, _, _, first, _ = portal
+    result = await (await post(portal, "context", context(first))).json()
+    assert (await companion.execute("B1", {"op":"read", "revision":result["revision"]}))["resource_id"] == first.id
+    with pytest.raises(ValueError):
+        await companion.execute("B1", {"op":"rename_agent", "revision":"stale", "resource_id":first.id, "name":"Wrong"})
+    assert agents.get_by_id(first.id).name == first.name
+    changed = await companion.execute("B1", {"op":"rename_agent", "revision":result["revision"], "resource_id":first.id, "name":"Requested name"})
+    assert changed["name"] == "Requested name"
+    with pytest.raises(ValueError):
+        await companion.execute("B1", {"op":"rename_agent", "revision":result["revision"], "resource_id":first.id, "name":"Stale overwrite"})
+
+
+async def test_ui_delivery_requires_same_browser_receipt_and_keeps_context_sanitized(portal):
+    _, _, _, first, _ = portal
+    context_result = await (await post(portal, "context", context(first))).json()
+    pending = asyncio.create_task(companion.execute("B1", {"op":"navigate", "revision":context_result["revision"], "route":"devices"}))
+    await asyncio.sleep(0)
+    events = (await (await post(portal, "events", {"browser_id":"B1"})).json())["events"]
+    assert len(events) == 1
+    assert companion.events("B2") == []
+    companion.acknowledge("B2", {"event_id":events[0]["event_id"], "applied":True})
+    assert not pending.done()
+    response = await post(portal, "ack", {"browser_id":"B1", "event_id":events[0]["event_id"], "applied":True})
+    assert response.status == 200
+    assert await pending == {"applied":True, "op":"navigate"}
+    assert companion.events("B1") == []
+
+
+async def test_independent_support_executes_real_local_model_tool_request(portal, unused_tcp_port):
+    from pathlib import Path
+    from aiohttp import web
+    from vauxr.agents import support
+    from vauxr.config import get_config
+    from vauxr.config_files import update_json
+
+    _, _, _, first, _ = portal
+    published = await (await post(portal, "context", context(first))).json()
+    rounds = []
+
+    async def show(_request):
+        return web.json_response({"details": {}})
+
+    async def model(request):
+        body = await request.json()
+        rounds.append(body)
+        assert "-secret" not in json.dumps(body)
+        if len(rounds) == 1:
+            reply = {"role":"assistant", "tool_calls":[{"function":{"name":"vauxr_context_read", "arguments":{}}}]}
+        elif len(rounds) == 2:
+            received = json.loads(body["messages"][-1]["content"])
+            assert received["revision"] == published["revision"]
+            reply = {"role":"assistant", "tool_calls":[{"function":{"name":"vauxr_context_action", "arguments":{
+                "op":"rename_agent", "revision":received["revision"], "resource_id":first.id, "name":"Requested by Support",
+            }}}]}
+        else:
+            outcome = json.loads(body["messages"][-1]["content"])
+            assert outcome == {"resource_id":first.id, "name":"Requested by Support"}
+            reply = {"role":"assistant", "content":"The requested display name is saved."}
+        return web.json_response({"done":True, "message":reply})
+
+    app = web.Application()
+    app.router.add_post("/api/show", show)
+    app.router.add_post("/api/chat", model)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "127.0.0.1", unused_tcp_port).start()
+    update_json(Path(get_config().data_dir) / "support.json", lambda _: {
+        "provider":"ollama", "endpoint":f"http://127.0.0.1:{unused_tcp_port}", "model":"local",
+    })
+    try:
+        assert await support.answer("B1", "Change the selected display name") == "The requested display name is saved."
+        assert agents.get_by_id(first.id).name == "Requested by Support"
+        assert len(rounds) == 3
+    finally:
+        await runner.cleanup()

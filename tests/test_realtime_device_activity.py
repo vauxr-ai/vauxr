@@ -216,3 +216,55 @@ async def test_processing_lease_preserves_microphone_for_next_utterance():
     clock.advance(9)
     await activity.tick()
     assert fw.expired(), 'real inactivity still expires after work ends'
+
+
+async def test_requested_end_waits_for_real_consumption_and_backend_action():
+    clock, fw, session, activity = setup_activity()
+    track = RawAudioTrack(24000, auto_silence=False)
+    client = SimpleNamespace(_audio_output_track=track, _can_send=lambda: True)
+    async def write(frame):
+        return await SmallWebRTCClient.write_audio_frame(client, frame)
+    output = SimpleNamespace(write_audio_frame=write)
+    activity.bind_output(output)
+    activity.bind_track(track)
+    frame = OutputAudioRawFrame(b'\x00\x10' * 480, 24000, 1)
+    await activity.provider_audio(frame.audio)
+    writer = asyncio.create_task(output.write_audio_frame(frame))
+    await asyncio.sleep(.02)
+    await activity.delegation('external-action', True)
+    activity.request_transition(False, 0)
+    clock.advance(12)
+    await activity.tick()
+    assert activity.pending_writes == 1 and not session.close.called
+    await asyncio.wait_for(track.recv(), 1)
+    await asyncio.wait_for(track.recv(), 1)
+    await asyncio.wait_for(writer, 1)
+    clock.advance(2)
+    await activity.tick()
+    assert not session.close.called  # Completing speech cannot cancel the external action.
+    await activity.delegation('external-action', False)
+    await activity.tick()
+    await asyncio.sleep(0)
+    assert fw.messages[-1] == {'type': 'audio.end', 'follow_up': False}
+    assert session.close.called
+    track.stop()
+
+
+async def test_requested_followup_is_bounded_and_cannot_override_mute():
+    clock, fw, session, activity = setup_activity()
+    await activity.tick()
+    activity.request_transition(True, 3)
+    await activity.tick()
+    assert fw.messages[-1] == {'type':'audio.end', 'follow_up':True}
+    clock.advance(3.1)
+    await activity.tick()
+    await asyncio.sleep(0)
+    assert session.close.called
+    _, _, session, activity = setup_activity()
+    session._mic_paused = True
+    with pytest.raises(ValueError):
+        activity.request_transition(True, 3)
+    session._mic_paused = False
+    for seconds in [0, 9, True, 1.5]:
+        with pytest.raises(ValueError):
+            activity.request_transition(True, seconds)

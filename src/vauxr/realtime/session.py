@@ -1173,6 +1173,14 @@ class RealtimeManager:
                     and self._wake_generations.get(device_id) is wake and _device_ws(device_id) is ws):
                 registry.set_state(device_id, "listening" if follow_up else "idle")
 
+    def request_listening_transition(self, device_id: str, follow_up: bool, seconds: int) -> None:
+        session = self._sessions.get(device_id)
+        service = getattr(session, "_live_service", None)
+        activity = getattr(service, "device_activity", None)
+        if session is None or not session.is_peer_live() or activity is None:
+            raise ValueError("Listening tools require an active physical Live session")
+        activity.request_transition(follow_up, seconds)
+
     def set_mic_paused(self, device_id: str, paused: bool) -> None:
         """Hold or release inbound WebRTC mic audio for a live session."""
         session = self._sessions.get(device_id)

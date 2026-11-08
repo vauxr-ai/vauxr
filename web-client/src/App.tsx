@@ -45,6 +45,25 @@ function OwnerApp() {
   const [viewContext, setViewContext] = useState("Agents");
   const activeRoute = useActiveRoute();
   const [selection, setSelection] = useState<Selection | null>(null);
+  useEffect(() => {
+    const action = (raw: Event) => {
+      const event = (raw as CustomEvent).detail;
+      if (event.op === "navigate" && ["agents", "devices", "settings"].includes(event.route) && !settingsDirty) {
+        setActiveSection(event.route);
+        requestAnimationFrame(() => event.acknowledge(true));
+      } else if (event.op === "highlight" && activeSection === "agents" && selection?.id === event.resource_id) {
+        const target = document.querySelector<HTMLInputElement>('[data-vauxr-control="agent-name"]');
+        if (!target) { event.acknowledge(false); return; }
+        target.scrollIntoView({block:"center"}); target.focus();
+        target.style.outline = "3px solid #8b5cf6";
+        window.setTimeout(() => {target.style.outline = "";}, 3000);
+        event.acknowledge(true);
+      } else event.acknowledge(false);
+    };
+    window.addEventListener("vauxr-ui-action", action);
+    return () => window.removeEventListener("vauxr-ui-action", action);
+  }, [activeSection, selection?.id, settingsDirty]);
+
   const browserCredential = useCallback(() => credential.current, []);
   const [enrollingBrowser, setEnrollingBrowser] = useState(false);
   useEffect(() => {

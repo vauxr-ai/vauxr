@@ -398,6 +398,7 @@ class AgentServer:
                 "agent.response.error",
                 "agent.realtime.result",
                 "agent.ui.name.update",
+                "agent.ui.action",
             }
         ):
             audit_denial(authenticated)
@@ -414,6 +415,24 @@ class AgentServer:
         msg_type = msg["type"]
         is_selected = active is not None and active.id == conn.agent.id
         origin = None
+        if msg_type == "agent.ui.action":
+            request_id = msg.get("requestId")
+            if (set(msg) != {"type", "deviceId", "requestId", "action"}
+                    or not isinstance(request_id, str) or not 1 <= len(request_id) <= 64
+                    or not isinstance(device_id, str) or not isinstance(msg["action"], dict)):
+                return
+
+            async def complete_ui_action() -> None:
+                from vauxr.companion import execute
+                result = {"type": "agent.ui.result", "requestId": request_id, "deviceId": device_id}
+                try:
+                    result["result"] = await execute(device_id, msg["action"])
+                except (ValueError, TypeError, KeyError, OSError, TimeoutError):
+                    result["error"] = "UI context changed or action unavailable; check the page before retrying"
+                await _send_json(conn.ws, result)
+
+            asyncio.create_task(complete_ui_action())
+            return
         if msg_type == "agent.ui.name.update":
             request_id = msg.get("requestId")
             try:
