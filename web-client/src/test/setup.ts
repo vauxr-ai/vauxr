@@ -13,3 +13,11 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 if (typeof Element.prototype.scrollIntoView !== "function") {
   Element.prototype.scrollIntoView = function () {};
 }
+
+// jsdom has no top-layer implementation; browser tests cover native modality.
+HTMLDialogElement.prototype.showModal = function () {
+  this.setAttribute("open", "");
+};
+HTMLDialogElement.prototype.close = function () {
+  this.removeAttribute("open");
+};

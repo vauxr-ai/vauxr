@@ -80,6 +80,19 @@ export default function AgentsPanel({
 
   return (
     <div className="space-y-5">
+      <div className="resource-toolbar">
+        <div>
+          <span className="eyebrow">YOUR WORKSPACE</span>
+          <h2>Agents</h2>
+        </div>
+        <AddAgent
+          onCreated={async (created) => {
+            await refresh();
+            setSelectedId(created.id);
+            setNameDraft(created.name);
+          }}
+        />
+      </div>
       <section className="card agent-inventory" aria-label="Routing agents">
         <div className="section-heading">
           <div>
@@ -314,13 +327,6 @@ export default function AgentsPanel({
           </button>
         </section>
       )}
-      <AddAgent
-        onCreated={async (created) => {
-          await refresh();
-          setSelectedId(created.id);
-          setNameDraft(created.name);
-        }}
-      />
       <p className="text-sm text-zinc-400">
         Connect external agents in Settings → Apps &amp; Integrations.
       </p>

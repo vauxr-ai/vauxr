@@ -16,7 +16,7 @@ for (const width of [390, 1366])
     await page
       .getByRole("button", { name: "+ Add Agent", exact: true })
       .click();
-    const create = page.getByRole("region", { name: "Add Agent", exact: true });
+    const create = page.getByRole("dialog", { name: "Add Agent", exact: true });
     await create
       .getByLabel("Registered implementation")
       .selectOption("household");

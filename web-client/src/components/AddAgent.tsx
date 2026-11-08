@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import Modal from "./Modal";
 import { ownerFetch, jsonResponse } from "../auth/api";
 type Definition = {
   id: string;
@@ -11,6 +12,7 @@ export default function AddAgent({
 }: {
   onCreated: (agent: { id: string; name: string }) => Promise<void>;
 }) {
+  const trigger = useRef<HTMLButtonElement>(null);
   const [definitions, setDefinitions] = useState<Definition[] | null>(null);
   const [selected, setSelected] = useState("");
   const [name, setName] = useState("");
@@ -34,13 +36,21 @@ export default function AddAgent({
     void load();
   }, []);
   return (
-    <section className="card auth-panel p-5 space-y-3" aria-label="Add Agent">
-      <button aria-expanded={open} onClick={() => setOpen(!open)}>
+    <div className="agent-create-action">
+      <button
+        ref={trigger}
+        className="button-primary"
+        aria-haspopup="dialog"
+        onClick={() => setOpen(true)}
+      >
         + Add Agent
       </button>
       {open && (
-        <>
-          <h2>Add Agent</h2>
+        <Modal
+          title="Add Agent"
+          onClose={() => setOpen(false)}
+          returnFocus={trigger}
+        >
           <p>
             Choose an implementation registered on this Vauxr server. Each
             instance keeps its own name, model configuration and voice defaults.
@@ -112,13 +122,16 @@ export default function AddAgent({
                   onChange={(e) => setName(e.target.value)}
                 />
               </label>
-              <button disabled={busy || !selected || !name.trim()}>
-                Create agent
+              <button
+                className="button-primary"
+                disabled={busy || !selected || !name.trim()}
+              >
+                {busy ? "Creating agent…" : "Create agent"}
               </button>
             </form>
           )}
-        </>
+        </Modal>
       )}
-    </section>
+    </div>
   );
 }

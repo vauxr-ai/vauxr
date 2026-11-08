@@ -853,3 +853,51 @@
 .agent-runtime-form label { min-width:0; }
 .agent-runtime-form input, .agent-runtime-form select { width:100%; min-width:0; max-width:100%; }
 .agent-runtime-form button { justify-self:start; }
+
+/* Shared management language: a quiet canvas, lifted surfaces and vivid actions. */
+:root {
+  --radius-control: 10px;
+  --radius-surface: 18px;
+  --primary-gradient: linear-gradient(125deg, #7844db, #6330be 58%, #8548cc);
+  --surface-shadow: 0 4px 24px #00000012;
+}
+body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; line-height: 1.55; }
+.management { background: radial-gradient(ellipse at 90% 0%, #9460e60a, transparent 60%), var(--canvas); }
+.card, .provider-tile { border-radius: var(--radius-surface); box-shadow: var(--surface-shadow); }
+.page-heading { padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+.page-heading h1 { font-size: clamp(28px, 3vw, 36px); letter-spacing: -.045em; }
+.resource-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.resource-toolbar h2 { font-size:22px; font-weight:650; letter-spacing:-.03em; margin-top:4px; }
+.resource-toolbar .eyebrow { font-size:10px; }
+.auth-panel button, .agent-inventory button, .settings-toolbar button, .settings-form button,
+.settings-stack > button { min-height:40px; border-radius:var(--radius-control); font-weight:550; transition:background .15s, box-shadow .15s; }
+.auth-panel input:not([type="checkbox"]), .auth-panel select, .settings-form input:not([type="checkbox"]),
+.settings-form select, .settings-form textarea { min-height:44px; border-radius:var(--radius-control); padding:10px 12px; }
+.auth-panel button.button-primary, button.button-primary,
+.settings-form button[type="submit"], .voice-connection > button:first-of-type {
+  background:var(--primary-gradient); color:#fff; border:1px solid #b897ff40;
+  padding:10px 18px; border-radius:var(--radius-control); font-weight:600; box-shadow:0 3px 12px #763edb30;
+}
+.auth-panel button.button-primary:hover:not(:disabled), button.button-primary:hover:not(:disabled),
+.settings-form button[type="submit"]:hover:not(:disabled) { background:linear-gradient(125deg,#8550e6,#713acb 58%,#9356d9); box-shadow:0 5px 18px #763edb40; }
+.agent-list li { padding-block:24px; }
+.resource-icon { background:linear-gradient(140deg,#a878ec22,#7c4bdc12); border:1px solid #a878ec24; border-radius:14px; }
+.settings-nav button[aria-current="page"] { color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
+.settings-content [role="alert"] { color:var(--text); }
+.modal { width:min(540px, calc(100% - 32px)); max-height:calc(100dvh - 32px); margin:auto; padding:0; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:22px; box-shadow:0 24px 100px #0006; }
+.modal::backdrop { background:#100b2299; backdrop-filter:blur(6px); }
+.modal-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:24px; border-bottom:1px solid var(--line); }
+.modal-heading h2 { font-size:24px; letter-spacing:-.035em; }
+.modal-heading button { width:40px; flex:none; font-size:24px; padding:0; }
+.modal-body { display:grid; gap:18px; padding:24px; }
+.modal-body > button { justify-self:start; }
+.modal-body form { gap:18px; }
+.modal-body label { display:grid; gap:8px; font-size:13px; font-weight:550; }
+.modal-body form > button { margin-top:6px; }
+@media(max-width:760px) {
+  .resource-toolbar { align-items:center; }
+  .resource-toolbar h2 { font-size:20px; }
+  .resource-toolbar .button-primary { padding:10px 14px; font-size:13px; }
+  .modal-heading, .modal-body { padding:20px; }
+  .modal input, .modal select { font-size:16px; }
+}
