@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import DevicesPanel from "./DevicesPanel";
 
@@ -77,4 +77,17 @@ it("scopes session logs by exact device ID", async () => {
 it("shows refresh failures and retries", async () => { fail="/api/devices"; panel(); expect(await screen.findByRole("alert")).toHaveTextContent("Cannot save now"); fail=""; await userEvent.click(screen.getByRole("button",{name:"Refresh",exact:true})); await screen.findByRole("button",{name:/Living Room.*idle/}); });
 it("cancels an inline name draft without saving", async () => {
  panel(); await open(); await userEvent.click(screen.getByRole("button",{name:"Edit device name"})); const input=screen.getByRole("textbox",{name:"Device name"}); await userEvent.clear(input); await userEvent.type(input,"Cancel this{Escape}"); expect(calls.filter(c=>c.body.name)).toHaveLength(0); expect(screen.getByRole("heading",{name:"Living Room"})).toBeVisible();
+});
+
+it("refreshes open voice overrides after companion mode changes without saving configuration", async () => {
+  panel(); await open();
+  await userEvent.click(screen.getByRole("button", {name:"Override agent voice pipeline defaults"}));
+  expect(screen.getByRole("combobox", {name:"TTS backend"})).toBeVisible();
+  speech.voice = {mode:"realtime", realtime_backend:"live", realtime_voice:"cedar"};
+  speech.policy.available_modes = ["standard", "realtime"];
+  speech.backends.push({id:"live", kind:"realtime", model:"live", voices:["cedar"], readiness:"ready"});
+  await act(async () => { window.dispatchEvent(new CustomEvent("speech-settings-changed", {detail:{source:"talk",deviceId:"d1"}})); });
+  expect(await screen.findByRole("combobox", {name:"Realtime voice"})).toBeVisible();
+  expect(screen.queryByRole("combobox", {name:"TTS backend"})).toBeNull();
+  expect(calls).toHaveLength(0);
 });

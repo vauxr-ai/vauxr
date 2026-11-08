@@ -41,6 +41,14 @@ export default function DeviceVoicePipeline({ deviceId, onModeChange, transport 
     finally { if (mounted.current && generation === version.current) setBusy(false); }
   }, [request]);
   useEffect(() => { mounted.current = true; void refresh(); return () => { mounted.current = false; ++version.current; }; }, [refresh]);
+  useEffect(() => {
+    const changed = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.source === "talk" && detail.deviceId === deviceId) void refresh();
+    };
+    window.addEventListener("speech-settings-changed", changed);
+    return () => window.removeEventListener("speech-settings-changed", changed);
+  }, [deviceId, refresh]);
   useEffect(() => { if (data) onModeChange(data.policy.chat_only ? null : data.voice?.mode || "standard"); }, [data, onModeChange]);
   function save(patch: object) {
     const generation = ++version.current;

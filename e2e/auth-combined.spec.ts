@@ -88,11 +88,12 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
     // PR58 settings run against the actual connected device projection and real speech API.
     await page.getByRole("button", { name: "Devices", exact: true }).click();
     await page.getByText(device.device_id, { exact: true }).first().click();
-    const speech = page.getByRole("region", { name: "Device speech", exact: true });
+    const speech = page.getByRole("region", { name: "Assigned agent", exact: true });
+    await speech.getByRole("button", { name: "Override agent voice pipeline defaults", exact: true }).click();
     await expect(speech.getByLabel("TTS backend")).toBeVisible();
     await speech.getByLabel("TTS backend").selectOption("piper");
-    await expect(speech.getByRole("button", { name: "Reset to defaults" })).toBeEnabled();
-    await speech.getByRole("button", { name: "Reset to defaults" }).click();
+    await expect(speech.getByRole("button", { name: "Reset voice overrides" })).toBeEnabled();
+    await speech.getByRole("button", { name: "Reset voice overrides" }).click();
     await expect(speech.getByLabel("TTS backend")).toHaveValue("");
     // Owner lifecycle is public metadata only; native client alone delivers and saves the replacement.
     await page.getByRole("button", { name: "Settings", exact: true }).click();
