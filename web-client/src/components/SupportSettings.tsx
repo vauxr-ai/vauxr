@@ -17,7 +17,7 @@ export default function SupportSettings() {
   }, []);
   return <section aria-label="Support runtime" className="space-y-3">
     <h3>Independent Support runtime</h3>
-    <p>Built in and available without OpenClaw. Configure a separately installed local runtime and local model. No provider or model is selected automatically. Advice only; it cannot claim to execute settings changes.</p>
+    <p>Built in and available without OpenClaw. Configure a separately installed local runtime and local model. No provider or model is selected automatically. Supports bounded page navigation, selected-agent display-name changes and highlighting through Vauxr tools. Other requests receive advice.</p>
     <p role="status">{status}</p>
     <form className="grid gap-3" onSubmit={async event => {
       event.preventDefault(); setBusy(true);

@@ -1,6 +1,7 @@
 """Descriptive browser context and direct settings updates."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -103,3 +104,80 @@ def turn_context(device_id: str) -> dict | None:
     if item is None or (item.fingerprint and item.fingerprint != fingerprint()):
         return None
     return dict(item.context)
+
+
+# Transient delivery correlation, never conversation continuity or action approval.
+_ui_events: dict[str, tuple[str, dict, asyncio.Future[bool]]] = {}
+
+
+async def execute(device_id: str, action: dict) -> dict:
+    import asyncio
+
+    if not isinstance(action, dict):
+        raise ValueError("invalid operation")
+    if action.get("op") in ("voice_end", "voice_follow_up"):
+        import sys
+        module = sys.modules.get("vauxr.realtime.session")
+        manager = getattr(module, "_manager", None)
+        follow_up = action["op"] == "voice_follow_up"
+        if (set(action) != ({"op", "seconds"} if follow_up else {"op"}) or manager is None):
+            raise ValueError("Listening tools require an active physical Live session")
+        seconds = action.get("seconds", 0)
+        manager.request_listening_transition(device_id, follow_up, seconds)
+        return {"requested": True, "op": action["op"], "seconds": seconds,
+                "completion": "after consumed speech and outstanding backend work"}
+    item = view(device_id)
+    if (item is None
+            or action.get("revision") != item.context["revision"]
+            or (item.fingerprint and item.fingerprint != fingerprint())):
+        raise ValueError("UI context changed; read context again")
+    op = action.get("op")
+    if op == "read":
+        if set(action) != {"op", "revision"}:
+            raise ValueError("invalid context read")
+        return dict(item.context)
+    if op == "rename_agent":
+        if (set(action) != {"op", "revision", "resource_id", "name"}
+                or action["resource_id"] != item.context["resource_id"]
+                or item.context["resource_type"] != "agent"
+                or not _safe_name(action["name"])):
+            raise ValueError("invalid selected agent change")
+        if not registry.rename(action["resource_id"], action["name"]):
+            raise ValueError("agent unavailable")
+        return {"resource_id": action["resource_id"], "name": action["name"].strip()}
+    if op == "navigate":
+        if set(action) != {"op", "revision", "route"} or action["route"] not in ("agents", "devices", "settings"):
+            raise ValueError("invalid destination")
+    elif op == "highlight":
+        if (set(action) != {"op", "revision", "resource_id", "control"}
+                or action["resource_id"] != item.context["resource_id"]
+                or item.context["resource_type"] != "agent" or action["control"] != "agent_name"):
+            raise ValueError("invalid highlight target")
+    else:
+        raise ValueError("unknown UI operation")
+    if len(_ui_events) >= 64 or sum(d == device_id for d, _, _ in _ui_events.values()) >= 4:
+        raise ValueError("UI busy")
+    event_id = secrets.token_hex(16)
+    future = asyncio.get_running_loop().create_future()
+    _ui_events[event_id] = (device_id, {**action, "event_id": event_id}, future)
+    try:
+        async with asyncio.timeout(10):
+            applied = await future
+        if not applied:
+            raise ValueError("UI action not applied; check the page before retrying")
+        return {"applied": True, "op": op}
+    finally:
+        _ui_events.pop(event_id, None)
+
+
+def events(device_id: str) -> list[dict]:
+    return [dict(body) for device, body, future in _ui_events.values()
+            if device == device_id and not future.done()]
+
+
+def acknowledge(device_id: str, body: dict) -> None:
+    if set(body) != {"event_id", "applied"} or not isinstance(body["event_id"], str) or type(body["applied"]) is not bool:
+        raise ValueError("invalid UI receipt")
+    pending = _ui_events.get(body["event_id"])
+    if pending is not None and pending[0] == device_id and not pending[2].done():
+        pending[2].set_result(body["applied"])

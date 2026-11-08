@@ -34,6 +34,9 @@ class DeviceActivity:
         self.task: asyncio.Task | None = None
         self.lock = asyncio.Lock()
         self._vad = self._resampler = None
+        self.requested_follow_up: bool | None = None
+        self.window_seconds = 0
+        self.window_deadline: float | None = None
 
     def owns(self):
         return (not self.closed and not self.session._closed and
@@ -43,6 +46,16 @@ class DeviceActivity:
         startup = getattr(self.session, "_startup", None)
         return (self.owns() and (startup is None or (startup.complete and startup.provider_ready))
                 and not self.session._mic_paused)
+
+    def request_transition(self, follow_up: bool, seconds: int) -> None:
+        if (not self.admitted() or type(follow_up) is not bool or type(seconds) is not int
+                or (follow_up and not 1 <= seconds <= 8) or (not follow_up and seconds != 0)):
+            raise ValueError("invalid or muted listening transition")
+        self.requested_follow_up = follow_up
+        self.window_seconds = seconds
+        self.window_deadline = None
+        if self.state == 'listening':
+            self.last_sent = float('-inf')
 
     def start(self):
         self.task = asyncio.create_task(self._run())
@@ -83,6 +96,8 @@ class DeviceActivity:
         if epoch != self.epoch or not self.admitted():
             return
         if state == VADState.SPEAKING:
+            self.requested_follow_up = None
+            self.window_deadline = None
             self.last_input = self.clock()
             if not self.user_speaking:
                 self.user_speaking = True
@@ -98,6 +113,8 @@ class DeviceActivity:
         if not delta.strip() or not self.admitted():
             return
         if role == 'user':
+            self.requested_follow_up = None
+            self.window_deadline = None
             self.last_input = self.clock()
             self.processing = True
             self._state('speech' if self.user_speaking else 'processing')
@@ -147,6 +164,16 @@ class DeviceActivity:
             if self.state != 'listening' and now - self.changed >= self.WORK_LIMIT:
                 await self.stop()
                 return
+            if self.state == 'listening' and not self.pending_writes and not self.delegations and not self.processing:
+                if self.requested_follow_up is False:
+                    await self.stop()
+                    return
+                if self.requested_follow_up is True:
+                    if self.window_deadline is None:
+                        self.window_deadline = now + self.window_seconds
+                    elif now >= self.window_deadline:
+                        await self.stop()
+                        return
             if self.state == 'listening':
                 if self.last_sent != float('-inf'):
                     return

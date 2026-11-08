@@ -43,7 +43,14 @@ def attach_companion(app: web.Application, boundary: Callable[[Handler], Handler
             if not isinstance(body, dict) or body.pop("browser_id", None) != browser.subject:
                 raise ValueError()
             action = request.match_info["action"]
-            if action == "context":
+            if action == "events":
+                if body:
+                    raise ValueError()
+                result = {"events": companion.events(browser.subject)}
+            elif action == "ack":
+                companion.acknowledge(browser.subject, body)
+                result = {"ok": True}
+            elif action == "context":
                 result = companion.publish(browser, body)
             elif action == "select":
                 if set(body) != {"agent_id"} or not isinstance(body["agent_id"], str):

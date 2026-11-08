@@ -25,6 +25,8 @@ export default function CompanionControls({ browserId, credential, epoch, route,
   const [reply, setReply] = useState("");
   const [chatError, setChatError] = useState("");
   const generation = useRef(0);
+  const chatGeneration = useRef(0);
+  useEffect(() => { chatGeneration.current++; return () => {chatGeneration.current++;}; }, [browserId, epoch]);
   const queue = useRef(Promise.resolve());
   const [refresh, setRefresh] = useState(0);
   const request = async (action: string, body: object) => jsonResponse(await ownerFetch(`/api/companion/${action}`, {
@@ -58,6 +60,33 @@ export default function CompanionControls({ browserId, credential, epoch, route,
     return () => { generation.current++; };
   }, [browserId, epoch, route, selection?.id, selection?.name, refresh]);
 
+  useEffect(() => {
+    if (!browserId || !revision) return;
+    let alive = true, pending = false;
+    const received = new Set<string>();
+    const tick = async () => {
+      if (!alive || pending) return;
+      pending = true;
+      try {
+        const result = await request("events", {});
+        for (const event of result.events || []) {
+          if (!alive || received.has(event.event_id)) continue;
+          received.add(event.event_id);
+          if (event.revision !== revision) {
+            await request("ack", {event_id:event.event_id, applied:false}); continue;
+          }
+          window.dispatchEvent(new CustomEvent("vauxr-ui-action", {detail:{...event,
+            acknowledge: (applied:boolean) => { void request("ack", {event_id:event.event_id, applied}).catch(() => {}); },
+          }}));
+        }
+      } catch { /* Disconnected browsers do not accept UI actions. */ }
+      finally { pending = false; }
+    };
+    const timer = window.setInterval(() => {void tick();}, 750);
+    void tick();
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [browserId, epoch, revision]);
+
   const run = async (work: () => Promise<void>, failure = "Change unavailable or stale. Refresh the resource and try again.") => {
     const attempt = generation.current;
     setBusy(true); setError("");
@@ -69,7 +98,7 @@ export default function CompanionControls({ browserId, credential, epoch, route,
     <label>Conversation agent
       <select aria-describedby="companion-selected-agent" aria-label="Conversation agent" value={agentId} disabled={!browserId || busy || chatBusy}
         onChange={event => { const value = event.target.value; void run(async () => {
-          generation.current++; setRevision("");
+          generation.current++; chatGeneration.current++; setRevision("");
           setReply(""); setChatError("");
           onSwitch();
           await request("select", { agent_id: value }); setAgentId(value); setRefresh(n => n + 1);
@@ -84,10 +113,10 @@ export default function CompanionControls({ browserId, credential, epoch, route,
       event.preventDefault();
       if (!browserId || !text.trim() || busy || chatBusy) return;
       const message = text.trim();
-      const attempt = generation.current;
+      const attempt = chatGeneration.current;
       setChatBusy(true); setChatError(""); setReply("");
       void request("chat", { request_id: randomId(), text: message }).then(result => {
-        if (attempt !== generation.current) return;
+        if (attempt !== chatGeneration.current) return;
         setReply(result.text); setText("");
         setRefresh(n => n + 1);
         window.dispatchEvent(new Event("companion-resource-changed"));

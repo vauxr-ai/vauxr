@@ -199,6 +199,7 @@ export default function AgentsPanel({
                 <label>
                   Agent name
                   <input
+                    data-vauxr-control="agent-name"
                     value={nameDraft}
                     maxLength={120}
                     required
