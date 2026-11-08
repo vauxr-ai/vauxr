@@ -122,6 +122,11 @@ async def _dispatch_announce(device_id: str, text: str) -> None:
 
 async def announce_to_device(device: Any, text: str) -> bool:
     """Synthesize ``text`` and stream it as 0x03 announce frames."""
+    from vauxr.speech.store import get_store
+    if get_store().chat_only(device.id):
+        await _send_text(device.ws, {"type": "error", "code": "VOICE_CONFLICT",
+                                    "message": get_store().no_voice_message()})
+        return False
     abort = asyncio.Event()
     sent_start = {"v": False}
 
@@ -184,6 +189,11 @@ async def _dispatch_prompt(
         log.info("device.button prompt dropped, device busy: %s", device_id)
         return
 
+    from vauxr.speech.store import get_store
+    if get_store().chat_only(device_id):
+        await _send_text(entry.ws, {"type": "error", "code": "VOICE_CONFLICT",
+                                  "message": get_store().no_voice_message()})
+        return
     # Lock before any await so a second gesture cannot run another turn.
     # Warm-quiet peers have paused WebRTC playback: use WS TTS, which firmware
     # can play without opening the mic or requiring a realtime wake.

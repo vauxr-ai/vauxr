@@ -51,7 +51,7 @@ test("Talk segments real worklet PCM, barges in, persists modes and keeps button
     });
   });
   await login(page, server);
-  await page.getByRole("button", { name: "Connect browser voice", exact: true }).click();
+  await page.getByRole("button", { name: "Connect browser", exact: true }).click();
   const talk = page.getByRole("complementary", { name: "Talk panel" });
   await expect(talk.getByRole("radio", { name: "Standard push-to-talk" })).toBeEnabled();
   const hold = talk.getByRole("button", { name: "Hold to Talk", exact: true });
@@ -131,7 +131,7 @@ test("Talk segments real worklet PCM, barges in, persists modes and keeps button
     return voice;
   }, deviceId);
   await page.reload();
-  await page.getByRole("button", { name: "Connect browser voice", exact: true }).click();
+  await page.getByRole("button", { name: "Connect browser", exact: true }).click();
   await expect(talk.getByRole("radio", { name: "Realtime", exact: true })).toHaveAttribute("aria-checked", "true");
   await expect(start).toBeEnabled();
   await talk.getByRole("radio", { name: "Standard hands-free" }).click();
@@ -173,7 +173,7 @@ test("Standard failures release real capture and stale response messages cannot 
     });
   });
   await login(page, server);
-  await page.getByRole("button", { name: "Connect browser voice", exact: true }).click();
+  await page.getByRole("button", { name: "Connect browser", exact: true }).click();
   const talk = page.getByRole("complementary", { name: "Talk panel" });
   await expect(talk.getByRole("radio", { name: "Standard hands-free" })).toBeEnabled();
   await talk.getByRole("radio", { name: "Standard hands-free" }).click();

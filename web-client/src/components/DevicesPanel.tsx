@@ -21,9 +21,9 @@ interface ButtonAction {
 
 interface DeviceConfig {
   name?: string;
-  pipeline_mode?: "standard" | "realtime";
+  pipeline_mode?: "standard" | "realtime" | null;
   transport_mode?: "websocket" | "webrtc";
-  voice_mode?: "websocket" | "webrtc" | "realtime";
+  voice_mode?: "websocket" | "webrtc" | "realtime" | null;
   follow_up_mode?: FollowUpMode;
   output_sample_rate?: number;
   barge_in?: boolean;
@@ -31,6 +31,7 @@ interface DeviceConfig {
 }
 
 interface ApiDeviceWithConfig {
+  chat_only?: boolean;
   id: string;
   name: string;
   state: string;
@@ -330,6 +331,8 @@ function DeviceCard({
   httpBase,
   webhooks,
 }: DeviceCardProps) {
+  const [effectiveMode, setEffectiveMode] = useState<"standard" | "realtime" | null | "unknown">("unknown");
+  const chatOnly = effectiveMode === null || (effectiveMode === "unknown" && device.chat_only === true);
   const pill = STATE_PILL[device.state] ?? STATE_PILL.offline;
   const dot = STATE_DOT[device.state] ?? STATE_DOT.offline;
   const mode: FollowUpMode = device.config?.follow_up_mode ?? "auto";
@@ -448,7 +451,7 @@ function DeviceCard({
           id={panelId}
           className="space-y-4 border-t border-white/5 px-3 py-3"
         >
-          <SpeechSettings deviceId={device.id} />
+          <SpeechSettings deviceId={device.id} onModeChange={setEffectiveMode} />
           <details className="card p-3 text-sm">
             <summary>Device diagnostics</summary>
             <p className="my-2 text-zinc-400">
@@ -478,7 +481,7 @@ function DeviceCard({
                 <select
                   className={inputClass}
                   value={voiceMode === "websocket" ? "websocket" : "webrtc"}
-                  disabled={saving}
+                  disabled={saving || chatOnly}
                   onChange={(e) =>
                     onPatch(
                       device.id,
@@ -508,7 +511,7 @@ function DeviceCard({
                       `follow_up_mode → ${e.target.value}`,
                     )
                   }
-                  disabled={saving}
+                  disabled={saving || chatOnly}
                 >
                   {FOLLOW_UP_OPTIONS.map((m) => (
                     <option key={m} value={m}>
@@ -530,7 +533,7 @@ function DeviceCard({
                         `barge_in → ${e.target.value}`,
                       )
                     }
-                    disabled={saving}
+                    disabled={saving || chatOnly}
                   >
                     <option value="on">on</option>
                     <option value="off">off</option>
@@ -554,7 +557,7 @@ function DeviceCard({
                       `output_sample_rate → ${val || "default"}`,
                     );
                   }}
-                  disabled={saving}
+                  disabled={saving || chatOnly}
                 >
                   <option value="">default</option>
                   <option value="16000">16000</option>
@@ -565,7 +568,7 @@ function DeviceCard({
               </label>
             </div>
             <p className="text-[11px] text-zinc-500">
-              {voiceMode === "websocket"
+              {chatOnly ? "Chat-only: voice transport, follow-up and audio settings are inactive." : voiceMode === "websocket"
                 ? "WebSocket uses turn-based audio and does not support barge-in."
                 : voiceMode === "realtime"
                   ? "Realtime uses the selected speech provider for the speech pipeline and interruption handling."

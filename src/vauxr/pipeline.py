@@ -191,7 +191,9 @@ async def _route_via_openclaw_direct(
         full_reply = text
 
     try:
-        await openclaw_client.chat(session_key, transcript_text, on_delta)
+        from vauxr.companion import untrusted
+
+        await openclaw_client.chat(session_key, transcript_text + untrusted(device_id), on_delta)
     except Exception as err:  # noqa: BLE001
         await _send_json(
             ws, {"type": "error", "code": "BACKEND_ERROR", "message": str(err)}

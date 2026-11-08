@@ -269,8 +269,12 @@ it("saves Live-only enablement and default atomically, retaining the draft on an
   fireEvent.click(screen.getByLabelText("Enable Live"));
   expect(
     screen.getByRole("button", { name: "Save voice configuration" }),
-  ).toBeDisabled();
-  expect(screen.getByText(/Enable at least one voice mode/)).toBeVisible();
+  ).toBeEnabled();
+  expect(screen.getByText(/Chat-only: text conversation remains available/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Save voice configuration" }));
+  await waitFor(() => expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({
+    enabled_modes: [], default_mode: null,
+  }));
 });
 
 it("offers explicit assignment with reset and never discards overrides after a rejected assignment", async () => {

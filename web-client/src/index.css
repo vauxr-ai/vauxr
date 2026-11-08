@@ -774,3 +774,22 @@
   display: block;
   width: 100%;
 }
+
+.companion-controls, .companion-controls label { min-inline-size: 0; }
+.companion-controls label { display: block; }
+.companion-controls select, .companion-controls input {
+  width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box;
+}
+.companion-controls p { overflow-wrap: anywhere; }
+.companion.is-collapsed .companion-controls > div { display: none; }
+.companion-controls { order: 2; margin-block: 14px; font-size: 0.875rem; }
+.companion-controls label { display: grid; gap: 6px; }
+.companion-controls button { margin: 8px 8px 0 0; }
+.companion-proposal { padding-block-start: 12px; border-top: 1px solid var(--line); }
+.companion-proposal [role="group"] { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.companion.is-collapsed .companion-controls { grid-column: 1 / -1; grid-row: 2; margin: 0; }
+.companion.is-collapsed #companion-selected-agent { display: none; }
+.companion-text textarea { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; background: var(--canvas); border: 1px solid var(--line); border-radius: 7px; padding: 7px; color: var(--text); }
+.companion-text, .companion-reply { overflow-wrap: anywhere; white-space: pre-wrap; }
+.companion.is-collapsed .companion-text { display: none; }
+.talk-chat-only { order: 0; padding: 14px 0; color: var(--muted); }

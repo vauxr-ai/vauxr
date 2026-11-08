@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 interface Props {
+  chatOnly?: boolean;
   open: boolean;
   onOpen: (open: boolean) => void;
   context: string;
@@ -11,9 +12,10 @@ interface Props {
 }
 const MOBILE_QUERY = "(max-width: 760px)";
 const FOCUSABLE =
-  'button:not(:disabled), input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]';
+  'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary, [tabindex="0"]';
 
 export default function Companion({
+  chatOnly = false,
   open,
   onOpen,
   context,
@@ -134,13 +136,13 @@ export default function Companion({
       id="voice-companion"
       ref={panel}
       className={`companion ${open ? "is-open" : "is-collapsed"}`}
-      aria-label="Voice companion"
+      aria-label={chatOnly ? "Text companion" : "Voice companion"}
       role={open && mobile ? "dialog" : "region"}
       aria-modal={open && mobile ? true : undefined}
     >
       <header className="companion-header">
         <div>
-          <span className="eyebrow">Voice companion</span>
+          <span className="eyebrow">{chatOnly ? "Text companion" : "Voice companion"}</span>
           <h2>{route}</h2>
           <p role="status">{state}</p>
         </div>
@@ -148,7 +150,7 @@ export default function Companion({
           <button
             ref={close}
             onClick={() => onOpen(false)}
-            aria-label="Collapse voice companion"
+            aria-label={chatOnly ? "Collapse text companion" : "Collapse voice companion"}
           >
             ×
           </button>
@@ -158,7 +160,7 @@ export default function Companion({
             onClick={() => onOpen(true)}
             aria-expanded={false}
             aria-controls="voice-companion"
-            aria-label="Expand voice companion"
+            aria-label={chatOnly ? "Expand text companion" : "Expand voice companion"}
           >
             ↗
           </button>
@@ -168,7 +170,7 @@ export default function Companion({
         <>
           <p className="context-chip">Viewing {context}</p>
           <p className="text-xs text-zinc-400">
-            Browser voice route. Manage device assignments in Devices and agent
+            Browser conversation route. Manage device assignments in Devices and agent
             defaults in Agents.
           </p>
         </>

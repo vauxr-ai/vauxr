@@ -143,6 +143,10 @@ async def _offer_handler(request: web.Request) -> web.Response:
         audit_denial(True)
         return web.json_response({"error": "forbidden"}, status=403)
 
+    from vauxr.speech.store import get_store as voice_store
+    if voice_store().chat_only(device_id):
+        return web.json_response({"error": voice_store().no_voice_message()}, status=409)
+
     from vauxr.realtime.session import RealtimeOfferConflict, get_manager
 
     manager = get_manager()

@@ -53,6 +53,7 @@ class _ResponseOrigin:
     device_id: str
     run_id: str | None = None
     finished: bool = False
+    admission: object | None = None
 
 
 async def _send_json(ws: web.WebSocketResponse, obj: dict[str, Any]) -> None:
@@ -74,6 +75,7 @@ class AgentServer:
         self._response_origins: deque[_ResponseOrigin] = deque(maxlen=256)
         self._realtime_origins: deque[tuple[str, _Connection, str]] = deque(maxlen=256)
         self._response_listeners: dict[str, DeviceResponseListener] = {}
+        self._bound_response_admissions: dict[str, object] = {}
         self._response_agents: dict[str, str] = {}
         self._media_turns: dict[asyncio.Event, str] = {}
         self._media_authorities: dict[asyncio.Event, auth_connections.Connection] = {}
@@ -87,6 +89,12 @@ class AgentServer:
         if (active is None or active.id != agent_id or conn is None or conn.ws.closed
                 or not current(conn.principal)):
             raise RuntimeError("Selected Agent is not connected; connect and activate the OpenClaw integration")
+        from vauxr.companion import untrusted
+
+        context = untrusted(device_id)
+        payload = dict(payload or {})
+        if operation == "consult" and context:
+            payload["request"] = str(payload.get("request", "")) + context
         request_id = secrets.token_hex(16)
         future = asyncio.get_running_loop().create_future()
         self._realtime_requests[request_id] = (conn, device_id, future)
@@ -101,7 +109,13 @@ class AgentServer:
             if name is not None:
                 frame["deviceDisplayName"] = name
             await _send_json(conn.ws, frame)
-            return await asyncio.wait_for(future, timeout)
+            result = await asyncio.wait_for(future, timeout)
+            if operation == "bootstrap":
+                context = untrusted(device_id)
+            if operation == "bootstrap" and context:
+                result = {**result, "messages": [*result.get("messages", []),
+                          {"role": "user", "content": context}]}
+            return result
         finally:
             # Cancelling the waiting media session never sends backend cancellation.
             self._realtime_requests.pop(request_id, None)
@@ -120,7 +134,9 @@ class AgentServer:
         conn = self._connections.get(active.id)
         return conn is not None and not conn.ws.closed and current(conn.principal)
 
-    def send_transcript(self, device_id: str, text: str) -> bool:
+    def send_transcript(
+        self, device_id: str, text: str, *, listener: DeviceResponseListener | None = None,
+    ) -> bool:
         active = agent_registry.get_for_device(device_id)
         if active is None:
             log.warning("No active agent — dropping transcript")
@@ -134,17 +150,25 @@ class AgentServer:
 
         # device_id comes from the authenticated device turn. Display metadata
         # must never replace it in sessions, response listeners or routing.
+        from vauxr.companion import untrusted
+
         frame = {
             "type": "agent.transcript",
             "deviceId": device_id,
             "sessionKey": f"vauxr:{device_id}",
-            "text": text,
+            "text": text + untrusted(device_id),
         }
         name = load_device_display_name(get_config().data_dir, device_id)
         if name is not None:
             frame["deviceDisplayName"] = name
 
-        self._response_origins.append(_ResponseOrigin(conn, device_id))
+        admission = None
+        if listener is not None:
+            if self._response_listeners.get(device_id) is not listener:
+                return False
+            admission = object()  # Keep correlation identity, never a reply closure/history.
+            self._bound_response_admissions[device_id] = admission
+        self._response_origins.append(_ResponseOrigin(conn, device_id, admission=admission))
         # Schedule the WS send on the event loop; the pipeline calls this
         # synchronously, so we return True optimistically once we've queued.
         asyncio.create_task(
@@ -183,6 +207,7 @@ class AgentServer:
         auth_connections.release(self._media_authorities.pop(abort, None))
 
     def add_response_listener(self, device_id: str, listener: DeviceResponseListener) -> None:
+        self._bound_response_admissions.pop(device_id, None)
         self._response_listeners[device_id] = listener
         active = agent_registry.get_for_device(device_id)
         self._response_agents[device_id] = active.id if active else ""
@@ -195,6 +220,7 @@ class AgentServer:
         # that overwrote it (overlapping turns / barge-in).
         if listener is not None and self._response_listeners.get(device_id) is not listener:
             return
+        self._bound_response_admissions.pop(device_id, None)
         self._response_listeners.pop(device_id, None)
         self._response_agents.pop(device_id, None)
 
@@ -429,6 +455,11 @@ class AgentServer:
             log.warning("%s: ignoring %s — missing deviceId or runId", agent_name, msg_type)
             return
         listener = self._response_listeners.get(device_id)
+        admission = self._bound_response_admissions.get(device_id)
+        if admission is not None and (origin is None or origin.admission is not admission):
+            return  # Text accepts only its own admission, including after a voice abort.
+        if origin is not None and origin.admission is not None and origin.admission is not admission:
+            return  # A detached text request cannot deliver into its replacement.
         if listener is None:
             agent_name = conn.agent.name if conn.agent else "?"
             log.warning("%s: no listener for %s (%s)", agent_name, device_id, msg_type)

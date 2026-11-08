@@ -46,7 +46,7 @@ test("realtime playback survives transcript overlap and restart with bounded dia
     socket.send(JSON.stringify({ type: "realtime.ready" }));
   });
   await login(page, server);
-  await page.getByRole("button", { name: "Connect browser voice", exact: true }).click();
+  await page.getByRole("button", { name: "Connect browser", exact: true }).click();
   const talk = page.getByRole("complementary", { name: "Talk panel" });
   await talk.getByRole("radio", { name: "Realtime", exact: true }).click();
   await page.evaluate(() => (window as any).vauxrRealtimeDiagnostics.enable());

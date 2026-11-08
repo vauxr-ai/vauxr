@@ -24,7 +24,7 @@ class Settings(TypedDict, total=False):
     stt_backend: str
     tts_backend: str
     voices: dict[str, str]
-    mode: str
+    mode: str | None
     realtime_backend: str
     realtime_voice: str
 
@@ -156,13 +156,12 @@ class SpeechStore:
         modes = policy["enabled_modes"]
         if (
             not isinstance(modes, list)
-            or not modes
             or any(not isinstance(mode, str) or mode not in ("standard", "realtime") for mode in modes)
             or len(set(modes)) != len(modes)
         ):
-            raise ValueError("Enable at least one supported voice mode")
-        if policy["default_mode"] not in modes:
-            raise ValueError("Default mode must be enabled")
+            raise ValueError("Choose supported voice modes, or disable both for chat-only")
+        if (modes and policy["default_mode"] not in modes) or (not modes and policy["default_mode"] is not None):
+            raise ValueError("Default mode must be enabled, or null for chat-only")
         self._validate_settings(policy["selection"], "agents.*.selection", True)
         if "mode" in policy["selection"]:
             raise ValueError("Use default_mode for agent voice policy")
@@ -203,6 +202,16 @@ class SpeechStore:
         agent = registry.get_by_id(agent_id)
         return ["standard", "realtime"] if agent and agent.type == "openclaw" else ["standard"]
 
+    def chat_only_agent(self, agent_id: str) -> bool:
+        return self.agents.get(agent_id, {}).get("enabled_modes") == []
+
+    def chat_only(self, device_id: str) -> bool:
+        return self.chat_only_agent(self.agent_id(device_id))
+
+    @staticmethod
+    def no_voice_message() -> str:
+        return "Chat-only agent: no voice modes enabled. Browser text is available; choose a voice-enabled agent for physical voice devices."
+
     def agent_defaults(self, agent_id: str) -> dict:
         policy = self.agents.get(agent_id)
         if not policy:
@@ -235,6 +244,8 @@ class SpeechStore:
         return [mode for mode in integration if mode in enabled and mode in supported]
 
     def _validate_device_effective(self, device_id: str) -> None:
+        if self.chat_only(device_id):
+            return  # Stored overrides stay dormant; none can enable voice.
         inherited = self.inherited(device_id)
         override = self.devices.get(device_id, {})
         settings = {**inherited, **override, "voices": {**inherited["voices"], **override.get("voices", {})}}
@@ -246,6 +257,11 @@ class SpeechStore:
         agent_id = self.agent_id(device_id)
         if not agent_id or registry.get_by_id(agent_id) is None:
             return "Assigned agent unavailable. Choose an available agent."
+        if self.chat_only(device_id):
+            from vauxr.auth.service import get_store
+
+            browser = get_store().lifecycle.get("bindings", {}).get(device_id, {}).get("kind") == "browser"
+            return None if browser else self.no_voice_message()
         try:
             self._validate_device_effective(device_id)
         except (KeyError, ValueError):
@@ -279,10 +295,13 @@ class SpeechStore:
             "agent_id": identity,
             "assigned": (device_id or "") in self.assignments,
             "configured": bool(policy),
+            "chat_only": self.chat_only_agent(identity),
             "integration_modes": integration,
             "enabled_modes": policy.get("enabled_modes", integration),
             "default_mode": policy.get("default_mode", self.defaults["mode"]),
-            "available_modes": self.available_modes(device_id) if device_id else integration,
+            "available_modes": self.available_modes(device_id) if device_id else [
+                mode for mode in integration if mode in policy.get("enabled_modes", integration)
+            ],
             "capabilities_known": (device_id or "") in self.capabilities,
             "conflict": self.conflict(device_id) if device_id and self.managed(device_id) else None,
         }
@@ -290,6 +309,8 @@ class SpeechStore:
     def runtime_conflict(self, device_id: str, mode: str) -> str | None:
         if not self.managed(device_id):
             return None
+        if self.chat_only(device_id):
+            return self.no_voice_message()
         conflict = self.conflict(device_id)
         if conflict:
             return conflict
@@ -299,7 +320,9 @@ class SpeechStore:
 
     def _selection_signature(self, device_id: str) -> tuple:
         settings = self.voice_settings(device_id)
-        selected = settings if settings["mode"] == "realtime" else self.resolve(device_id)
+        selected = None if self.chat_only(device_id) else (
+            settings if settings["mode"] == "realtime" else self.resolve(device_id)
+        )
         return self.agent_id(device_id), settings["mode"], selected
 
     def _active_change(self, candidate: SpeechStore, device_id: str) -> str | None:
@@ -310,7 +333,12 @@ class SpeechStore:
         device = registry.get(device_id)
         module = sys.modules.get("vauxr.realtime.session")
         manager = getattr(module, "_manager", None)
-        if (device and device.state not in ("idle", "offline")) or (
+        chat = sys.modules.get("vauxr.chat")
+        if chat is not None and chat.is_active(device_id):
+            return "A text request is active. Wait for its result before changing the conversation agent or modes."
+        if (
+            device and device.state not in ("idle", "offline")
+        ) or (
             manager is not None and manager.has_live_session(device_id)
         ):
             return "Voice is active. Stop voice and disconnect its WebRTC session, then retry this change."
@@ -357,6 +385,8 @@ class SpeechStore:
         )
 
     def resolve(self, device_id: str = "", agent_id: str | None = None) -> Selection:
+        if (agent_id and self.chat_only_agent(agent_id)) or (device_id and self.chat_only(device_id)):
+            raise VoiceConflict(self.no_voice_message())
         settings = self.agent_defaults(agent_id) if agent_id else self.inherited(device_id)
         override = self.devices.get(device_id, {})
         stt = self.backends[override.get("stt_backend", settings["stt_backend"])]
@@ -368,11 +398,13 @@ class SpeechStore:
             raise ValueError("Selected voice is no longer configured")
         return Selection(stt, tts, voice)
 
-    def voice_settings(self, device_id: str = "", agent_id: str | None = None) -> dict[str, str]:
+    def voice_settings(self, device_id: str = "", agent_id: str | None = None) -> dict[str, str | None]:
         settings = {
             **(self.agent_defaults(agent_id) if agent_id else self.inherited(device_id)),
             **self.devices.get(device_id, {}),
         }
+        if (agent_id and self.chat_only_agent(agent_id)) or (device_id and self.chat_only(device_id)):
+            return {"mode": None, "realtime_backend": "", "realtime_model": "", "realtime_voice": ""}
         provider = self.backends.get(settings.get("realtime_backend", ""))
         return {
             "mode": settings["mode"],
@@ -415,6 +447,8 @@ class SpeechStore:
                 for key in ("enabled_modes", "default_mode"):
                     if key in managed_patch:
                         policy[key] = managed_patch.pop(key)
+                if policy["enabled_modes"] == [] and "default_mode" not in patch:
+                    policy["default_mode"] = None
                 target = policy["selection"]
             else:
                 target = (
@@ -472,6 +506,10 @@ class SpeechStore:
                 "capabilities": candidate.capabilities,
             }
             candidate._load(result)
+            if device_id and candidate.chat_only(device_id) and (
+                set(patch) - {"agent_id", "reset"}
+            ):
+                raise VoiceConflict(candidate.no_voice_message())
             if agent_id:
                 policy = candidate.agents[agent_id]
                 if set(policy["enabled_modes"]) - set(candidate.integration_modes(agent_id)):
@@ -527,7 +565,9 @@ class SpeechStore:
             }
             error = None
         except (KeyError, ValueError):
-            effective, error = None, "Selected backend or voice is no longer configured"
+            effective = None
+            chat_only = self.chat_only_agent(agent_id) if agent_id else (device_id and self.chat_only(device_id))
+            error = None if chat_only else "Selected backend or voice is no longer configured"
         return {
             "voice": self.voice_settings(device_id or "", agent_id),
             "realtime": {
@@ -536,7 +576,8 @@ class SpeechStore:
                 )
                 if self.voice_settings(device_id or "", agent_id)["realtime_backend"]
                 else [],
-                "configured": bool(get_config().realtime.enabled and os.environ.get("OPENAI_API_KEY")),
+                "configured": bool(get_config().realtime.enabled and os.environ.get("OPENAI_API_KEY")
+                                   and not self.policy_view(device_id, agent_id)["chat_only"]),
             },
             "defaults": self.agent_defaults(agent_id) if agent_id else self.inherited(device_id or ""),
             "overrides": self.devices.get(device_id, {}),

@@ -20,6 +20,7 @@ export function validateVoiceUrl(value: string) {
 }
 interface Props {
   compact?: boolean;
+  chatOnly?: boolean;
   connected: boolean;
   connecting?: boolean;
   onEnrollmentChange?: (pending: boolean) => void;
@@ -28,6 +29,7 @@ interface Props {
 }
 export default function ConfigPanel({
   compact = false,
+  chatOnly = false,
   connected,
   connecting = false,
   onEnrollmentChange,
@@ -149,14 +151,14 @@ export default function ConfigPanel({
         </button>
       ) : (
         <button disabled={enrolling} onClick={() => void connect(false)}>
-          Connect browser voice
+          Connect browser
         </button>
       )}
       <details>
-        <summary>Browser voice connection</summary>
+        <summary>{chatOnly ? "Browser connection (text-only)" : "Browser voice connection"}</summary>
         <p>
-          Connect enrolls this browser as a separate voice device. Its key and
-          credential stay in this browser profile; one tab uses voice at a time.
+          Connect enrolls this browser for text and any agent-enabled voice modes. Its key and
+          credential stay in this browser profile; one tab owns this browser connection at a time.
           Reload requires Connect. Logout revokes browser access and clears its
           credential. Re-enrollment uses the saved key.
         </p>

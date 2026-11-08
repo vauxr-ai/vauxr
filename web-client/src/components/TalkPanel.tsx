@@ -8,6 +8,7 @@ export type TalkMode = "hold" | "toggle" | "realtime";
 
 interface Props {
   compact?: boolean;
+  noVoice?: boolean;
   transcript?: string;
   status?: string;
   modeBusy?: boolean;
@@ -59,6 +60,12 @@ export default function TalkPanel(props: Props) {
     onSetTalkMode,
     onInterrupt,
   } = props;
+
+  if (props.noVoice) return (
+    <aside aria-label="Talk panel" className="talk-panel talk-chat-only">
+      <p role="status">Chat-only · Voice unavailable. Use text below.</p>
+    </aside>
+  );
 
   const buttonDisabled =
     !isConnected ||

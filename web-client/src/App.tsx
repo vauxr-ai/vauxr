@@ -9,6 +9,7 @@ import Layout from "./components/Layout";
 import Sidebar, { type SectionId } from "./components/Sidebar";
 import TalkPanel, { type TalkMode } from "./components/TalkPanel";
 import { AppearanceProvider } from "./components/Appearance";
+import CompanionControls, { type Selection } from "./components/CompanionControls";
 import Companion from "./components/Companion";
 import { companionStatus } from "./hooks/companionStatus";
 import { useActiveRoute } from "./hooks/useActiveRoute";
@@ -43,6 +44,8 @@ function OwnerApp() {
   const [companionOpen, setCompanionOpen] = useState(false);
   const [viewContext, setViewContext] = useState("Agents");
   const activeRoute = useActiveRoute();
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const browserCredential = useCallback(() => credential.current, []);
   const [enrollingBrowser, setEnrollingBrowser] = useState(false);
   useEffect(() => {
     setViewContext(
@@ -58,6 +61,7 @@ function OwnerApp() {
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState("");
   const [voiceConflict, setVoiceConflict] = useState("");
+  const [chatOnly, setChatOnly] = useState(false);
   const [availableVoiceModes, setAvailableVoiceModes] = useState([
     "standard",
     "realtime",
@@ -287,6 +291,8 @@ function OwnerApp() {
         if (attempt !== modeRequest.current || controller.signal.aborted)
           return;
         const policy = data.policy;
+        setChatOnly(policy?.chat_only === true);
+        if (policy?.chat_only) stopVoiceRef.current();
         setAvailableVoiceModes(
           policy?.assigned || policy?.configured
             ? policy.available_modes
@@ -308,7 +314,7 @@ function OwnerApp() {
               ? "toggle"
               : "hold";
         const next = data.voice?.mode === "realtime" ? "realtime" : standard;
-        if (next !== current) {
+        if (!policy?.chat_only && next !== current) {
           stopVoiceRef.current();
           setTalkMode(next);
         }
@@ -333,7 +339,7 @@ function OwnerApp() {
   }, [deviceId, connectionEpoch]);
 
   const changeMode = async (next: TalkMode) => {
-    if (modeBusy || next === talkMode) return;
+    if (chatOnly || modeBusy || next === talkMode) return;
     stopVoice();
     setModeBusy(true);
     setModeError("");
@@ -432,7 +438,8 @@ function OwnerApp() {
   }, [ws, audio]);
 
   const handleTalkStart = useCallback(async () => {
-    if (voiceConflict || modeBusy || (deviceId && !modeLoaded)) return;
+    if (chatOnly || !availableVoiceModes.includes(talkMode === "realtime" ? "realtime" : "standard")
+      || voiceConflict || modeBusy || (deviceId && !modeLoaded)) return;
     if (talkMode === "realtime") {
       if (realtime.state === "stopped")
         await realtime.start(deviceId, credential.current);
@@ -454,6 +461,8 @@ function OwnerApp() {
     voiceConflict,
     modeBusy,
     modeLoaded,
+    chatOnly,
+    availableVoiceModes,
   ]);
 
   const handleTalkEnd = useCallback(() => {
@@ -562,7 +571,7 @@ function OwnerApp() {
               <AccessPanel />
             </>
           ) : (
-            <AgentsPanel onContext={setViewContext} />
+            <AgentsPanel onContext={setViewContext} onSelection={setSelection} />
           )}
           <details className="card diagnostics">
             <summary>Browser session diagnostics</summary>
@@ -575,14 +584,16 @@ function OwnerApp() {
       }
       talk={
         <Companion
+          chatOnly={chatOnly}
           open={companionOpen}
           onOpen={setCompanionOpen}
           context={viewContext}
           route={deviceRoute || activeRoute}
-          state={voiceStatus}
+          state={chatOnly ? "Chat-only · Voice unavailable" : voiceStatus}
           connection={
             <ConfigPanel
               compact={!companionOpen}
+              chatOnly={chatOnly}
               connected={isConnected}
               connecting={enrollingBrowser || ws.state === "connecting"}
               onEnrollmentChange={setEnrollingBrowser}
@@ -594,7 +605,11 @@ function OwnerApp() {
             />
           }
         >
-          {micUnavailable && <MicWarning />}
+          <CompanionControls browserId={deviceId} credential={browserCredential}
+            epoch={connectionEpoch} route={activeSection}
+            selection={activeSection === "agents" ? selection : null}
+            onSwitch={stopVoice} />
+          {micUnavailable && !chatOnly && <MicWarning />}
           {(voiceConflict ||
             modeError ||
             realtime.error ||
@@ -607,6 +622,7 @@ function OwnerApp() {
             </p>
           )}
           <TalkPanel
+            noVoice={chatOnly}
             compact={!companionOpen}
             availableModes={availableVoiceModes}
             voiceConflict={!!voiceConflict}
