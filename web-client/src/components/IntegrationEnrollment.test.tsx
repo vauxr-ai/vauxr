@@ -70,14 +70,18 @@ test("delivered state never claims save completion or reoffers approval", async 
   expect(screen.queryByLabelText("Integration matching code")).not.toBeInTheDocument();
 });
 test("denial sends only request identity and requires confirmation", async () => {
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const confirm = vi.spyOn(window, "confirm");
   render(<IntegrationEnrollment />);
   fireEvent.click(screen.getByRole("button", { name: "Refresh integration requests", exact: true }));
   const deny = await screen.findByText("Deny integration request");
   fireEvent.click(deny);
   expect(ownerPost).toHaveBeenCalledTimes(1);
-  confirm.mockReturnValue(true);
+  const dialog = screen.getByRole("dialog", { name: "Deny integration request", exact: true });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel", exact: true }));
+  expect(ownerPost).toHaveBeenCalledTimes(1);
   fireEvent.click(deny);
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Deny integration request", exact: true })).getByRole("button", { name: "Deny request", exact: true }));
   await waitFor(() => expect(ownerPost).toHaveBeenCalledWith("/api/integrations/v1/deny", { request_id: request.request_id }));
+  expect(confirm).not.toHaveBeenCalled();
   confirm.mockRestore();
 });
