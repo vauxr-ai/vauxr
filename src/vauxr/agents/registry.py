@@ -176,6 +176,8 @@ def ensure_support() -> None:
     """Install the built-in route at service startup without changing existing selection."""
     _ensure_loaded()
     if get_by_id("vauxr-support") is not None:
+        from vauxr.agents.avatars import install_support
+        install_support("vauxr-support")
         return
     from vauxr.config_files import read_json
     installation = Path(get_config().data_dir) / "support-installation.json"
@@ -188,6 +190,8 @@ def ensure_support() -> None:
         agents, active = _decode(data, _path())
         return _encode([*agents, support], active or (support.id if not agents else ""))
 
+    from vauxr.agents.avatars import install_support
+    install_support(support.id)
     _commit(change)
 
 

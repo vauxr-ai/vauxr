@@ -1,7 +1,6 @@
 import { ownerFetch } from "../auth/api";
 import SupportSettings from "./SupportSettings";
 import IntegrationMetadata from "./IntegrationMetadata";
-import AddAgent from "./AddAgent";
 import { useEffect, useState, useRef, useId } from "react";
 import { useAgents, type ApiAgent } from "../hooks/useAgents";
 import Icon from "./Icon";
@@ -36,10 +35,12 @@ function positionDeleteTooltip(trigger: HTMLElement, pointer?: {x: number; y: nu
 }
 
 export default function AgentsPanel({
+  refreshVersion = 0,
   onContext,
   onSelection,
   browserDeviceId, browserConnected = false, browserCredential,
 }: {
+  refreshVersion?: number;
   browserDeviceId?: string; browserConnected?: boolean; browserCredential?: () => string | null;
   onContext?: (context: string) => void;
   onSelection?: (selection: { id: string; name: string } | null) => void;
@@ -106,7 +107,7 @@ export default function AgentsPanel({
       window.removeEventListener("companion-resource-changed", update);
       window.removeEventListener("speech-settings-changed", policyUpdate);
     };
-  }, []);
+  }, [refreshVersion]);
 
   useEffect(() => {
     const closeMenus = (event: PointerEvent | KeyboardEvent) => {
@@ -172,17 +173,6 @@ export default function AgentsPanel({
 
   return (
     <div className="space-y-5">
-      <div className="resource-toolbar agents-toolbar">
-        <AddAgent
-          onCreated={async (created) => {
-            await refresh();
-            setEditingName(false);
-            setSelectedId("");
-            setNameDraft(created.name);
-          }}
-        />
-      </div>
-      <hr className="agents-divider" />
       <section className="card agent-inventory" aria-label="Agents available for use on voice devices">
         <div className="section-heading">
           <div>
@@ -274,9 +264,9 @@ export default function AgentsPanel({
                   if (actions) actions.inert = menu.open;
                 }}>⋯</summary><div className="agent-actions-list">
                 <button className="agent-route-action" aria-label={`Voice pipeline for ${agent.name}`}
-                  onClick={event => {(voiceReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setVoiceId(agent.id);}}><Icon name="agents" size={20}/>Voice pipeline</button>
+                  onClick={event => {(voiceReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setVoiceId(agent.id);}}><Icon name="voice-pipeline" size={20}/>Voice pipeline</button>
                 <button className="agent-route-action" aria-label={`Runtime settings for ${agent.name}`} title="Agent runtime settings"
-                  onClick={event => { (diagnosticsReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setError(""); setDiagnosticsId(agent.id); }}><Icon name="settings" size={20}/>Runtime settings</button>
+                  onClick={event => { (diagnosticsReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setError(""); setDiagnosticsId(agent.id); }}><Icon name="agent-runtime" size={20}/>Runtime settings</button>
                 <span className="agent-action-tooltip-trigger"
                   tabIndex={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") ? 0 : undefined}
                   aria-label={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") ? `Delete ${agent.name} unavailable` : undefined}

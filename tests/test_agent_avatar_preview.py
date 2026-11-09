@@ -250,3 +250,23 @@ async def test_preview_fragmented_body_and_trailing_limit(client, browser):
     assert response.status == 400
     response = await client.post("/api/speech/preview", headers=headers, data=fragments())
     assert response.status == 400  # Complete valid JSON, invalid provider.
+
+
+async def test_catalog_avatar_from_installed_package_outside_checkout(client, monkeypatch, tmp_path):
+    from importlib.resources import files
+    from vauxr.agents import avatars
+
+    expected = files('vauxr.agents').joinpath('assets/vauxr-support.png').read_bytes()
+    monkeypatch.chdir(tmp_path)
+    response = await client.post('/api/local-agents', headers=owner_headers(client),
+                                 json={'definition_id': 'vauxr-support', 'name': 'Catalog Support'})
+    assert response.status == 201
+    agent_id = (await response.json())['id']
+    assert avatars.path(agent_id).read_bytes() == expected
+    agents._reset_for_tests()
+    response = await client.get(f'/api/agents/{agent_id}/avatar', headers=owner_headers(client))
+    assert response.status == 200
+    assert await response.read() == expected
+    avatars.save(agent_id, png())
+    avatars.install_support(agent_id)
+    assert avatars.path(agent_id).read_bytes() == png()

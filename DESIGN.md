@@ -398,6 +398,10 @@ revision separately from newer unpublished or documentation-only commits.
 - No simulated persistence/audio/telemetry presented as real behavior; no framework
   replacement, unapproved runtime rearchitecture, or claim of untested acceptance.
 
-Agents refinements: Add Agent sits above the inventory divider. The blue-pencil name editor uses approximately 40ch of text space (shrinking on phones), accepts up to 200 characters, and retains save/cancel. Newly added Vauxr Support agents persist their catalog avatar and can be removed with the React confirmation dialog; active defaults and other bundled agents remain protected. Integration denial uses a nested React confirmation dialog with cancellation, Escape isolation and focus restoration.
+Agents refinements: Add Agent lives inside the page heading, above its original divider. The blue-pencil name editor uses approximately 40ch of text space (shrinking on phones), accepts up to 200 characters, and retains save/cancel. Default bundled Support is removable when inactive; other bundled agents stay protected. Bundled Support receives catalog artwork when missing without replacing custom avatars. Newly added Vauxr Support agents persist their packaged catalog avatar independently of the server working directory and can be removed with the React confirmation dialog; active defaults and other bundled agents remain protected. Integration denial uses a nested React confirmation dialog with cancellation, Escape isolation and focus restoration.
 
 Long agent names retain their full stored/accessibility text and hover title; voice-pipeline headings ellipsize to one line and graph endpoint labels clamp to two lines so neither can overlap graph actions or Save.
+
+Agent overflow actions use native currentColor SVGs at the shared 20px size: Voice pipeline is a wide flanged warp pipe; Runtime settings combines two gears with circular loop arrows. Labels, focus behavior and actions remain unchanged in both themes.
+
+Agents places Add Agent beside the page title in a single centered header row on phone and desktop, above the description and visible divider.

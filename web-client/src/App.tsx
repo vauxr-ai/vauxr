@@ -16,6 +16,7 @@ import StatusBar from "./components/StatusBar";
 import EventLog from "./components/EventLog";
 import ConfigPanel from "./components/ConfigPanel";
 import AgentsPanel from "./components/AgentsPanel";
+import AddAgent from "./components/AddAgent";
 import DevicesPanel from "./components/DevicesPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -39,6 +40,7 @@ export default function App() {
 }
 
 function OwnerApp() {
+  const [agentsRefreshVersion, setAgentsRefreshVersion] = useState(0);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionId>("agents");
   const [companionOpen, setCompanionOpen] = useState(false);
@@ -570,7 +572,10 @@ function OwnerApp() {
         <div className="resource-page">
           <header className="page-heading">
             <p className="eyebrow">Workspace</p>
-            <h1>{pageTitle}</h1>
+            <div className="page-title-row">
+              <h1>{pageTitle}</h1>
+              {activeSection === "agents" && <div className="agents-toolbar"><AddAgent onCreated={async () => { setAgentsRefreshVersion(value => value + 1); }} /></div>}
+            </div>
             <p>{pageDescription}</p>
           </header>
           {activeSection === "devices" ? (
@@ -593,7 +598,7 @@ function OwnerApp() {
               />
             </>
           ) : (
-            <AgentsPanel onContext={setViewContext} onSelection={setSelection} browserDeviceId={deviceId} browserConnected={isConnected} browserCredential={browserCredential} />
+            <AgentsPanel refreshVersion={agentsRefreshVersion} onContext={setViewContext} onSelection={setSelection} browserDeviceId={deviceId} browserConnected={isConnected} browserCredential={browserCredential} />
           )}
 
         </div>

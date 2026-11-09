@@ -1,6 +1,8 @@
 import type { SVGProps } from "react";
 
 export type IconName =
+  | "voice-pipeline"
+  | "agent-runtime"
   | "connection"
   | "agents"
   | "devices"
@@ -43,6 +45,27 @@ export default function Icon({ name, size = 18, className, ...rest }: Props) {
   };
 
   switch (name) {
+    case "voice-pipeline":
+      return (
+        <svg {...common}>
+          <rect x="4" y="3" width="16" height="6" rx="1" />
+          <path d="M7 9v12h10V9M10 12v6" />
+        </svg>
+      );
+    case "agent-runtime":
+      return (
+        <svg {...common}>
+          <path d="M3 8a10 10 0 0 1 17-3M20 2v3h-3M21 16a10 10 0 0 1-17 3M4 22v-3h3" />
+          <g transform="translate(8.5 10) scale(.65)">
+            <path d="m-2-5 .5-2h3L2-5l2 1 2-.5 1.5 2.5L6-.5v2L7.5 3 6 5.5 4 5 2 6l-.5 2h-3L-2 6l-2-1-2 .5L-7.5 3-6 1.5v-2L-7.5-2-6-4.5-4-4Z" />
+            <circle r="2" />
+          </g>
+          <g transform="translate(16.5 14.5) scale(.48)">
+            <path d="m-2-5 .5-2h3L2-5l2 1 2-.5 1.5 2.5L6-.5v2L7.5 3 6 5.5 4 5 2 6l-.5 2h-3L-2 6l-2-1-2 .5L-7.5 3-6 1.5v-2L-7.5-2-6-4.5-4-4Z" />
+            <circle r="2" />
+          </g>
+        </svg>
+      );
     case "connection":
       return (
         <svg {...common}>

@@ -72,10 +72,7 @@ def attach_local_agents(
                 )
                 if selected["id"] == "vauxr-support":
                     from vauxr.agents import avatars
-                    asset = Path("web-client/dist/agent-types/vauxr-support.png")
-                    if not asset.exists():
-                        asset = Path("web-client/public/agent-types/vauxr-support.png")
-                    avatars.save(agent.id, asset.read_bytes())
+                    avatars.install_support(agent.id)
                 registry.register(agent)
                 return web.json_response(asdict(agent), status=201, headers={"Cache-Control": "no-store"})
             agent = registry.get_by_id(agent_id)
