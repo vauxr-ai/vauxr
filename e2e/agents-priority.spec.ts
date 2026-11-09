@@ -1,0 +1,45 @@
+import {mkdirSync} from 'node:fs';
+import {test,expect,login,seedRealtimeAgent,openAgentAction} from './auth-fixture';
+
+for(const width of [390,1366]) test(`Agents priority layout and inline icon controls ${width}`,async({page,server})=>{
+  await page.setViewportSize({width,height:844});seedRealtimeAgent(server);await login(page,server);
+  await page.getByLabel('Appearance').selectOption(width===390?'dark':'light');
+  await expect(page.getByText('Not default',{exact:true})).toHaveCount(0);
+  const add=page.getByRole('button',{name:'+ Add Agent',exact:true});
+  expect(await page.locator('.page-heading').evaluate(el=>getComputedStyle(el).borderBottomWidth)).toBe('0px');
+  expect(await page.locator('.agents-toolbar').evaluate(el=>getComputedStyle(el).borderBottomWidth)).toBe('1px');
+  const toolbar=(await page.locator('.agents-toolbar').boundingBox())!, addBox=(await add.boundingBox())!;
+  expect(addBox.y+addBox.height).toBeLessThan(toolbar.y+toolbar.height-10);
+  const row=page.locator('.agent-list>li').filter({has:page.getByRole('heading',{name:'Vauxr Support',level:3,exact:true})});
+  await expect(row.getByRole('button',{name:'Set as default',exact:true})).toBeVisible();
+  const name=row.getByRole('heading',{name:'Vauxr Support',exact:true});
+  const original=await name.evaluate(el=>({x:el.getBoundingClientRect().x,font:getComputedStyle(el).fontSize,weight:getComputedStyle(el).fontWeight}));
+  const pencil=row.getByRole('button',{name:'Edit agent name',exact:true});
+  expect(await pencil.evaluate(el=>{const c=getComputedStyle(el).color.match(/[\d.]+/g)!.map(Number);return c[2]>c[0]&&c[2]>c[1];})).toBe(true);
+  await pencil.click();const input=row.getByLabel('Agent name',{exact:true});
+  expect(await input.evaluate(el=>({x:el.getBoundingClientRect().x,font:getComputedStyle(el).fontSize,weight:getComputedStyle(el).fontWeight}))).toEqual(original);
+  for(const label of ['Save name','Cancel name edit']){
+    const button=row.getByRole('button',{name:label,exact:true});
+    await expect(button).toHaveText('');await expect(button.locator('svg')).toHaveCount(1);
+    const b=(await button.boundingBox())!, f=(await input.boundingBox())!;
+    expect(b.x).toBeGreaterThanOrEqual(f.x);expect(b.x+b.width).toBeLessThanOrEqual(f.x+f.width+1);
+    expect(b.y).toBe(f.y);expect(b.height).toBe(f.height);
+  }
+  const artifacts='/home/node/.openclaw/media/agents-priority';mkdirSync(artifacts,{recursive:true});
+  await page.screenshot({path:`${artifacts}/inline-${width}.png`});
+  await input.fill('Cancelled name');await row.getByRole('button',{name:'Cancel name edit',exact:true}).click();
+  await expect(name).toBeVisible();
+  await pencil.click();await input.fill('Priority agent');await input.press('Enter');
+  await expect(page.getByRole('heading',{name:'Priority agent',exact:true})).toBeVisible();
+  await openAgentAction(page,'Voice pipeline for Priority agent');
+  const modal=page.getByRole('dialog',{name:'Voice pipeline',exact:true});await expect(modal).toBeVisible();
+  await expect(modal.getByText('MAKE IT YOURS',{exact:true})).toHaveCount(0);
+  expect(await modal.getByRole('heading',{name:'Voice pipeline',exact:true}).evaluate(el=>parseFloat(getComputedStyle(el).fontSize))).toBeLessThanOrEqual(24);
+  const close=modal.getByRole('button',{name:'Close dialog',exact:true});
+  const b=(await close.boundingBox())!, svg=(await close.locator('svg').boundingBox())!;
+  expect(Math.abs(b.x+b.width/2-svg.x-svg.width/2)).toBeLessThan(1);
+  expect(Math.abs(b.y+b.height/2-svg.y-svg.height/2)).toBeLessThan(1);
+  await page.screenshot({path:`${artifacts}/voice-modal-${width}.png`});
+  await close.click();await add.click();
+  await expect(page.getByRole('dialog',{name:'Add Agent',exact:true}).getByText('MAKE IT YOURS',{exact:true})).toHaveCount(0);
+});

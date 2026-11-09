@@ -20,7 +20,7 @@ for (const width of [390,1366]) {
     await expect(runtime.getByText('Default',{exact:true})).toHaveCount(1);
     await page.keyboard.press('Escape');
     await openAgentAction(page,'Runtime settings for Vauxr Support');
-    await expect(runtime.locator('.pill').getByText('Not default',{exact:true})).toBeVisible();
+    await expect(runtime.getByText('Not default',{exact:true})).toHaveCount(0);
     const action=runtime.getByRole('button',{name:'Set as default',exact:true});
     await expect(action).toBeEnabled();
     await runtime.getByRole('tab',{name:'Configuration',exact:true}).click();
