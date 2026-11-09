@@ -62,8 +62,6 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
     await expect(menu.getByRole('button',{name:'Delete agent',exact:true})).toBeDisabled();
     await expect(tooltip).toHaveCSS('opacity','1');
     const tipBox=(await tooltip.boundingBox())!;
-    const focusedPanel=(await menu.boundingBox())!;
-    expect(tipBox.y).toBeGreaterThanOrEqual(focusedPanel.y+focusedPanel.height);
     for (const pill of await row.locator(".pill").all()) {
       const pillBox=(await pill.boundingBox())!;
       expect(tipBox.x >= pillBox.x+pillBox.width || tipBox.x+tipBox.width <= pillBox.x || tipBox.y >= pillBox.y+pillBox.height || tipBox.y+tipBox.height <= pillBox.y).toBe(true);
@@ -80,6 +78,27 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
     const addBox=(await primary.boundingBox())!;
     expect(tipBox.x >= addBox.x+addBox.width || tipBox.x+tipBox.width <= addBox.x || tipBox.y >= addBox.y+addBox.height || tipBox.y+tipBox.height <= addBox.y).toBe(true);
     await page.screenshot({path:`${artifacts}/tooltip-${width}-${theme}.png`});
+    const disabledBox=(await unavailable.boundingBox())!;
+    const cursor={x:disabledBox.x+20,y:disabledBox.y+20};
+    await page.mouse.move(cursor.x,cursor.y);
+    let cursorBox=(await tooltip.boundingBox())!;
+    expect(Math.abs(cursorBox.x-Math.min(cursor.x+12,width-cursorBox.width-8))).toBeLessThanOrEqual(1);
+    expect(Math.abs(cursorBox.y-(cursor.y+12))).toBeLessThanOrEqual(1);
+    await page.mouse.move(cursor.x+10,cursor.y+3);
+    const movedBox=(await tooltip.boundingBox())!;
+    expect(movedBox.y-cursorBox.y).toBeCloseTo(3,0);
+    await page.screenshot({path:`${artifacts}/tooltip-cursor-${width}-${theme}.png`});
+    await unavailable.dispatchEvent('pointermove',{pointerType:'mouse',clientX:width-2,clientY:page.viewportSize()!.height-2});
+    cursorBox=(await tooltip.boundingBox())!;
+    expect(cursorBox.x).toBeGreaterThanOrEqual(8);
+    expect(cursorBox.x+cursorBox.width).toBeLessThanOrEqual(width-7);
+    expect(cursorBox.y+cursorBox.height).toBeLessThanOrEqual(page.viewportSize()!.height-7);
+    await unavailable.dispatchEvent('pointerdown',{pointerType:'touch',clientX:0,clientY:0});
+    const touchBox=(await tooltip.boundingBox())!;
+    expect(touchBox.x).toBeGreaterThanOrEqual(8);
+    expect(touchBox.y).toBeGreaterThanOrEqual(8);
+    expect(touchBox.y+touchBox.height).toBeLessThanOrEqual(page.viewportSize()!.height-7);
+
     await page.keyboard.press('Escape');
     await expect(summary).toBeFocused();
     await expect(menu).toHaveJSProperty('inert',true);

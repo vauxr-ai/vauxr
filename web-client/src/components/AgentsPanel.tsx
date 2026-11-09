@@ -20,6 +20,23 @@ function dismissActionMenu(button: HTMLButtonElement): HTMLElement {
   return menu.querySelector<HTMLElement>("summary") || button;
 }
 
+/** Fixed viewport coordinates keep pointer hints near the cursor without clipping. */
+function positionDeleteTooltip(trigger: HTMLElement, pointer?: {x: number; y: number}) {
+  const tooltip = trigger.querySelector<HTMLElement>('[role="tooltip"]');
+  if (!tooltip) return;
+  const box = tooltip.getBoundingClientRect();
+  const target = trigger.getBoundingClientRect();
+  const margin = 8, offset = 12;
+  const x = pointer ? pointer.x + offset : target.right - box.width;
+  const anchorY = pointer ? pointer.y : target.bottom;
+  let y = anchorY + offset;
+  if (y + box.height > window.innerHeight - margin) {
+    y = (pointer ? pointer.y : target.top) - box.height - offset;
+  }
+  tooltip.style.setProperty('--tooltip-x', `${Math.max(margin, Math.min(x, window.innerWidth - box.width - margin))}px`);
+  tooltip.style.setProperty('--tooltip-y', `${Math.max(margin, Math.min(y, window.innerHeight - box.height - margin))}px`);
+}
+
 export default function AgentsPanel({
   onContext,
   onSelection,
@@ -264,7 +281,13 @@ export default function AgentsPanel({
                   tabIndex={agent.active || agent.builtin ? 0 : undefined}
                   aria-label={agent.active || agent.builtin ? `Delete ${agent.name} unavailable` : undefined}
                   aria-describedby={agent.active || agent.builtin ? `delete-reason-${agent.id}` : undefined}
-                  onPointerDown={event => { if (agent.active || agent.builtin) event.currentTarget.focus(); }}>
+                  onPointerEnter={event => { if (event.pointerType !== "touch") positionDeleteTooltip(event.currentTarget, {x:event.clientX,y:event.clientY}); }}
+                  onPointerMove={event => { if (event.pointerType !== "touch") positionDeleteTooltip(event.currentTarget, {x:event.clientX,y:event.clientY}); }}
+                  onFocus={event => { if (event.currentTarget.matches(":focus-visible")) positionDeleteTooltip(event.currentTarget); }}
+                  onPointerDown={event => { if (agent.active || agent.builtin) {
+                    event.currentTarget.focus();
+                    positionDeleteTooltip(event.currentTarget, event.pointerType === "touch" ? undefined : {x:event.clientX,y:event.clientY});
+                  } }}>
                   <button type="button" className="agent-delete-action" disabled={agent.active || agent.builtin || busy} onClick={event => {
                     (deleteReturnFocus as {current:HTMLElement|null}).current=dismissActionMenu(event.currentTarget); setDeleteId(agent.id); setDeleteError("");
                   }}><Icon name="trash" size={20}/>Delete agent</button>

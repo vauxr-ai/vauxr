@@ -278,8 +278,9 @@ thin border, and soft elevation. Do not turn it into a tiny utility dropdown.
 
 Disabled reasons belong in hover/focus/touch-accessible tooltips, not inline menu
 prose. A disabled button needs a focusable wrapper and described reason. Position
-those tooltips clear of sticky headers and row metadata, on the far side of the
-menu from its trigger: below a downward-opening menu, above an upward-opening menu.
+pointer tooltips at the mouse cursor with a small offset and viewport clamping.
+Keyboard focus and touch use a viewport-clamped position beside the disabled action,
+without requiring a mouse. Retain accessible descriptions and dismissal.
 Escape/outside interaction dismisses the menu. Selecting an action closes it
 before opening a dialog; return focus to the visible ⋯ trigger, not a hidden item.
 If a close fade retains native `<details>` content, make it inert synchronously so
