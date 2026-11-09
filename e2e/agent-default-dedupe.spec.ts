@@ -2,7 +2,7 @@ import {mkdirSync,readFileSync} from 'node:fs';
 import {test, expect, login, seedRealtimeAgent, openAgentAction} from './auth-fixture';
 
 for (const width of [390,1366]) {
-  test(`default status is pill-only in list and runtime settings ${width}`, async ({page,server}) => {
+  test(`default status is pill-only in list and runtime settings ${width}`, async ({page,server},testInfo) => {
     await page.setViewportSize({width,height:width===390?844:768});
     await seedRealtimeAgent(server);
     await login(page,server);
@@ -51,7 +51,7 @@ for (const width of [390,1366]) {
     await expect(confirmation).toHaveCount(0);
     expect(activationRequests).toBe(1);expect(nativeDialogs).toBe(0);
     await assertDefault(runtime);
-    const artifacts='/home/node/.openclaw/media/default-dedupe';
+    const artifacts=testInfo.outputPath('screenshots');
     mkdirSync(artifacts,{recursive:true});
     await page.screenshot({path:`${artifacts}/runtime-default-${width}.png`});
     // Check the affected modal's bounds without rerunning the exhaustive design matrix.

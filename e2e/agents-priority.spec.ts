@@ -1,7 +1,7 @@
 import {mkdirSync} from 'node:fs';
 import {test,expect,login,seedRealtimeAgent,openAgentAction} from './auth-fixture';
 
-for(const width of [390,1366]) for(const theme of ["light","dark"]) test(`Agents priority layout and inline icon controls ${width} ${theme}`,async({page,server})=>{
+for(const width of [390,1366]) for(const theme of ["light","dark"]) test(`Agents priority layout and inline icon controls ${width} ${theme}`,async({page,server},testInfo)=>{
   await page.setViewportSize({width,height:844});seedRealtimeAgent(server);await login(page,server);
   await page.getByLabel('Appearance').selectOption(theme);
   await expect(page.getByText('Not default',{exact:true})).toHaveCount(0);
@@ -28,7 +28,7 @@ for(const width of [390,1366]) for(const theme of ["light","dark"]) test(`Agents
     expect(b.x).toBeGreaterThanOrEqual(f.x);expect(b.x+b.width).toBeLessThanOrEqual(f.x+f.width+1);
     expect(b.y).toBe(f.y);expect(b.height).toBe(f.height);
   }
-  const artifacts='/home/node/.openclaw/media/agents-priority';mkdirSync(artifacts,{recursive:true});
+  const artifacts=testInfo.outputPath('screenshots');mkdirSync(artifacts,{recursive:true});
   await page.screenshot({path:`${artifacts}/inline-${width}-${theme}.png`});
   await expect(input).toHaveAttribute('maxlength','200');
   const editBox=(await input.boundingBox())!; expect(editBox.x+editBox.width).toBeLessThanOrEqual(width);

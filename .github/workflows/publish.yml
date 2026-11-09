@@ -201,6 +201,7 @@ jobs:
           path: |
             e2e/playwright-report/
             e2e/test-results/results.json
+            e2e/test-results/**/screenshots/
           retention-days: 7
 
       - name: Upload targeted design triage evidence
