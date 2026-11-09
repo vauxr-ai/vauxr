@@ -62,7 +62,12 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
     await expect(menu.getByRole('button',{name:'Delete agent',exact:true})).toBeDisabled();
     await expect(tooltip).toHaveCSS('opacity','1');
     const tipBox=(await tooltip.boundingBox())!;
-    expect(tipBox.y+tipBox.height).toBeLessThanOrEqual(panel.y);
+    const focusedPanel=(await menu.boundingBox())!;
+    expect(tipBox.y).toBeGreaterThanOrEqual(focusedPanel.y+focusedPanel.height);
+    for (const pill of await row.locator(".pill").all()) {
+      const pillBox=(await pill.boundingBox())!;
+      expect(tipBox.x >= pillBox.x+pillBox.width || tipBox.x+tipBox.width <= pillBox.x || tipBox.y >= pillBox.y+pillBox.height || tipBox.y+tipBox.height <= pillBox.y).toBe(true);
+    }
     expect(tipBox.y).toBeGreaterThanOrEqual(0);
     expect(tipBox.y+tipBox.height).toBeLessThanOrEqual(width===390?844:768);
     // A rectangle may be in bounds yet hidden behind sticky navigation.

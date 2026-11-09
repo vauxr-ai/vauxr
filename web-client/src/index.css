@@ -1014,11 +1014,11 @@ dialog.modal.agent-detail-modal[open] { height:auto; width:min(1000px,calc(100% 
 .agent-action-tooltip-trigger { display:block; border-radius:11px; }
 .agent-action-tooltip-trigger:has(button:disabled) { cursor:not-allowed; }
 .agent-action-tooltip-trigger button:disabled { pointer-events:none; }
-.agent-action-tooltip { position:absolute; z-index:8; bottom:calc(100% + 6px); right:0; width:220px; padding:10px 12px;
+.agent-action-tooltip { position:absolute; z-index:8; top:calc(100% + 8px); bottom:auto; right:0; width:220px; padding:10px 12px;
   border:1px solid var(--line); border-radius:12px; background:var(--panel-raised); color:var(--text); box-shadow:0 8px 24px #0003;
   font-size:12px; line-height:1.45; visibility:hidden; opacity:0; pointer-events:none; transition:opacity .12s,visibility .12s; }
 .agent-action-tooltip-trigger:hover .agent-action-tooltip,.agent-action-tooltip-trigger:focus-within .agent-action-tooltip { visibility:visible; opacity:1; }
-@media(max-width:600px) { .agent-actions[data-placement="above"] .agent-action-tooltip { bottom:auto; top:calc(100% + 8px); } }
+.agent-actions[data-placement="above"] .agent-action-tooltip { top:auto; bottom:calc(100% + 8px); }
 /* The close handler makes retained content inert before this native-details fade. */
 .agent-actions::details-content { opacity:0; transition:opacity .14s ease,content-visibility .14s allow-discrete; }
 .agent-actions[open]::details-content { opacity:1; }
