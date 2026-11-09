@@ -173,6 +173,15 @@ jobs:
           path: e2e/playwright-report/
           retention-days: 7
 
+      - name: Upload targeted design triage evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: design-triage-evidence
+          path: /tmp/vauxr-design-triage/
+          if-no-files-found: ignore
+          retention-days: 7
+
   # On push to main: compute version and create a draft release
   draft-release:
     name: Draft release (main only)
