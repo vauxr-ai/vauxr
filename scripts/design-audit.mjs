@@ -157,7 +157,8 @@ export async function auditPage(page, tokens, label = 'page') {
     };
   };
   const snapshot = await page.evaluate(capture, tokens || {});
-  if (snapshot.colorCounts.unmapped && snapshot.finiteTransitions) {
+  if (snapshot.finiteTransitions) {
+    // Even a token-colored starting frame can transition to an invalid endpoint.
     // Token endpoints are the contract, not the temporary interpolated RGB values.
     // Contrast keeps its original instantaneous sample; only paint-token evidence is resampled.
     await page.evaluate(async () => {
