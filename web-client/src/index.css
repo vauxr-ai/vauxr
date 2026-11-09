@@ -1168,3 +1168,6 @@ dialog.modal.agent-diagnostics-modal[open] { height:min(720px,calc(100dvh - 24px
 #rename-agent .name-edit-actions button { display:grid; place-items:center; width:44px; height:44px; min-height:44px; padding:0; border:0; border-radius:8px; background:transparent; }
 #rename-agent .name-edit-save { color:rgb(var(--status-ok-ink)); }
 #rename-agent .name-edit-cancel { color:rgb(var(--status-error)); }
+
+.agent-list .agent-route-action,.agent-runtime-identity .agent-route-action { border-color:transparent; background:transparent; box-shadow:none; color:var(--muted); font-size:12px; min-height:44px; padding:8px; }
+.agent-list .agent-route-action:hover:not(:disabled),.agent-runtime-identity .agent-route-action:hover:not(:disabled) { background:transparent; color:var(--text); text-decoration:underline; }

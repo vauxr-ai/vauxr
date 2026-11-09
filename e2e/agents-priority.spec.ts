@@ -12,7 +12,9 @@ for(const width of [390,1366]) test(`Agents priority layout and inline icon cont
   expect(addBox.y+addBox.height).toBeLessThan(toolbar.y+toolbar.height-10);
   const agentId=await page.locator('.agent-list>li').filter({has:page.getByRole('heading',{name:'Vauxr Support',level:3,exact:true})}).getAttribute('data-agent-id');
   const row=page.locator(`main li[data-agent-id="${agentId}"]`);
-  await expect(row.getByRole('button',{name:'Set as default',exact:true})).toBeVisible();
+  const setDefault=row.getByRole('button',{name:'Set as default',exact:true});
+  await expect(setDefault).toBeVisible();
+  expect(await setDefault.evaluate(el=>{const s=getComputedStyle(el);return {background:s.backgroundColor,border:s.borderTopColor,shadow:s.boxShadow};})).toEqual({background:'rgba(0, 0, 0, 0)',border:'rgba(0, 0, 0, 0)',shadow:'none'});
   const name=row.getByRole('heading',{name:'Vauxr Support',exact:true});
   const original=await name.evaluate(el=>({x:el.getBoundingClientRect().x,font:getComputedStyle(el).fontSize,weight:getComputedStyle(el).fontWeight}));
   const pencil=row.getByRole('button',{name:'Edit agent name',exact:true});
