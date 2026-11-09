@@ -89,10 +89,11 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
     await row.evaluate(el => { el.style.position='fixed'; el.style.bottom='24px'; el.style.right='24px'; el.style.zIndex='30'; });
     await summary.click();
     await expect(row.locator('details')).toHaveAttribute('data-placement','above');
-    const flipped=(await menu.boundingBox())!;
-    const lowTrigger=(await summary.boundingBox())!;
-    expect(flipped.y+flipped.height).toBeLessThanOrEqual(lowTrigger.y-5);
-    expect(flipped.y).toBeGreaterThanOrEqual(16);
+    await expect.poll(async () => {
+      const flipped=(await menu.boundingBox())!;
+      const lowTrigger=(await summary.boundingBox())!;
+      return flipped.y >= 16 && flipped.y+flipped.height <= lowTrigger.y-5;
+    }).toBe(true);
     await page.keyboard.press('Escape');
     await row.evaluate(el => {el.style.position='';el.style.bottom='';el.style.right='';el.style.zIndex='';});
     await primary.click();
