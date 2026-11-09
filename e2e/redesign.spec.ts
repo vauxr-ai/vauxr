@@ -314,12 +314,12 @@ test("agent names persist independently of shared routing and credentials", asyn
   await closeAgentDetail(page);
   await page.getByRole("button", {name:"Agents",exact:true}).click();
   await page.getByRole("button", {name: "Refresh agents", exact: true}).click();
-  page.on("dialog", (dialog) => dialog.accept());
   await page
     .locator("main li")
     .filter({ hasText: "Household helper" })
     .getByText("Set as default", { exact: true })
     .click();
+  await page.getByRole("dialog", { name: "Set default agent", exact: true }).getByRole("button", { name: "Set as default", exact: true }).click();
   const detail = page.locator(`main li[data-agent-id="${request.agent_id}"]`);
   await detail.getByRole("button", {name:"Edit agent name"}).click();
   await detail.getByLabel("Agent name").fill("Kitchen guide");

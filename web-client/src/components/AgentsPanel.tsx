@@ -47,6 +47,9 @@ export default function AgentsPanel({
   const api = useAgents();
   const runtimeTabsId = useId();
   const [runtimeTab, setRuntimeTab] = useState("configuration");
+  const activationReturnFocus = useRef<HTMLElement | null>(null);
+  const [activationId, setActivationId] = useState("");
+  const [activationError, setActivationError] = useState("");
   const deleteReturnFocus = useRef<HTMLElement>(null);
   const [deleteId,setDeleteId]=useState("");
   const [deleteError,setDeleteError]=useState("");
@@ -71,6 +74,7 @@ export default function AgentsPanel({
   const voiceAgent = agents.find(agent => agent.id === voiceId);
   const diagnostics = agents.find(agent => agent.id === diagnosticsId);
   const deletingAgent = agents.find(agent=>agent.id === deleteId);
+  const activatingAgent = agents.find(agent => agent.id === activationId);
   const selected = agents.find((agent) => agent.id === selectedId);
   useEffect(() => {
     onContext?.(selected?.name || "Agents");
@@ -124,20 +128,22 @@ export default function AgentsPanel({
     return () => {document.removeEventListener("pointerdown", closeMenus); document.removeEventListener("keydown", closeMenus);};
   }, []);
 
+  function requestActivation(agent: ApiAgent, trigger: HTMLButtonElement) {
+    activationReturnFocus.current = trigger;
+    setActivationError("");
+    setActivationId(agent.id);
+  }
+
   async function activate(agent: ApiAgent) {
-    if (
-      !window.confirm(
-        `Make ${agent.name} the default fallback route for unassigned devices? This changes server routing, not just your companion.`,
-      )
-    )
-      return;
+    if (busy) return;
     setBusy(true);
     try {
       await api.activateAgent(agent.id);
       await refresh();
+      setActivationId("");
       window.dispatchEvent(new Event("agent-route-changed"));
     } catch (error) {
-      setError(
+      setActivationError(
         error instanceof Error
           ? error.message
           : "Unable to set the default agent. Refresh before retrying.",
@@ -248,7 +254,7 @@ export default function AgentsPanel({
                 {!agent.active && <button
                   className="agent-route-action agent-default-action"
                   disabled={busy}
-                  onClick={() => void activate(agent)}
+                  onClick={event => requestActivation(agent, event.currentTarget)}
                 >
                   Set as default
                 </button>}
@@ -295,6 +301,15 @@ export default function AgentsPanel({
         )}
       </section>
       {saved && <p role="status">{saved}</p>}
+      {activatingAgent && <Modal title="Set default agent" returnFocus={activationReturnFocus} onClose={() => { if (!busy) setActivationId(""); }}>
+        <p>Make <strong>{activatingAgent.name}</strong> the default fallback route for unassigned devices?</p>
+        <p>This changes server routing, not just your companion. Devices with an explicit agent assignment keep their assigned route.</p>
+        {activationError && <p role="alert">{activationError}</p>}
+        <div className="flex gap-2">
+          <button type="button" disabled={busy} onClick={() => setActivationId("")}>Cancel</button>
+          <button type="button" className="button-primary" disabled={busy} onClick={() => void activate(activatingAgent)}>{busy ? "Setting default…" : "Set as default"}</button>
+        </div>
+      </Modal>}
       {deletingAgent && <Modal title="Delete agent" returnFocus={deleteReturnFocus} onClose={()=>{if(!deleting)setDeleteId("");}}>
         <p>Delete <strong>{deletingAgent.name}</strong>? Assigned devices will use the default agent.</p>
         {deleteError && <p role="alert">{deleteError}</p>}
@@ -332,7 +347,7 @@ export default function AgentsPanel({
         <div className="agent-runtime-identity">
           <h3>{diagnostics.name}</h3>
           {diagnostics.active && <span className="pill">Default</span>}
-          {!diagnostics.active && <button className="agent-route-action agent-default-action" disabled={busy} onClick={() => void activate(diagnostics)}>
+          {!diagnostics.active && <button className="agent-route-action agent-default-action" disabled={busy} onClick={event => requestActivation(diagnostics, event.currentTarget)}>
             Set as default
           </button>}
         </div>
