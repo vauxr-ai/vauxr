@@ -264,9 +264,9 @@ export default function AgentsPanel({
                   if (actions) actions.inert = menu.open;
                 }}>⋯</summary><div className="agent-actions-list">
                 <button className="agent-route-action" aria-label={`Voice pipeline for ${agent.name}`}
-                  onClick={event => {(voiceReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setVoiceId(agent.id);}}><Icon name="agents" size={20}/>Voice pipeline</button>
+                  onClick={event => {(voiceReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setVoiceId(agent.id);}}><Icon name="voice-pipeline" size={20}/>Voice pipeline</button>
                 <button className="agent-route-action" aria-label={`Runtime settings for ${agent.name}`} title="Agent runtime settings"
-                  onClick={event => { (diagnosticsReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setError(""); setDiagnosticsId(agent.id); }}><Icon name="settings" size={20}/>Runtime settings</button>
+                  onClick={event => { (diagnosticsReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setError(""); setDiagnosticsId(agent.id); }}><Icon name="agent-runtime" size={20}/>Runtime settings</button>
                 <span className="agent-action-tooltip-trigger"
                   tabIndex={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") ? 0 : undefined}
                   aria-label={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") ? `Delete ${agent.name} unavailable` : undefined}
