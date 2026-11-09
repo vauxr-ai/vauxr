@@ -89,3 +89,11 @@ def remove(agent_id: str) -> None:
     if target.exists():
         target.unlink()
         _sync_directory(target.parent)
+
+
+def install_support(agent_id: str) -> None:
+    """Copy packaged catalog artwork without replacing a customized avatar."""
+    from importlib.resources import files
+
+    if not path(agent_id).exists():
+        save(agent_id, files("vauxr.agents").joinpath("assets/vauxr-support.png").read_bytes())

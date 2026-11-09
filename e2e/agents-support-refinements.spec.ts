@@ -10,11 +10,14 @@ for(const width of [390,1366]) test(`Support avatar and deletion persist ${width
  await add.getByRole('button',{name:'Create agent',exact:true}).click();
  const row=page.locator('.agent-list>li').filter({has:page.getByRole('heading',{name:'Added Support',exact:true})});
  await expect(row).toBeVisible();
+ await expect(row.locator(".agent-avatar img")).toBeVisible();
+ expect(await row.locator(".agent-avatar img").evaluate((el: HTMLImageElement)=>el.complete && el.naturalWidth>0)).toBe(true);
  const id=await row.getAttribute('data-agent-id');
  const icon=await page.request.get(server.origin+'/agent-types/vauxr-support.png');
  const avatar=await page.request.get(server.origin+`/api/agents/${id}/avatar`);
  expect(avatar.status()).toBe(200);expect(await avatar.body()).toEqual(await icon.body());
  await server.restart();await page.reload();await expect(row).toBeVisible();
+ await expect(row.locator(".agent-avatar img")).toBeVisible();
  const persisted=await page.request.get(server.origin+`/api/agents/${id}/avatar`);expect(await persisted.body()).toEqual(await icon.body());
  await row.locator('details.agent-actions summary').click();await row.getByRole('button',{name:'Delete agent',exact:true}).click();
  const confirmation=page.getByRole('dialog',{name:'Delete agent',exact:true});
@@ -43,6 +46,7 @@ for (const width of [390, 1366]) test(`Default Support wire identity and header 
  await protectedRow.locator('details.agent-actions summary').click();
  await expect(protectedRow.getByRole('button',{name:'Delete agent',exact:true})).toBeDisabled();
  const row = page.locator(`[data-agent-id="${support.id}"]`);
+ await expect(row.locator(".agent-avatar img")).toBeVisible();
  await row.locator('details.agent-actions summary').click();
  await expect(row.getByRole('button',{name:'Delete agent',exact:true})).toBeEnabled();
  await row.getByRole('button',{name:'Delete agent',exact:true}).click();
