@@ -1,10 +1,23 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { test, expect, login, openAgentAction, seedRealtimeAgent, requestIntegration, client } from './auth-fixture';
+import { auditPage } from '../scripts/design-audit.mjs';
+import { parse } from '../web-client/node_modules/yaml/dist/index.js';
+import { resolve } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
+
+const designDir = process.env.VAUXR_DESIGN_CHECK;
+const designTokens = designDir ? parse(readFileSync(resolve(import.meta.dirname, '../DESIGN.md'), 'utf8').split('---')[1]) : null;
+let sequence = 0;
+async function designAudit(page: Page, label: string) {
+  if (!designDir) return;
+  const rows = (await auditPage(page, designTokens, label)).map(row => ({...row, label}));
+  writeFileSync(`${designDir}/${process.pid}-${sequence++}.json`, JSON.stringify(rows));
+}
 
 // Check real geometry, including hidden clipping: overflow:hidden is not a fix.
 async function fits(dialog: Locator, page: Page) {
   await expect(dialog).toBeVisible();
+  await designAudit(page, `${page.viewportSize()!.width}/${await page.locator("html").getAttribute("data-theme")}/${await dialog.evaluate(el => el.getAttribute('aria-label') || document.getElementById(el.getAttribute('aria-labelledby') || '')?.textContent || 'modal')}`);
   const geometry = await dialog.evaluate(root => {
     const r = root.getBoundingClientRect();
     const rendered = (el: Element) => {
@@ -33,13 +46,24 @@ async function fits(dialog: Locator, page: Page) {
   expect.soft(geometry.controls).toEqual([]);
 }
 
-for (const width of [390,1366]) for (const theme of ['light','dark']) test(`every modal fits without inner scrolling ${width} ${theme}`, async ({page,server}) => {
-  test.setTimeout(90000);page.setDefaultTimeout(8000);
+for (const width of (designDir ? [390,768,1366] : [390,1366])) for (const theme of ['light','dark']) test(`every modal fits without inner scrolling ${width} ${theme}`, async ({page,server}) => {
+  test.setTimeout(designDir ? 300000 : 90000);page.setDefaultTimeout(8000);
   await page.setViewportSize({width,height:width===390?844:768});
   seedRealtimeAgent(server);
   const storePath=server.data+'/agents.json'; const store=JSON.parse(readFileSync(storePath,'utf8'));store.agents.push({id:'removable-fixture',name:'Removable integration',type:'openclaw',createdAt:'2026-11-08'});writeFileSync(storePath,JSON.stringify(store));
   await server.restart(); await login(page,server);
   await page.getByLabel('Appearance').selectOption(theme);
+  if (designDir) {
+    for (const screen of ['Agents','Devices','Settings']) {
+      await page.getByRole('button',{name:screen,exact:true}).click();
+      await designAudit(page, `${width}/${theme}/${screen}`);
+      if(screen === 'Settings') {
+        const sections = page.getByRole('navigation',{name:'Settings sections'}).getByRole('button');
+        for(let i=0;i<await sections.count();i++) { await sections.nth(i).click(); await designAudit(page, `${width}/${theme}/Settings-${i}`); }
+      }
+    }
+    await page.getByRole('button',{name:'Agents',exact:true}).click();
+  }
   const shot=async(name:string)=>{mkdirSync('/tmp/vauxr-modal-fit-screenshots',{recursive:true});await page.screenshot({path:`/tmp/vauxr-modal-fit-screenshots/${name}-${width}-${theme}.png`});};
   const close=async(dialog:Locator)=>{await dialog.getByRole('button',{name:'Close dialog',exact:true}).click();await page.keyboard.press('Escape');};
   const pending = await requestIntegration(server,'Pending OpenClaw');
@@ -66,8 +90,31 @@ for (const width of [390,1366]) for (const theme of ['light','dark']) test(`ever
   await shot('create'); await close(add);
   await page.getByRole('button',{name:'Edit avatar for Vauxr Support',exact:true}).click();
   const avatar=page.getByRole('dialog',{name:'Edit agent avatar',exact:true});await fits(avatar,page);await shot('avatar');await close(avatar);
+  let loadingBox: {height:number,width:number} | undefined;
+  let releaseLoading: (() => void) | undefined;
+  if(designDir) await page.route('**/api/agents/*/speech', async route => { await new Promise<void>(r => {releaseLoading=r;}); await route.continue(); }, {times:1});
   await openAgentAction(page,'Voice pipeline for Vauxr Support');
+  if(designDir) {
+    const loadingDialog=page.getByRole('dialog',{name:'Voice pipeline',exact:true});
+    await expect(loadingDialog.getByRole('status')).toBeVisible();
+    loadingBox = await loadingDialog.boundingBox() || undefined;
+    await designAudit(page,`${width}/${theme}/Voice pipeline-loading`);
+    releaseLoading!();
+  }
   const voice=page.getByRole('dialog',{name:'Voice pipeline',exact:true});await expect(voice.locator('.pipeline-graph')).toBeVisible();await fits(voice,page);await shot('standard');
+  if(designDir && loadingBox) {
+    const box=await voice.boundingBox();
+    writeFileSync(`${designDir}/${process.pid}-${sequence++}.json`,JSON.stringify([{rule:'overflow',status:box && Math.abs(box.height-loadingBox.height)<=1 && Math.abs(box.width-loadingBox.width)<=1?'PASS':'FAIL',detail:'Loading dialog footprint must match populated dialog',fixable:true,label:`${width}/${theme}/loading-footprint`}]));
+  }
+  if(designDir) {
+    await close(voice);
+    await page.route('**/api/agents/*/speech', route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Disposable design-check failure'})}),{times:1});
+    await openAgentAction(page,'Voice pipeline for Vauxr Support');
+    await expect(voice.getByRole('button',{name:/retry/i})).toBeVisible();
+    await designAudit(page,`${width}/${theme}/Voice pipeline-error`);
+    await close(voice); await openAgentAction(page,'Voice pipeline for Vauxr Support');
+    await expect(voice.locator('.pipeline-graph')).toBeVisible();
+  }
   for(const label of ['Edit Speech To Text','Edit Text To Speech','Edit Vauxr Support']) {
     const button=voice.getByRole('button',{name:label,exact:true});
     await expect(button).toHaveCount(1); {await button.click();const popup=voice.locator('.pipeline-popover');await fits(popup,page);await page.keyboard.press('Escape');await expect(button).toBeFocused();}

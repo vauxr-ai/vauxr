@@ -328,8 +328,7 @@ focus, tooltips, and stationary primary actions.
 Target a focused local verification loop of about 15 minutes. Deploy authorized
 Nova test builds after that gate passes; CI runs the full suite once per PR update
 in the background and remains the merge gate. Do not repeat the full suite locally,
-rebuild for a pure test rerun, or claim pending CI passed. A future design-check
-script is not evidence until implemented and run. Report live source revision
+rebuild for a pure test rerun, or claim pending CI passed. Run `node scripts/design-check.mjs` locally before deploy; the same disposable-browser gate runs in CI. Any FAIL or missing rendered evidence blocks deploy. Attempts are counted per commit in Git worktree metadata (including failed or interrupted attempts), at most three. After fixes, rerun with `--round=2` then `--round=3`; stop and report unresolved failures rather than looping or bypassing them. WARN means incomplete analysis or a review limitation, not a proven pass. Report live source revision
 separately from a newer documentation-only PR head.
 
 ## Do's and Don'ts
