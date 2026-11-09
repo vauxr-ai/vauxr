@@ -18,10 +18,11 @@ for precedence, examples, and protocol limitations.
 
 ## How it works
 
-**Breaking auth upgrade:** follow the [clean install and migration guide](docs/authz/migration-52.md)
-for exact compatible source pins, owner setup, private backup/rollback, device re-pairing
-and OpenClaw reconnect. Shared device/channel tokens grant no access. The pinned
-auth stack remains under review; firmware build and physical acceptance are still required.
+**Auth compatibility:** shared device/channel tokens grant no access. Start with
+the [owner setup below](#quick-start) and the
+[current configuration rules](docs/configuration.md#obsolete-configuration).
+Legacy configuration is not migrated automatically. Verify compatible server,
+plugin and firmware revisions before upgrading; physical acceptance remains separate.
 
 ```
 Device (mic) → vauxr → Whisper (STT) → LLM backend → Piper (TTS) → Device (speaker)
@@ -79,7 +80,7 @@ OWNER_HTTP_ORIGIN=http://192.168.1.20:8080 docker compose up -d
 Restart the stack and run the claim command with the same deployment
 environment after changing the origin. The server never learns a trusted origin
 from a browser request, Host header, or DNS lookup. See
-[owner authentication v1](docs/authz/owner-v1.md) for the exact-origin boundary.
+[owner boundary implementation](src/vauxr/web/owner.py) for the exact-origin boundary.
 
 ### Optional HTTPS and proxy
 
@@ -87,8 +88,8 @@ LAN HTTP/WS is the simplest supported path. For browser-trusted HTTPS/WSS, set
 `OWNER_HTTPS_ORIGIN` to the exact HTTPS browser origin and, if TLS terminates at
 a reverse proxy, set `OWNER_TRUSTED_PROXIES` to the proxy's exact address or
 network. Establish a browser-trusted certificate first; malformed TLS/proxy
-configuration fails closed and never downgrades to HTTP. See the owner contract
-before enabling this mode.
+configuration fails closed and never downgrades to HTTP. The
+[owner boundary](src/vauxr/web/owner.py) implements exact Host/Origin and proxy checks.
 
 Voice devices connect to `ws://localhost:8765` from the Docker host, or to the
 corresponding reachable server authority when they are remote.
@@ -103,13 +104,13 @@ openclaw plugins install clawhub:@vauxr/openclaw
 
 The plugin wires OpenClaw to your Vauxr server and exposes device announcements and controls as agent tools. See the [vauxr-openclaw README](https://github.com/vauxr-ai/vauxr-openclaw) for configuration.
 
-Integration clients use [integration enrollment v1](docs/authz/integration-v1.md):
+Integration clients use [integration enrollment v1](src/vauxr/provisioning/integration_schema.py):
 request access, have the owner approve the displayed code, then automatically
 receive and durably save a one-time credential before acknowledging it. The
 credential grants device listing, announcements, control, firmware update initiation,
 physical-device pairing initiation/approval and its own channel voice responses.
 It excludes owner and credential management. Rotation/revoke use the separate
-[lifecycle v1](docs/authz/lifecycle-v1.md) owner controls and leave device credentials
+[lifecycle v1](src/vauxr/provisioning/lifecycle_schema.py) owner controls and leave device credentials
 independent. Client UI and real plugin persistence acceptance are separate work.
 
 ## Persistent data
@@ -142,7 +143,7 @@ Vauxr is backend-agnostic. If you're not using OpenClaw, connect your own LLM or
 
 ## HTTP API
 
-Authorization is per operation; see the [route inventory](docs/authz/inventory.md).
+Authorization is per operation; see the [operation policy](src/vauxr/auth/policy.py).
 Integrations send `Authorization: Bearer <vx_int_credential>` after enrollment/save
 ACK. Owner operations require the owner session cookie and, for mutations, exact
 Origin plus CSRF. Device credentials grant only their device transport and firmware

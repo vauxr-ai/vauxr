@@ -35,6 +35,29 @@ revision. ROADMAP, DESIGN, config examples and legacy Postman coverage are not
 certified by this review. The inventory traversed first-party subsystem ownership;
 it does **not** imply every first-party file was deeply reviewed.
 
+### Follow-up depth (same server implementation pin)
+
+Read-only follow-ups at documentation head `b1ae831` compared implementations to
+`25469df`; the reviewed implementations were unchanged. The following supersedes
+survey-only depth above, not the remaining exclusions.
+
+| Area | Additional implementation/body coverage | Remaining limits |
+|---|---|---|
+| Auth/provisioning | Entire `auth/{cli,owner,store,service,connections,policy}.py`, enrollment/lifecycle/integration services, HTTP adapters and schema validators; owner handler and web middleware | Pairing audio/prompt bodies, external proxy/TLS behavior, comprehensive test reread |
+| Realtime/Standard | Full `realtime/{session,live,app,llm}.py`, `pipeline.py`, segment queue and idle segmenter; queue/app tests and selected Live/startup/media-authority tests | Remaining test bodies indexed only; physical provider/device behavior unverified |
+| Browser | Audio and realtime hooks/worklet ownership, agents/webhooks hooks, VoiceSample/preview boundary, Companion context/ACK and focus behavior; ProviderSettings load/secret paths | Most components, complete App effects, CSS/accessibility rendering, other workers/assets remain sampled or unreviewed |
+| Providers/adapters | OpenAI/Wyoming adapters, provider settings/HTTP boundary, webhooks/companion, complete direct OpenClaw handshake/chat/reconnect and LangChain adapter | Live auth/environment and actual network/provider outcomes not exercised |
+| Bundled plugins | Agent definition/import validation, household implementation; settings registration/public-secret contract; local adapter routing | Plugin-store mutation internals and local runtime validation ownership sampled |
+
+Adjacent auth follow-up read the entire plugin `src/auth.ts` at `e0f6c103` and
+firmware `main/auth/DeviceAuth.cpp` plus selected `Auth.cpp` enrollment/install/
+lifecycle branches at **`68933e1aa2b4554a3e4feae6759932f428f04625`**. This newer
+firmware pin is distinct from the earlier startup trace below. Full firmware
+journal/hold/error helpers and supported SDK secret-store internals remain gaps.
+Auth test cases were inventoried, not rerun in this follow-up. Browser audio/
+realtime tests, OpenClaw fake-gateway tests and selected LangChain/speech tests
+were read, not executed by that reviewer.
+
 ## Peer contracts (read-only adjacent checkouts)
 
 - `vauxr-openclaw` at `e0f6c103f904363da431f864c8b39712ee1dc329`:
@@ -60,13 +83,13 @@ it does **not** imply every first-party file was deeply reviewed.
 
 ## Findings
 
-1. **Confirmed documentation gap (medium): missing auth documentation.** README,
-   AGENTS and other docs reference `docs/authz/*`, but the reviewed tree contains
-   only `docs/configuration.md`. Exact-origin owner setup/migration instructions
-   therefore lead to missing files. Reproduce with `git ls-tree -r HEAD docs`.
-   Restore approved canonical auth guides in a follow-up; this review deliberately
-   does not reconstruct a security-sensitive migration procedure from partial
-   implementation evidence. Updated architecture links to existing sources.
+1. **Confirmed stale navigation (medium, repaired).** README referenced removed
+   `docs/authz/*` guides. History records their intentional deletion in
+   `40e680a5cdb277fe57700a40bffe821906bc744c`; this is not evidence they should be
+   recreated. README now links current setup/configuration and versioned source
+   schemas/policy, without promising obsolete migration support. Existing
+   configuration documentation explicitly states legacy files are not migrated.
+
 2. **Confirmed metadata contradiction (medium): distribution license.**
    `pyproject.toml` declares MIT and an MIT classifier while `LICENSE` and README
    declare AGPL-3.0. Building/publishing the wheel exposes inconsistent license
@@ -84,6 +107,44 @@ it does **not** imply every first-party file was deeply reviewed.
    entrypoints, `/channel`, first-byte dispatch, 400 ms defaults, duplicate
    segmentation prose and batch text-seeding descriptions no longer matched the
    implementation. Current map and narrow parser comments replace those claims.
+
+### Additional bounded findings
+
+All entries below require separate behavioral work; none was repaired here.
+Source-confirmed control flow is distinguished from reproduced impact.
+
+| Impact / confidence | Evidence and failure condition | Validation or repair direction |
+|---|---|---|
+| Medium, source-confirmed | `agents/openclaw.py::_reconnect_after`: a failed delayed connection attempt logs and stops; no reader remains to schedule another retry | Simulate disconnect followed by connection refusal and later gateway recovery; do not promise persistent retry |
+| Medium, source-confirmed | `pipeline.py::_route_via_openclaw_direct` waits for `chat()` before checking abort; chat has no deadline/finally listener cleanup. A connected silent gateway can retain abandoned work | Exercise abort with no final event and inspect pending/listener cleanup; output ownership prevents stale writes, so this is not demonstrated cross-turn contamination |
+| Medium, reproduced in isolation | `speech/wyoming_tts.py::_make_resampler` keeps filter state but uses chunk-local interpolation/count rounding. Identical 100 samples at 24k→22.05k yield 92 samples whole versus 100 in one-sample fragments; OpenAI TTS shares it | Add chunk-invariance regression; no physical audibility claim |
+| Medium risk, source-confirmed | `speech/wyoming_stt.py` queues capture before unbounded `writer.drain()`; connection and transcript timeouts do not cover upload | Test a non-consuming provider with bounded capture; no load/exhaustion reproduction |
+| Medium, bounded characterization | `realtime/llm.py::_run_turn` cancellation awaits idle pump without sentinel/abort. Actual pinned Pipecat fallback completed at 1.0 s with warning, without stopped metrics or response-end frame | Test installed pipeline interruption cleanup; not an indefinite deadlock in the normal pinned path |
+| Medium risk, source-confirmed | `SegmentQueue._items`, realtime delta/pump queues are unbounded; idle flushing disabled can retain whole response. Serial synthesis does not provide bounded producer backpressure or forcibly cancel current synthesis | Bound producer/consumer test before a separate buffering/cancellation change; no practical exhaustion demonstrated |
+| Medium risk, source-confirmed | Standard sample-rate callbacks schedule `audio.start` via `create_task` independently of awaited PCM; an immediate-yield synthesizer can send PCM first | Add transport ordering regression; no demonstrated firmware failure |
+| Medium, source-confirmed | `pipeline.run_voice_turn` STT error returns after `STT_ERROR` without `audio.end`; current test asserts only the error | Verify device recovery separately; do not promise terminal audio control for every failure |
+| Medium risk, source-confirmed | `provisioning/enrollment.py` shares a global 60-request/minute budget across enrollment, integration and lifecycle HTTP, charged before parsing/auth. Firmware polls lifecycle every 60–65 s and pairing every 10–15 s | Test anonymous starvation plus fleet polling/ACK capacity; no load/exploit result. ACK overlap is 300 s |
+| Medium recovery risk, cross-pin trace | Firmware `Auth.cpp` persists four ACK attempts, decremented before requests including failed/lost replies; server lifecycle ACK is idempotent after completion | Test four lost replies including a committed ACK; firmware can enter repair despite server completion. Plugin retains/recommits rotation before retrying |
+
+### Authority distinctions
+
+- `enrollment.py`'s `physical_verified` is a human/code boundary, not hardware
+  attestation or proof of a button press. Physical-kind requests may be anonymous;
+  key proof establishes possession. Initiator and approver need not differ.
+- `auth/store.py` tombstones override restored credential records, but restoring
+  an entire old authority snapshot can restore old authority. The existing
+  `test_tombstone_is_independent_of_record_id_but_not_full_backup` names that limit.
+- `web/server.py::_require_auth` applies `secure_request()` to generic integration
+  management only in HTTPS owner mode; provisioning always applies it. Exact
+  owner-authority transport checks are not universal for LAN bearer APIs. This
+  split needs a policy decision, not a silent documentation promise.
+- Provider secrets are separate permission-restricted atomic plaintext JSON, not
+  encrypted-at-rest. Named webhooks disable redirects/environment proxy use and
+  have a five-second total timeout; HTTP success is not external-state proof.
+- LangChain action deduplication is per turn, not exactly-once across retries.
+  Live history records unconfirmed delivery, not playback receipts; standard
+  media authority ends on the exact response-end marker plus transport consumption,
+  not idle debounce alone.
 
 These are not a complete vulnerability list. No functional defects were repaired.
 
@@ -113,3 +174,22 @@ These are not a complete vulnerability list. No functional defects were repaired
   without the documentation/comment edits; their environmental versus product
   cause remains unresolved. They do not establish provider acceptance.
 - Parser executable AST comparison (docstrings stripped) against the base passed.
+
+### Follow-up verification evidence
+
+- Realtime reviewer: focused set **37 passed, 1 local WebSocket connection
+  failure**; that failed Live receive case passed when ambient proxy variables
+  were removed for its command. Two bounded cancellation characterizations used
+  actual `_run_turn` and installed Pipecat task management. This does not resolve
+  the separately recorded three provider-boundary baseline failures.
+- Provider reviewer: read-only AST-extracted resampler characterization produced
+  the sample counts above; no application import or provider call.
+- Auth reviewer: source/contract review only, no new tests executed. Suggested
+  restoration of deleted auth guides was not adopted: existing canonical setup
+  and source references were retained instead.
+- Final documentation pass: **24 local Markdown links checked**, including
+  target headings/anchors with inline-code punctuation removed for GitHub-style
+  slugs. Changed Markdown only; untouched stale references (including AGENTS) are
+  not certified. Python syntax compilation and docstring-stripped executable AST
+  comparison against `25469df` passed for `protocol.py` and `agents/openclaw.py`;
+  `git diff --check` passed. No new runtime/full-suite run in this final pass.

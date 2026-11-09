@@ -55,11 +55,10 @@ owner session, not a shared device token. Cookie-authenticated mutations require
 Origin and CSRF checks. Devices and integrations have separate scoped bearer
 credentials. Device operations bind to the authenticated device ID; display names
 are metadata, never routing identities. Current credential generation and live
-socket ownership are rechecked during use. The auth guides referenced by README are absent at the reviewed revision. Until
-restored, use [`auth/policy.py`](src/vauxr/auth/policy.py),
+socket ownership are rechecked during use. Use [`auth/policy.py`](src/vauxr/auth/policy.py),
 [`web/owner.py`](src/vauxr/web/owner.py) and
-[`provisioning/`](src/vauxr/provisioning/) as implementation evidence; see the
-[review finding](docs/maintainer-review-2026-11-09.md#findings).
+[`provisioning/`](src/vauxr/provisioning/) as the current implementation evidence. The [README](README.md#quick-start)
+owns owner setup; [configuration](docs/configuration.md) owns persistence rules.
 
 Browser voice persists its non-exportable Ed25519 private key and scoped device
 credential in IndexedDB. Durable save/readback precedes credential ACK. Management
@@ -127,7 +126,10 @@ Two transports are distinct:
 
 Local cancellation of a waiting realtime operation removes its waiter; it does
 not send backend cancellation (`AgentServer.realtime_request`). Do not assume
-media teardown means an agent/tool operation was cancelled remotely.
+media teardown means an agent/tool operation was cancelled remotely. Direct chat
+also lacks an overall response deadline and does not race device abort; output
+ownership suppresses stale writes but does not guarantee abandoned-work cleanup.
+A failed delayed direct reconnect can stop retries. See the [bounded findings](docs/maintainer-review-2026-11-09.md#additional-bounded-findings).
 
 ## Run, package and verify
 
@@ -147,6 +149,20 @@ Playwright domain jobs. Full browser suites belong in CI, not this review's loca
 validation. [Review evidence](docs/maintainer-review-2026-11-09.md) records the pinned
 source, sampled coverage, findings and remaining gaps; this page is not a full
 audit or a replacement for the exact auth contracts.
+
+Standard text queues are unbounded; ordered synthesis is not producer backpressure.
+STT upload drain is outside its connection/transcript timeouts, and resampling uses
+stateful filtering with chunk-local interpolation rather than chunk-invariant rate
+conversion. STT failure does not always emit `audio.end`. These are current limits,
+not guarantees of end-to-end cancellation or terminal control.
+
+Enrollment/lifecycle/integration share one global 60-request/minute admission budget.
+Firmware ACK retries are bounded; server ACK idempotency alone cannot guarantee
+recovery from repeated lost replies. Physical pairing proves key possession and a
+matching-code ceremony, not hardware attestation or independent dual approval.
+Revocation tombstones survive credential-record restoration, not arbitrary full
+snapshot rollback. Generic LAN-mode integration APIs and provisioning differ in
+transport-boundary enforcement; see [authority distinctions](docs/maintainer-review-2026-11-09.md#authority-distinctions).
 
 ### Guided physical-device pairing
 
