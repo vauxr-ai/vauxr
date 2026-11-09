@@ -10,7 +10,8 @@ for(const width of [390,1366]) test(`Agents priority layout and inline icon cont
   expect(await page.locator('.agents-toolbar').evaluate(el=>getComputedStyle(el).borderBottomWidth)).toBe('1px');
   const toolbar=(await page.locator('.agents-toolbar').boundingBox())!, addBox=(await add.boundingBox())!;
   expect(addBox.y+addBox.height).toBeLessThan(toolbar.y+toolbar.height-10);
-  const row=page.locator('.agent-list>li').filter({has:page.getByRole('heading',{name:'Vauxr Support',level:3,exact:true})});
+  const agentId=await page.locator('.agent-list>li').filter({has:page.getByRole('heading',{name:'Vauxr Support',level:3,exact:true})}).getAttribute('data-agent-id');
+  const row=page.locator(`main li[data-agent-id="${agentId}"]`);
   await expect(row.getByRole('button',{name:'Set as default',exact:true})).toBeVisible();
   const name=row.getByRole('heading',{name:'Vauxr Support',exact:true});
   const original=await name.evaluate(el=>({x:el.getBoundingClientRect().x,font:getComputedStyle(el).fontSize,weight:getComputedStyle(el).fontWeight}));
@@ -39,6 +40,7 @@ for(const width of [390,1366]) test(`Agents priority layout and inline icon cont
   const b=(await close.boundingBox())!, svg=(await close.locator('svg').boundingBox())!;
   expect(Math.abs(b.x+b.width/2-svg.x-svg.width/2)).toBeLessThan(1);
   expect(Math.abs(b.y+b.height/2-svg.y-svg.height/2)).toBeLessThan(1);
+  await modal.evaluate(el=>Promise.all(el.getAnimations().map(animation=>animation.finished.catch(()=>{}))));
   await page.screenshot({path:`${artifacts}/voice-modal-${width}.png`});
   await close.click();await add.click();
   await expect(page.getByRole('dialog',{name:'Add Agent',exact:true}).getByText('MAKE IT YOURS',{exact:true})).toHaveCount(0);
