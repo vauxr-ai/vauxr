@@ -23,6 +23,15 @@ for (const width of [390,1366]) {
     await expect(runtime.locator('.pill').getByText('Not default',{exact:true})).toBeVisible();
     const action=runtime.getByRole('button',{name:'Set as default',exact:true});
     await expect(action).toBeEnabled();
+    await runtime.getByRole('tab',{name:'Configuration',exact:true}).click();
+    // The inactive local-runtime form is taller than Diagnostics; keep its save action visible.
+    await runtime.getByLabel(/^(Support|Model) provider$/).selectOption('ollama');
+    const save=runtime.getByRole('button',{name:'Save agent runtime',exact:true});
+    await expect(save).toBeVisible();
+    expect(await save.evaluate(el=>{
+      const r=el.getBoundingClientRect(), dialog=el.closest('dialog')!.getBoundingClientRect();
+      return r.bottom<=dialog.bottom && r.top>=dialog.top;
+    })).toBe(true);
     page.once('dialog',dialog=>dialog.accept());
     await action.click();
     await assertDefault(runtime);

@@ -1071,6 +1071,8 @@ dialog.modal.agent-voice-modal[open] { height:min(700px,calc(100dvh - 24px)); }
 .agent-voice-modal .pipeline-output .pipeline-entity:has(.pipeline-sample) { padding-bottom:28px; }
 .agent-voice-modal .pipeline-sample-status { min-height:24px; line-height:12px; }
 
+.agent-runtime-identity { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.agent-runtime-identity h3 { min-width:0; overflow-wrap:anywhere; }
 .runtime-tabs { display:flex; gap:8px; border-bottom:1px solid var(--line); padding-bottom:8px; }
 .runtime-tabs button { flex:1; min-height:44px; }
 .runtime-tabs [aria-selected=true] { color:var(--accent); background:rgb(var(--accent-500) / 0.1020); }

@@ -334,11 +334,13 @@ export default function AgentsPanel({
       </Modal>}
       {diagnostics && <Modal title="Agent runtime settings" className="agent-detail-modal agent-detail agent-diagnostics-modal"
         returnFocus={diagnosticsReturnFocus} onClose={() => setDiagnosticsId("")}>
-        <h3>{diagnostics.name}</h3>
-        <div><span className="pill">{diagnostics.active ? "Default" : "Not default"}</span></div>
-        {!diagnostics.active && <button disabled={busy} onClick={() => void activate(diagnostics)}>
-          Set as default
-        </button>}
+        <div className="agent-runtime-identity">
+          <h3>{diagnostics.name}</h3>
+          <span className="pill">{diagnostics.active ? "Default" : "Not default"}</span>
+          {!diagnostics.active && <button disabled={busy} onClick={() => void activate(diagnostics)}>
+            Set as default
+          </button>}
+        </div>
         {error && <p role="alert">{error}</p>}
         <div className="runtime-tabs" role="tablist" aria-label="Agent runtime sections">
           {["configuration", "diagnostics"].map((tab,index) => <button type="button" role="tab" key={tab}

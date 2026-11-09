@@ -266,7 +266,9 @@ Large agent-type choices in Add Agent use the canonical OpenClaw logo and approv
 Vauxr Support artwork, not generic substitute glyphs.
 
 The current default agent shows only its Default pill, not a disabled duplicate
-Default/Set as default action in the list or runtime settings modal.
+Default/Set as default action in the list or runtime settings modal. Keep the
+runtime identity, status pill and optional action in a compact wrapping row so
+the non-default configuration form and its Save action remain within the modal.
 
 Anchor the ⋯ menu below its trigger with a 6px gap; flip upward only when
 the panel would clip the viewport (16px margin).
