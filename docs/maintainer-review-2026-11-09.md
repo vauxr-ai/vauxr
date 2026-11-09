@@ -193,3 +193,70 @@ These are not a complete vulnerability list. No functional defects were repaired
   not certified. Python syntax compilation and docstring-stripped executable AST
   comparison against `25469df` passed for `protocol.py` and `agents/openclaw.py`;
   `git diff --check` passed. No new runtime/full-suite run in this final pass.
+
+## Final source-coverage reconciliation
+
+Source evidence is pinned to `c959d73f72c463862d6c6b7b18803f15770c40b4`.
+Earlier tables are chronological evidence, not the final gap list. The final
+passes close their remaining first-party implementation reading gaps; this is
+source review, not exhaustive assertion auditing, security certification or
+proof of every timing/error outcome.
+
+- Browser: read complete `main.tsx`, `App.tsx`, `auth/OwnerGate.tsx`, all component
+  implementations and all source CSS (`index.css`, `DevicesPanel.css`,
+  `AgentPipeline.css`). Coverage includes enrollment/access, agent/device
+  pipelines, provider/speech/settings, webhook/plugin panels, Companion and
+  controls, dialogs/layout, status/audio controls, icons and display helpers.
+- Hooks/helpers: completed `companionStatus.ts`, `realtimeDiagnostics.ts`,
+  `speechSegmenter.ts`, `useActiveRoute.ts`, `useAgents.ts`, `useWebhooks.ts`,
+  alongside previously traced audio/realtime/HTTP/WS hooks and protocol exports.
+  Read `public/pcm-capture.worklet.js` and its creation/disconnect caller; partial
+  worklet buffers have no final flush. No audio-loss acceptance claim.
+- Server helper closure: full `provisioning/pairing_audio.py`,
+  `agents/{avatars,removal,integration_metadata}.py`, with enrollment semaphore/
+  proof-response and avatar/removal web call sites. Earlier backend passes own
+  auth, realtime, provider, device and management implementation evidence.
+- Tests: avatar/removal and split/device UI tests read; enrollment and App
+  capture/handsfree assertions sampled. Full assertion-by-assertion audit is
+  excluded. Generated/dependency/binary exclusions above remain unchanged.
+
+### Additional browser findings (no functional changes)
+
+| Impact / confidence | Evidence / condition | Separate validation |
+|---|---|---|
+| Low, source-confirmed | `DevicesPanel.tsx:351–358` resets name draft on canonical name changes without checking editing state; five-second polling can overwrite an active draft after external rename | Deferred-refresh concurrent rename regression; preserve draft or show conflict |
+| Low, source-confirmed | `index.css:980` uses undefined `--raised`; no repository definition exists, so that background declaration is invalid at computed-value time | Use an authoritative token after visual verification; no observed visual impact claimed |
+| Medium risk, source-only | Fixed-height agent dialogs use clipped ancestor (`index.css:1041`) with `overflow:visible` shrinking bodies (`:1043`, `:1060`, `:1086`, `:1101`) | Populated short-height/zoom rendering and control reachability remain unverified; validate before bounded scrolling repair |
+
+Remaining acceptance gaps: comprehensive test assertion audit, actual provider/
+network outcomes, live WS/media, fault/load/race injection, CI at published head,
+GitHub Markdown rendering and requesting-viewer browser/accessible-layout proof.
+These are validation limits, not outstanding first-party source-reading work.
+
+### Current peer contract execution (supersedes historical fixture gap)
+
+Evidence pins: server `c959d73f72c463862d6c6b7b18803f15770c40b4`, plugin
+`34ea6330947c360982d389d7804673791e966e41`. A disposable adaptation of the
+historical contract fixture updated its head gate, package imports, fixture-local
+data directory and independent-case selector; production handlers/client were
+unchanged. This is HTTP enrollment/lifecycle evidence, not live agent WS/media.
+
+- **Medium, reproduced incompatibility:** plugin `src/api-client.ts` function
+  `listPairingRequests` requires `dev_` plus exactly 64 hexadecimal characters;
+  server `src/vauxr/config.py:146` defaults to 16 and enrollment accepts 1–64
+  (`provisioning/enrollment.py:294`). Default owner/physical pairing fails with
+  `Invalid enrollment v1 response`. Reconcile the ID validator with the server's
+  supported opaque-ID contract in separately authorized behavioral work.
+- Same owner case with fixture-only `DEVICE_ID_LENGTH=64` passes physical
+  approval, lost ACK/restart, scopes, rotation and revocation. This workaround
+  is characterization, not a runtime configuration recommendation or repair.
+- Independent offline/lost-rotation and saved-rotation/ACK-expiry cases pass;
+  denial/expiry and cancellation/lost-enrollment cases pass. Initial combined
+  fixture failures cascaded from the failed owner case; they are not additional
+  production lifecycle defects.
+- Reproduction: temporary `real-contract.test.mjs` with
+  `VAUXR_CONTRACT_SOURCE=<server-checkout> node --test <fixture>`; independently
+  select `CASE=offline`, `CASE=saved`, or `CASE=owner DEVICE_ID_LENGTH=64`.
+  Temporary fixtures are not a maintained committed test suite. Exact fixture
+  head assertions must be updated for a later documentation head; do not silently
+  bypass them or represent the unmodified historical suite as current proof.
