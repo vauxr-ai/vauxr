@@ -132,6 +132,16 @@ jobs:
         if: failure()
         run: docker logs vauxr-e2e
 
+      - name: Set up Node for web-client unit tests
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Run web-client unit tests once before browser domains
+        run: |
+          npm --prefix web-client ci
+          npm --prefix web-client test -- --run
+
   e2e-domains:
     name: Playwright (${{ matrix.domain }})
     runs-on: ubuntu-latest
@@ -159,10 +169,9 @@ jobs:
         with:
           node-version: 22
 
-      - name: Test and build web client for isolated browser servers
+      - name: Build web client for isolated browser servers
         run: |
           npm --prefix web-client ci
-          npm --prefix web-client test -- --run
           npm --prefix web-client run build
 
       - name: Install e2e deps
