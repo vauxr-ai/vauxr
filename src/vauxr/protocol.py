@@ -29,9 +29,8 @@ class FrameType(IntEnum):
     PUSH_AUDIO = 0x03
 
 
-# Lowest byte that signals a JSON text frame is `{` (0x7B). Used by clients
-# that don't differentiate text vs binary at the WS layer; the canonical
-# server flow already gets `isBinary` from the WS library.
+# Optional heuristic for clients without frame-type metadata. The aiohttp server
+# dispatches using WSMsgType; it does not sniff microphone bytes for JSON.
 JSON_FIRST_BYTE = 0x7B
 
 
@@ -48,7 +47,7 @@ def is_text_frame(data: bytes) -> bool:
     """Heuristic: a text frame starts with `{` after any leading whitespace.
 
     Useful for clients that receive raw bytes without an explicit text/binary
-    flag. The server itself uses the WS library's isBinary discriminator.
+    flag. The server itself dispatches using aiohttp's WSMsgType discriminator.
     """
     for b in data:
         if b in (0x09, 0x0A, 0x0D, 0x20):
@@ -60,8 +59,8 @@ def is_text_frame(data: bytes) -> bool:
 def parse_binary_frame(data: bytes) -> BinaryFrame | None:
     """Parse a binary audio frame. Returns None if too short.
 
-    Matches `handleBinaryMessage` in `src/server.ts`: requires at least
-    3 bytes (header), silently drops anything shorter.
+    Requires the complete 3-byte header; payload may be empty. This parser
+    does not validate audio type, ordering or PCM shape; consumers own those checks.
     """
     if len(data) < 3:
         return None
@@ -80,10 +79,9 @@ def make_binary_frame(msg_type: int, seq: int, payload: bytes) -> bytes:
 
 # --- Control message parsing ---
 
-# We don't enforce a closed schema for text messages here because the Node
-# server tolerates extra fields and only inspects what it needs. We return a
-# raw dict and let callers pluck the fields they care about. Invalid JSON
-# yields None, mirroring the Node "INVALID_MESSAGE" path.
+# Parsing is deliberately separate from authorization and operation validation.
+# A JSON object here is not an admitted control message; the dispatcher applies
+# credential, identity and operation checks before invoking a handler.
 
 
 def parse_text_message(data: str | bytes) -> dict[str, Any] | None:
@@ -107,5 +105,5 @@ def parse_text_message(data: str | bytes) -> dict[str, Any] | None:
 
 
 def encode_text_message(obj: dict[str, Any]) -> str:
-    """Encode a control message as compact JSON (matches Node JSON.stringify)."""
+    """Encode a control message as compact JSON."""
     return json.dumps(obj, separators=(",", ":"))

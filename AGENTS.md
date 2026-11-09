@@ -9,15 +9,15 @@
   script). Use `python3`, not `python`.
 
 ### Components & how to run them (dev mode)
-- **Backend voice gateway** (`src/`, entry `python3 -m server`): one aiohttp process that
+- **Backend voice gateway** (`src/`, entry `python3 -m vauxr`): one aiohttp process that
   binds **:8765** (device WebSocket, path `/ws`) and **:8080** (HTTP API `/api/*` + serves the
   built web client). No auth environment variable is required. Owner access requires an exact HTTP/HTTPS owner origin
   and explicit console setup in `docs/authz/owner-v1.md`; `DEVICE_TOKEN` grants no access. Run from the repo root —
   static file serving resolves `web-client/dist` relative to the current working directory.
-  Example: `DATA_DIR=/workspace/.data python3 -m server`.
-- `DATA_DIR` must be writable (channel registry persists to `<DATA_DIR>/config.json`). Its
-  default is `/data` (used by the Docker image); set a writable local path when running outside
-  Docker or channel create/rotate will fail.
+  Example: `DATA_DIR=/workspace/.data python3 -m vauxr`.
+- `DATA_DIR` must be writable. Server settings persist to `config.json`, routing metadata
+  to `agents.json`, and credential authority to `authz.json`. Its default is `/data`
+  (used by Docker); set a writable local path outside Docker.
 - **Web client** (`web-client/`, React+Vite): `npm run build` emits `web-client/dist`.
   Serve that build through the backend at the exact configured owner origin. The
   cross-origin Vite development server cannot authenticate owner sessions. The browser

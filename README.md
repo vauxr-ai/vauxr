@@ -201,7 +201,7 @@ A Postman collection is included at `postman/vauxr.postman_collection.json` cove
 
 ## Architecture
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design and protocol spec, and [ROADMAP.md](./ROADMAP.md) for what's planned.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for runtime ownership and transport boundaries, and [ROADMAP.md](./ROADMAP.md) for what's planned.
 
 ## Related
 

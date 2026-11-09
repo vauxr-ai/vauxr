@@ -16,31 +16,12 @@ This file is read by Claude Code at the start of every session. Read it before d
 
 ## File Structure
 
-```
-src/
-├── server.py          # WS server — device + channel connections, message routing
-├── pipeline.py        # Voice turn pipeline: STT → LLM → TTS → audio
-├── openclaw_client.py # OpenClaw native WS protocol client
-├── http_server.py     # HTTP API server (device + channel endpoints) + static web client
-├── channel_registry.py # Persisted routing-channel store (config.json under DATA_DIR)
-├── channel_server.py  # Channel WS server (backend response routing)
-├── device_registry.py # Connected device registry (+ next_seq helper)
-├── device_config.py   # Per-device config validation
-├── device_settings.py # Persisted device settings
-├── speech.py          # Shared selection resolver and persisted inheritance
-├── speech_models.py   # Generic deployments and immutable selections
-├── speech_catalog.py  # Server-owned adapters, legacy defaults and voice mapping
-├── wyoming_protocol.py # Shared Wyoming events/framing/errors
-├── wyoming_stt.py     # Configured STT via Wyoming protocol
-├── wyoming_tts.py     # Configured TTS via Wyoming protocol (synthesize())
-├── protocol.py        # WS message encode/parse + binary frame helpers
-├── auth.py            # Token validation
-├── utils.py           # make_binary_frame + shared helpers
-├── config.py          # Config from env vars
-└── realtime_*.py      # Opt-in WebRTC (Pipecat) realtime transport
-```
+The package is `src/vauxr/`; see the [maintainer module map](ARCHITECTURE.md#runtime-boundaries)
+for current module ownership. Entrypoints are `vauxr.server:main` (`vauxr` CLI)
+and `python3 -m vauxr`. Tests import the installed/package source, not legacy
+flat `src/*.py` modules.
 
-Run locally with `python3 -m server` and a writable `DATA_DIR`; no auth token is
+Run locally with `python3 -m vauxr` and a writable `DATA_DIR`; no auth token is
 required at startup. Owner HTTP/HTTPS setup and console commands are documented in
 `docs/authz/owner-v1.md`. Legacy `DEVICE_TOKEN` grants no access. Tests run under `pytest`.
 
@@ -56,7 +37,7 @@ required at startup. Owner HTTP/HTTPS setup and console commands are documented 
 
 - Fully type-hinted Python — annotate everything, avoid `Any`; keep `ruff` clean (line-length 110)
 - No web framework beyond `aiohttp` — the WS server and HTTP API share one `aiohttp` app
-- Reuse `synthesize()` from `wyoming_tts.py` for all TTS (no duplicate callers)
-- Reuse `make_binary_frame` (`utils.py`) / `next_seq` (`device_registry.py`) for all binary WS frames
+- Reuse `synthesize()` from `vauxr.speech.wyoming_tts` for all TTS (no duplicate callers)
+- Reuse `make_binary_frame` (`vauxr.utils`) / `next_seq` (`vauxr.devices.registry`) for all binary WS frames
 - Keep pipeline stages (STT, LLM, TTS) clearly separated in `pipeline.py`
 - No credentials or tokens in commits
