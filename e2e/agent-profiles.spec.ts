@@ -43,7 +43,8 @@ for (const width of [390, 1366]) test(`saved profile drives registered runtime a
     console.log(`Profile ${width}: saved profile`);
     await closeAgentDetail(page);
     await page.getByRole("button", { name: "Agents", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Default", exact: true })).toBeDisabled();
+    await expect(page.locator(".agent-list .pill").getByText("Default", { exact: true })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Default", exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "+ Add Agent", exact: true }).click();
     await expect(page.getByRole("group",{name:"Agent type"}).getByRole("button")).toHaveCount(3);
     await page.getByRole("button",{name:"Choose Household assistant",exact:true}).click();

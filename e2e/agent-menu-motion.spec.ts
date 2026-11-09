@@ -72,6 +72,8 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
       finally {el.style.pointerEvents=previous;}
     })).toBe(true);
     expect(tipBox.x).toBeGreaterThanOrEqual(0);
+    const addBox=(await primary.boundingBox())!;
+    expect(tipBox.x >= addBox.x+addBox.width || tipBox.x+tipBox.width <= addBox.x || tipBox.y >= addBox.y+addBox.height || tipBox.y+tipBox.height <= addBox.y).toBe(true);
     await page.screenshot({path:`${artifacts}/tooltip-${width}-${theme}.png`});
     await page.keyboard.press('Escape');
     await expect(summary).toBeFocused();
