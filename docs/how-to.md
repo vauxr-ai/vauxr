@@ -7,6 +7,8 @@ assume a running instance and an authenticated owner portal at its configured or
 Refresh state before retrying a mutation whose response was lost: a network error
 can occur after a durable write or an external action.
 
+For a new assistant, see [How to create a custom agent](how-to-create-custom-agent.md).
+
 ## Change speech without losing the working selection
 
 1. Record the current agent, device assignment, mode, provider and voice. Ensure

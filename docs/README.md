@@ -6,7 +6,7 @@ are first-class paths; neither requires reading the implementation review.
 | I want to… | Start here |
 | --- | --- |
 | Learn the system | [First control-plane success](tutorial.md) |
-| Complete a task | [Setup, operate and recover](how-to.md) |
+| Complete a task | [Create a custom agent](how-to-create-custom-agent.md) or [setup, operate and recover](how-to.md) |
 | Look up a contract | [HTTP API](http-api.md), [interface reference](reference.md) and [configuration](configuration.md) |
 | Understand design decisions | [System explanation](../ARCHITECTURE.md) |
 
