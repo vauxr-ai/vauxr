@@ -15,7 +15,6 @@ async def test_default_and_builtin_are_guarded_then_assigned_device_falls_back(c
     headers = owner_headers(client)
     assert (await client.delete('/api/agents/route', headers=headers)).status == 409
     assert registry.get_by_id('route') is not None
-    assert (await client.delete('/api/agents/vauxr-support', headers=headers)).status == 409
     store = get_store()
     store.update({'agent_id': 'route'}, device_id='speaker')
     assert registry.activate('vauxr-support')
@@ -42,3 +41,14 @@ async def test_remove_requires_csrf(client):
     headers={key:value for key,value in owner_headers(client).items() if key!='X-CSRF-Token'}
     assert (await client.delete('/api/agents/route',headers=headers)).status == 403
     assert registry.get_by_id('route') is not None
+
+
+async def test_support_removal_survives_restart_and_other_builtin_is_protected(client):
+    registry.ensure_support()
+    headers = owner_headers(client)
+    registry.register(registry.Agent("protected", "Protected", "openclaw", False, "2026-11-08", True))
+    assert (await client.delete("/api/agents/protected", headers=headers)).status == 409
+    assert (await client.delete("/api/agents/vauxr-support", headers=headers)).status == 200
+    registry._reset_for_tests()
+    registry.ensure_support()
+    assert registry.get_by_id("vauxr-support") is None

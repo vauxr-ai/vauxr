@@ -32,6 +32,13 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
       expect((await item.boundingBox())!.height).toBeGreaterThanOrEqual(44);
       await expect(item.locator('svg')).toHaveCount(1);
     }
+    for (const name of ['Voice pipeline for Vauxr Support','Runtime settings for Vauxr Support']) {
+      const item=menu.getByRole('button',{name,exact:true});
+      await item.hover();
+      await expect(item).not.toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+      await expect(item).toHaveCSS('text-decoration-line','none');
+    }
+    await page.mouse.move(0,0);
     const panel=(await menu.boundingBox())!;
     const trigger=(await summary.boundingBox())!;
     expect(panel.y).toBeGreaterThanOrEqual(trigger.y+trigger.height+5);

@@ -114,3 +114,6 @@
 .pipeline-sample-status { position:absolute; bottom:0; left:0; width:100%; min-height:32px; line-height:16px; }
 .pipeline-graph .pipeline-entity-label { border:0; border-radius:0; background:transparent; box-shadow:none; }
 .pipeline-graph .pipeline-entity-label:hover { border:0; background:transparent; box-shadow:none; }
+
+/* Bound endpoint names so user text cannot displace graph controls. */
+.pipeline-agent-name,.pipeline-agent .pipeline-entity > strong { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; max-width:100%; line-height:1.4; }

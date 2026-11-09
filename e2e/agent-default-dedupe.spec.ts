@@ -1,8 +1,8 @@
-import {mkdirSync} from 'node:fs';
+import {mkdirSync,readFileSync} from 'node:fs';
 import {test, expect, login, seedRealtimeAgent, openAgentAction} from './auth-fixture';
 
 for (const width of [390,1366]) {
-  test(`default status is pill-only in list and runtime settings ${width}`, async ({page,server}) => {
+  test(`default status is pill-only in list and runtime settings ${width}`, async ({page,server},testInfo) => {
     await page.setViewportSize({width,height:width===390?844:768});
     await seedRealtimeAgent(server);
     await login(page,server);
@@ -20,7 +20,7 @@ for (const width of [390,1366]) {
     await expect(runtime.getByText('Default',{exact:true})).toHaveCount(1);
     await page.keyboard.press('Escape');
     await openAgentAction(page,'Runtime settings for Vauxr Support');
-    await expect(runtime.locator('.pill').getByText('Not default',{exact:true})).toBeVisible();
+    await expect(runtime.getByText('Not default',{exact:true})).toHaveCount(0);
     const action=runtime.getByRole('button',{name:'Set as default',exact:true});
     await expect(action).toBeEnabled();
     await runtime.getByRole('tab',{name:'Configuration',exact:true}).click();
@@ -32,10 +32,26 @@ for (const width of [390,1366]) {
       const r=el.getBoundingClientRect(), dialog=el.closest('dialog')!.getBoundingClientRect();
       return r.bottom<=dialog.bottom && r.top>=dialog.top;
     })).toBe(true);
-    page.once('dialog',dialog=>dialog.accept());
+    const originalRouting=JSON.parse(readFileSync(server.data+'/agents.json','utf8')).active_agent;
+    let activationRequests=0, nativeDialogs=0;
+    page.on('request',request=>{if(request.method()==='POST' && request.url().endsWith('/activate')) activationRequests++;});
+    page.on('dialog',async dialog=>{nativeDialogs++;await dialog.dismiss();});
+    const confirmation=page.getByRole('dialog',{name:'Set default agent',exact:true});
     await action.click();
+    await expect(confirmation).toContainText('This changes server routing, not just your companion.');
+    await confirmation.getByRole('button',{name:'Cancel',exact:true}).click();
+    await expect(confirmation).toHaveCount(0);
+    expect(activationRequests).toBe(0);
+    expect(JSON.parse(readFileSync(server.data+'/agents.json','utf8')).active_agent).toBe(originalRouting);
+    await expect(action).toBeFocused();
+    await action.click();await page.keyboard.press('Escape');
+    await expect(confirmation).toHaveCount(0);expect(activationRequests).toBe(0);
+    await action.click();
+    await confirmation.getByRole('button',{name:'Set as default',exact:true}).click();
+    await expect(confirmation).toHaveCount(0);
+    expect(activationRequests).toBe(1);expect(nativeDialogs).toBe(0);
     await assertDefault(runtime);
-    const artifacts='/home/node/.openclaw/media/default-dedupe';
+    const artifacts=testInfo.outputPath('screenshots');
     mkdirSync(artifacts,{recursive:true});
     await page.screenshot({path:`${artifacts}/runtime-default-${width}.png`});
     // Check the affected modal's bounds without rerunning the exhaustive design matrix.
@@ -46,6 +62,10 @@ for (const width of [390,1366]) {
     await page.keyboard.press('Escape');
     await assertDefault(row('Vauxr Support'));
     await expect(row('Synthetic realtime integration').getByRole('button',{name:'Set as default',exact:true})).toBeEnabled();
+    await row('Synthetic realtime integration').getByRole('button',{name:'Set as default',exact:true}).click();
+    await confirmation.getByRole('button',{name:'Cancel',exact:true}).click();
+    await assertDefault(row('Vauxr Support'));
+    expect(activationRequests).toBe(1);expect(nativeDialogs).toBe(0);
     await page.reload();
     await assertDefault(row('Vauxr Support'));
     await openAgentAction(page,'Runtime settings for Vauxr Support');

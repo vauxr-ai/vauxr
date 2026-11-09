@@ -96,6 +96,10 @@ export async function auditPage(page, tokens, label = 'page') {
       for (const el of [modal, ...modal.querySelectorAll('*')].filter(visible)) {
         if (el.matches('input,textarea,select,option,svg,svg *')) continue;
         const s = getComputedStyle(el);
+        const namedEllipsis = el.matches('.pipeline-agent-name,.pipeline-agent .pipeline-entity > strong,.agent-voice-modal .modal-body > h3')
+          && el.getAttribute('title') === el.textContent && !!el.textContent?.trim()
+          && s.overflow === 'hidden' && (s.textOverflow === 'ellipsis' || s.webkitLineClamp === '2');
+        if (namedEllipsis) continue;
         for (const [axis, delta] of [['X', el.scrollWidth - el.clientWidth], ['Y', el.scrollHeight - el.clientHeight]]) {
           // Inline elements have no client box; native controls have intentional intrinsic content.
           if (!el.clientWidth || !el.clientHeight || delta <= 2) continue;
@@ -153,7 +157,8 @@ export async function auditPage(page, tokens, label = 'page') {
     };
   };
   const snapshot = await page.evaluate(capture, tokens || {});
-  if (snapshot.colorCounts.unmapped && snapshot.finiteTransitions) {
+  if (snapshot.finiteTransitions) {
+    // Even a token-colored starting frame can transition to an invalid endpoint.
     // Token endpoints are the contract, not the temporary interpolated RGB values.
     // Contrast keeps its original instantaneous sample; only paint-token evidence is resampled.
     await page.evaluate(async () => {

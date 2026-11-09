@@ -1,0 +1,23 @@
+import {test,expect,login} from './auth-fixture';
+for(const width of [390,1366]) test(`Support avatar and deletion persist ${width}`,async({page,server})=>{
+ await page.setViewportSize({width,height:844});await login(page,server);
+ let dialogs=0;page.on('dialog',async d=>{dialogs++;await d.dismiss();});
+ await page.getByRole('button',{name:'+ Add Agent',exact:true}).click();
+ const add=page.getByRole('dialog',{name:'Add Agent',exact:true});
+ await add.getByRole('button',{name:'Choose Vauxr Support',exact:true}).click();
+ await add.getByLabel('Agent name',{exact:true}).fill('Added Support');
+ await add.getByRole('button',{name:'Create agent',exact:true}).click();
+ const row=page.locator('.agent-list>li').filter({has:page.getByRole('heading',{name:'Added Support',exact:true})});
+ await expect(row).toBeVisible();
+ const id=await row.getAttribute('data-agent-id');
+ const icon=await page.request.get(server.origin+'/agent-types/vauxr-support.png');
+ const avatar=await page.request.get(server.origin+`/api/agents/${id}/avatar`);
+ expect(avatar.status()).toBe(200);expect(await avatar.body()).toEqual(await icon.body());
+ await server.restart();await page.reload();await expect(row).toBeVisible();
+ const persisted=await page.request.get(server.origin+`/api/agents/${id}/avatar`);expect(await persisted.body()).toEqual(await icon.body());
+ await row.locator('details.agent-actions summary').click();await row.getByRole('button',{name:'Delete agent',exact:true}).click();
+ const confirmation=page.getByRole('dialog',{name:'Delete agent',exact:true});
+ await expect(confirmation).toBeVisible();await confirmation.getByRole('button',{name:'Cancel',exact:true}).click();await expect(row).toBeVisible();
+ await row.locator('details.agent-actions summary').click();await row.getByRole('button',{name:'Delete agent',exact:true}).click();await confirmation.getByRole('button',{name:'Delete agent',exact:true}).click();
+ await expect(row).toHaveCount(0);await server.restart();await page.reload();await expect(row).toHaveCount(0);expect(dialogs).toBe(0);
+});

@@ -32,6 +32,7 @@ export default function Modal({
       aria-label={titleContent ? title : undefined}
       onKeyDown={(event) => {
         if (event.key !== "Tab") return;
+        event.stopPropagation();
         const controls = Array.from(
           dialog.current!.querySelectorAll<HTMLElement>(
             'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [href], [tabindex="0"]',
@@ -49,16 +50,16 @@ export default function Modal({
       }}
       onCancel={(event) => {
         event.preventDefault();
+        event.stopPropagation();
         onClose();
       }}
     >
       <header className="modal-heading">
         <div>
-          <span className="eyebrow">MAKE IT YOURS</span>
           <div className="modal-title-line"><h2 id={titleId}>{titleContent || title}</h2>{headerAction}</div>
         </div>
         <button type="button" aria-label="Close dialog" onClick={onClose}>
-          ×
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
         </button>
       </header>
       <div className="modal-body">{children}</div>

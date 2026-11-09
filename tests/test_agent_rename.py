@@ -56,7 +56,7 @@ async def test_rename_persists_without_identity_or_selection_changes(client):
 
 
 @pytest.mark.parametrize("body", [
-    {}, {"name": ""}, {"name": "   "}, {"name": "x" * 121}, {"name": 3},
+    {}, {"name": ""}, {"name": "   "}, {"name": "x" * 201}, {"name": 3},
     {"name": "two\nlines"}, {"name": "Name", "id": "different"},
     {"name": "Name", "active": False}, {"name": "Name", "token": "forbidden"},
 ])
@@ -94,3 +94,11 @@ async def test_save_failure_is_actionable_and_does_not_claim_success(client, mon
     assert "Refresh before retrying" in body["error"]
     assert "private filesystem" not in body["error"]
     assert agents.get_active().name == "Original"
+
+
+async def test_two_hundred_character_name_persists(client):
+    name = "x" * 200
+    response = await client.patch("/api/agents/route", headers=owner_headers(client), json={"name": name})
+    assert response.status == 200
+    agents._reset_for_tests()
+    assert agents.get_by_id("route").name == name

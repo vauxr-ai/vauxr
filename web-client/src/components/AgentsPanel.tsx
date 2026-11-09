@@ -47,6 +47,9 @@ export default function AgentsPanel({
   const api = useAgents();
   const runtimeTabsId = useId();
   const [runtimeTab, setRuntimeTab] = useState("configuration");
+  const activationReturnFocus = useRef<HTMLElement | null>(null);
+  const [activationId, setActivationId] = useState("");
+  const [activationError, setActivationError] = useState("");
   const deleteReturnFocus = useRef<HTMLElement>(null);
   const [deleteId,setDeleteId]=useState("");
   const [deleteError,setDeleteError]=useState("");
@@ -71,6 +74,7 @@ export default function AgentsPanel({
   const voiceAgent = agents.find(agent => agent.id === voiceId);
   const diagnostics = agents.find(agent => agent.id === diagnosticsId);
   const deletingAgent = agents.find(agent=>agent.id === deleteId);
+  const activatingAgent = agents.find(agent => agent.id === activationId);
   const selected = agents.find((agent) => agent.id === selectedId);
   useEffect(() => {
     onContext?.(selected?.name || "Agents");
@@ -124,20 +128,22 @@ export default function AgentsPanel({
     return () => {document.removeEventListener("pointerdown", closeMenus); document.removeEventListener("keydown", closeMenus);};
   }, []);
 
+  function requestActivation(agent: ApiAgent, trigger: HTMLButtonElement) {
+    activationReturnFocus.current = trigger;
+    setActivationError("");
+    setActivationId(agent.id);
+  }
+
   async function activate(agent: ApiAgent) {
-    if (
-      !window.confirm(
-        `Make ${agent.name} the default fallback route for unassigned devices? This changes server routing, not just your companion.`,
-      )
-    )
-      return;
+    if (busy) return;
     setBusy(true);
     try {
       await api.activateAgent(agent.id);
       await refresh();
+      setActivationId("");
       window.dispatchEvent(new Event("agent-route-changed"));
     } catch (error) {
-      setError(
+      setActivationError(
         error instanceof Error
           ? error.message
           : "Unable to set the default agent. Refresh before retrying.",
@@ -176,6 +182,7 @@ export default function AgentsPanel({
           }}
         />
       </div>
+      <hr className="agents-divider" />
       <section className="card agent-inventory" aria-label="Agents available for use on voice devices">
         <div className="section-heading">
           <div>
@@ -224,10 +231,10 @@ export default function AgentsPanel({
             } catch (failure) {setError(failure instanceof Error ? failure.message : "Unable to save the agent name.");}
             finally {setBusy(false);}
           }}><label className="sr-only" htmlFor="agent-name-edit">Agent name</label>
-            <input id="agent-name-edit" value={nameDraft} maxLength={120} required disabled={busy} autoFocus
-              onChange={event => setNameDraft(event.target.value)} />
-            <div className="name-edit-actions"><button type="submit" disabled={busy || !nameDraft.trim()}>Save name</button>
-            <button type="button" disabled={busy} onClick={() => {setNameDraft(selected?.name || ""); setEditingName(false); setError("");}}>Cancel name edit</button></div>
+            <input id="agent-name-edit" value={nameDraft} maxLength={200} required disabled={busy} autoFocus
+              onChange={event => setNameDraft(event.target.value)} onKeyDown={event => {if(event.key === "Escape" && !busy){setNameDraft(selected?.name || "");setEditingName(false);setError("");}}} />
+            <div className="name-edit-actions"><button type="submit" aria-label="Save name" title="Save name" className="name-edit-save" disabled={busy || !nameDraft.trim()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></button>
+            <button type="button" aria-label="Cancel name edit" title="Cancel name edit" className="name-edit-cancel" disabled={busy} onClick={() => {setNameDraft(selected?.name || ""); setEditingName(false); setError("");}}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
           </form> : <h3 aria-label={agent.name}>{agent.name}<button type="button" aria-label="Edit agent name" title="Edit agent name"
             onClick={() => {setSelectedId(agent.id); setNameDraft(agent.name); setEditingName(true); setSaved(""); setError("");}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L5 15Z" /></svg></button></h3>}
                   </div>
@@ -243,17 +250,12 @@ export default function AgentsPanel({
                             : "OpenClaw connection"}
                   </p>
                 </div>
-                <span className="pill">
-                  {agent.chat_only
-                    ? "Chat-only · no voice"
-                    : agent.active
-                      ? "Default"
-                      : "Not default"}
-                </span>
+                {agent.chat_only && <span className="pill">Chat-only · no voice</span>}
+                {agent.active && <span className="pill">Default</span>}
                 {!agent.active && <button
-                  className="agent-route-action"
+                  className="agent-route-action agent-default-action"
                   disabled={busy}
-                  onClick={() => void activate(agent)}
+                  onClick={event => requestActivation(agent, event.currentTarget)}
                 >
                   Set as default
                 </button>}
@@ -276,20 +278,20 @@ export default function AgentsPanel({
                 <button className="agent-route-action" aria-label={`Runtime settings for ${agent.name}`} title="Agent runtime settings"
                   onClick={event => { (diagnosticsReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setError(""); setDiagnosticsId(agent.id); }}><Icon name="settings" size={20}/>Runtime settings</button>
                 <span className="agent-action-tooltip-trigger"
-                  tabIndex={agent.active || agent.builtin ? 0 : undefined}
-                  aria-label={agent.active || agent.builtin ? `Delete ${agent.name} unavailable` : undefined}
-                  aria-describedby={agent.active || agent.builtin ? `delete-reason-${agent.id}` : undefined}
+                  tabIndex={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") ? 0 : undefined}
+                  aria-label={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") ? `Delete ${agent.name} unavailable` : undefined}
+                  aria-describedby={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") ? `delete-reason-${agent.id}` : undefined}
                   onPointerEnter={event => { if (event.pointerType !== "touch") positionDeleteTooltip(event.currentTarget, {x:event.clientX,y:event.clientY}); }}
                   onPointerMove={event => { if (event.pointerType !== "touch") positionDeleteTooltip(event.currentTarget, {x:event.clientX,y:event.clientY}); }}
                   onFocus={event => { if (event.currentTarget.matches(":focus-visible")) positionDeleteTooltip(event.currentTarget); }}
-                  onPointerDown={event => { if (agent.active || agent.builtin) {
+                  onPointerDown={event => { if (agent.active || (agent.builtin && agent.definition_id !== "vauxr-support")) {
                     event.currentTarget.focus();
                     positionDeleteTooltip(event.currentTarget, event.pointerType === "touch" ? undefined : {x:event.clientX,y:event.clientY});
                   } }}>
-                  <button type="button" className="agent-delete-action" disabled={agent.active || agent.builtin || busy} onClick={event => {
+                  <button type="button" className="agent-delete-action" disabled={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") || busy} onClick={event => {
                     (deleteReturnFocus as {current:HTMLElement|null}).current=dismissActionMenu(event.currentTarget); setDeleteId(agent.id); setDeleteError("");
                   }}><Icon name="trash" size={20}/>Delete agent</button>
-                  {(agent.active || agent.builtin) && <span role="tooltip" className="agent-action-tooltip" id={`delete-reason-${agent.id}`}>
+                  {(agent.active || (agent.builtin && agent.definition_id !== "vauxr-support")) && <span role="tooltip" className="agent-action-tooltip" id={`delete-reason-${agent.id}`}>
                     {agent.active ? "Set another agent as default first" : "Bundled agent cannot be deleted"}
                   </span>}
                 </span>
@@ -300,6 +302,15 @@ export default function AgentsPanel({
         )}
       </section>
       {saved && <p role="status">{saved}</p>}
+      {activatingAgent && <Modal title="Set default agent" returnFocus={activationReturnFocus} onClose={() => { if (!busy) setActivationId(""); }}>
+        <p>Make <strong>{activatingAgent.name}</strong> the default fallback route for unassigned devices?</p>
+        <p>This changes server routing, not just your companion. Devices with an explicit agent assignment keep their assigned route.</p>
+        {activationError && <p role="alert">{activationError}</p>}
+        <div className="flex gap-2">
+          <button type="button" disabled={busy} onClick={() => setActivationId("")}>Cancel</button>
+          <button type="button" className="button-primary" disabled={busy} onClick={() => void activate(activatingAgent)}>{busy ? "Setting default…" : "Set as default"}</button>
+        </div>
+      </Modal>}
       {deletingAgent && <Modal title="Delete agent" returnFocus={deleteReturnFocus} onClose={()=>{if(!deleting)setDeleteId("");}}>
         <p>Delete <strong>{deletingAgent.name}</strong>? Assigned devices will use the default agent.</p>
         {deleteError && <p role="alert">{deleteError}</p>}
@@ -314,7 +325,7 @@ export default function AgentsPanel({
       </Modal>}
       {voiceAgent && <Modal title="Voice pipeline" className="agent-detail-modal agent-detail agent-voice-modal"
         returnFocus={voiceReturnFocus} onClose={() => setVoiceId("")}>
-        <h3>{voiceAgent.name}</h3>
+        <h3 title={voiceAgent.name}>{voiceAgent.name}</h3>
         <SpeechSettings onSaved={() => setVoiceId("")} key={`voice-${voiceAgent.id}`} agentId={voiceAgent.id} agentName={voiceAgent.name} agentType={voiceAgent.type}
           browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential} />
       </Modal>}
@@ -336,8 +347,8 @@ export default function AgentsPanel({
         returnFocus={diagnosticsReturnFocus} onClose={() => setDiagnosticsId("")}>
         <div className="agent-runtime-identity">
           <h3>{diagnostics.name}</h3>
-          <span className="pill">{diagnostics.active ? "Default" : "Not default"}</span>
-          {!diagnostics.active && <button disabled={busy} onClick={() => void activate(diagnostics)}>
+          {diagnostics.active && <span className="pill">Default</span>}
+          {!diagnostics.active && <button className="agent-route-action agent-default-action" disabled={busy} onClick={event => requestActivation(diagnostics, event.currentTarget)}>
             Set as default
           </button>}
         </div>

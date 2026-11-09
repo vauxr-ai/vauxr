@@ -177,6 +177,10 @@ def ensure_support() -> None:
     _ensure_loaded()
     if get_by_id("vauxr-support") is not None:
         return
+    from vauxr.config_files import read_json
+    installation = Path(get_config().data_dir) / "support-installation.json"
+    if installation.exists() and read_json(installation).get("removed"):
+        return
     support = Agent("vauxr-support", "Vauxr Support", "langchain", False,
                     datetime.fromtimestamp(0, tz=UTC).isoformat(), True, definition_id="vauxr-support")
 
@@ -293,8 +297,8 @@ def activate(agent_id: str) -> bool:
 
 def rename(agent_id: str, name: str) -> bool:
     """Persist only the display name, retaining identity, credentials and selection."""
-    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
-        raise ValueError("name must contain 1 to 120 characters")
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 200:
+        raise ValueError("name must contain 1 to 200 characters")
     name = name.strip()
     if any(ord(character) < 32 or ord(character) == 127 for character in name):
         raise ValueError("name must not contain control characters")
@@ -318,9 +322,9 @@ def rename(agent_id: str, name: str) -> bool:
 
 
 def remove(agent_id: str) -> bool:
-    """Remove ordinary routing metadata; builtin agents cannot be deleted."""
+    """Remove routing metadata, preserving protected builtins other than Support."""
     agent = get_by_id(agent_id)
-    if agent is None or agent.builtin:
+    if agent is None or (agent.builtin and agent.definition_id != "vauxr-support"):
         return False
 
     def change(data: dict) -> dict:

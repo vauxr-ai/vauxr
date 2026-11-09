@@ -7,6 +7,7 @@ export interface IntegrationMetadata {
 }
 
 export interface ApiAgent {
+  definition_id?: string;
   id: string;
   name: string;
   type: "openclaw" | "openclaw-direct" | "support" | "langgraph" | "langchain";

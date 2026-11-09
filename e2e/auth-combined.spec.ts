@@ -84,6 +84,7 @@ test("owner approves integration; scoped pairing, speech, activation, rotation a
     await page.getByRole("button", {name: "Refresh agents", exact: true}).click();
     const route = page.locator("li").filter({ hasText: "Synthetic OpenClaw" });
     await route.getByRole("button", { name: "Set as default", exact: true }).click();
+    await page.getByRole("dialog", { name: "Set default agent", exact: true }).getByRole("button", { name: "Set as default", exact: true }).click();
     await expect(route.locator(".pill").filter({ hasText: /^Default$/ })).toBeVisible();
     // PR58 settings run against the actual connected device projection and real speech API.
     await page.getByRole("button", { name: "Devices", exact: true }).click();
@@ -159,6 +160,7 @@ test("matching code errors and denial never deliver credentials; legacy forms st
   await expect(row.getByLabel("Integration matching code")).toHaveValue("");
   expect((await client(server, "status", first.secret)).state).toBe("pending");
   await row.getByText("Deny integration request", { exact: true }).click();
+  await page.getByRole("dialog", { name: "Deny integration request", exact: true }).getByRole("button", { name: "Deny request", exact: true }).click();
   await expect(row).toContainText("State: denied");
   expect((await native(server, "/api/integrations/v1/deliver", first.secret)).status).toBe(409);
   expect((await client(server, "status", second.secret)).state).toBe("pending");

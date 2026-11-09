@@ -90,8 +90,8 @@ for (const width of [390, 1366]) test(`saved profile drives registered runtime a
     await closeAgentDetail(page);
     await companion.getByRole("button", { name: "Collapse voice companion", exact: true }).click();
     const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "Profile household", level:3, exact: true }) });
-    page.once("dialog", dialog => dialog.accept());
     await card.getByRole("button", { name: "Set as default", exact: true }).click();
+    await page.getByRole("dialog", { name: "Set default agent", exact: true }).getByRole("button", { name: "Set as default", exact: true }).click();
     await expect(card.locator(".pill").getByText("Default", { exact: true })).toBeVisible();
     await expect(card.getByRole("button", { name: "Default", exact: true })).toHaveCount(0);
     expect(JSON.parse(readFileSync(resolve(server.data, "agents.json"), "utf8")).active_agent).toBe(agent.id);

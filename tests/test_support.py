@@ -30,10 +30,17 @@ def test_builtin_install_is_idempotent_and_preserves_existing_route(tmp_path):
     assert first == (tmp_path / "agents.json").read_bytes()
     assert registry.get_active().id == "example"
     assert registry.get_by_id("vauxr-support").builtin is True
-    assert registry.remove("vauxr-support") is False
     registry.load()
     assert registry.activate("vauxr-support")
     assert registry.get_active().type == "langchain"
+    assert registry.activate("example")
+    assert registry.remove("vauxr-support") is True
+    registry.load()
+    assert registry.get_by_id("vauxr-support") is None
+    assert registry.get_active().id == "example"
+    registry.ensure_support()
+    assert registry.get_by_id("vauxr-support").builtin is True
+    assert registry.get_active().id == "example"
 
 
 async def test_unconfigured_is_honest_without_model_or_openclaw():

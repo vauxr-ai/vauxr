@@ -1,13 +1,22 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { parse } from '../web-client/node_modules/yaml/dist/index.js';
+import { auditPage } from '../scripts/design-audit.mjs';
+const tokens = parse(readFileSync(resolve(import.meta.dirname, '../DESIGN.md'), 'utf8').split('---')[1]);
 import { test, expect, login } from "./auth-fixture";
-for (const width of [390,1366]) test(`isolated source preview and publish at ${width}`, async ({page,server}) => {
+for (const width of [390,1366]) for (const theme of ["light","dark"]) test(`isolated source preview and publish at ${width} ${theme}`, async ({page,server}) => {
   await page.setViewportSize({width,height:900});
   await page.addInitScript(()=>{(window as any).micCalls=0;navigator.mediaDevices.getUserMedia=async()=>{(window as any).micCalls++;throw Error("Mic off");};});
   await login(page,server);
+  await page.getByLabel("Appearance").selectOption(theme);
   await page.getByRole("button",{name:"Settings",exact:true}).click();
   await page.getByRole("navigation",{name:"Settings sections"}).getByRole("button",{name:/^Interfaces/}).click();
   const editor=page.getByRole("region",{name:"Interface editor",exact:true});
   const html=editor.getByLabel("HTML source",{exact:true});
   await expect(html).toBeVisible();
+  await expect(editor.locator("iframe")).toBeVisible();
+  const audit = await auditPage(page, tokens, `interface-${width}-${theme}`);
+  expect(audit.find(row => row.rule === "token-colors")?.status).toBe("PASS");
   let canaryRequests=0;
   await page.route("**/api/preview-canary**",route=>{canaryRequests++;return route.fulfill({status:200,body:"blocked canary"});});
   await html.fill(`<h2>Safe household view</h2><script>parent.previewEscaped=true;fetch('/api/preview-canary')</script><img src='/api/preview-canary'><meta http-equiv='refresh' content='0;url=/api/preview-canary'><iframe src='/api/preview-canary'></iframe><a href='/api/preview-canary'>No navigation</a><form action='/api/preview-canary'><input autofocus onfocus='parent.previewEscaped=true'></form>`);
@@ -35,5 +44,5 @@ for (const width of [390,1366]) test(`isolated source preview and publish at ${w
   await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
   await expect(page.frameLocator('iframe[title="Isolated interface preview"]').getByRole("heading",{name:"Safe household view"})).toBeVisible();
   console.log("Preview text:",await page.frameLocator('iframe[title="Isolated interface preview"]').locator("body").innerText());
-  await page.screenshot({path:`/tmp/vauxr-interface-${width}.png`,fullPage:true});
+  await page.screenshot({path:`/tmp/vauxr-interface-${width}-${theme}.png`,fullPage:true});
 });

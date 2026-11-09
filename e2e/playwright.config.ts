@@ -1,3 +1,4 @@
+import { domainTestMatch } from '../scripts/playwright-domains.mjs';
 import { defineConfig, devices } from "@playwright/test";
 
 // Owner setup renders one-time secrets; suppress automatic failure DOM snapshots too.
@@ -7,7 +8,7 @@ const baseURL = process.env.VAUXR_URL ?? "http://localhost:8080";
 
 export default defineConfig({
   testDir: ".",
-  testMatch: /.*\.spec\.ts$/,
+  testMatch: process.env.VAUXR_E2E_DOMAIN ? domainTestMatch(process.env.VAUXR_E2E_DOMAIN) : /.*\.spec\.ts$/,
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   workers: 1,
