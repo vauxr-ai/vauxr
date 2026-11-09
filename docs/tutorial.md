@@ -19,8 +19,9 @@ Commands below are run at the repository root. Do not copy existing private
 
 ## 1. Start and observe
 
-Follow [Quick Start](../README.md#quick-start), steps 1–2, including container-side
-permission initialization. Then inspect the stack:
+Follow [Quick Start](../README.md#quick-start), steps 1–2, including its
+setup-revision prerequisite. Compose initializes storage automatically. Then
+inspect the stack:
 
 ```sh
 docker compose ps
@@ -31,7 +32,8 @@ docker compose logs --tail=60 vauxr
 healthy after their model downloads. Open `http://localhost:8080` on the host.
 You should reach owner setup/login, not an already-authorized management page.
 If a service restarts, inspect its logs before retrying. A permission error points
-to the mounted data directory; rerunning a browser request will not repair it.
+to the mounted data directory; inspect the
+[initializer logs](how-to.md#automatic-storage-initialization) before retrying.
 Do not delete the directory to clear a startup validation error.
 
 ## 2. Claim management authority

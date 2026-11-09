@@ -176,6 +176,29 @@ Recordings and firmware retain their separate `./recordings` and `./firmware`
 mounts. Whisper and Piper bind-mount `./data/whisper` and `./data/piper`,
 respectively, into their own `/data` directories for model caches.
 
+## Automatic storage initialization
+
+This flow requires [automatic setup PR #123](https://github.com/vauxr-ai/vauxr/pull/123)
+until it is merged. From the repository root, run `docker compose up -d --build`.
+Compose runs the one-shot `storage-init` service before Vauxr, Piper and Whisper.
+It creates missing storage roots and speech cache directories. Only `/data`,
+`/data/recordings` and `/data/firmware` directory roots are assigned to the
+server's UID 100/GID 101 and given owner access; their existing group/other
+permissions remain. The server itself continues running as non-root.
+
+**Expected outcome:** initialization exits successfully, Vauxr can persist its
+settings and write recordings/firmware, and speech services use their separate
+caches. Repeated startup leaves existing file contents, ownership and modes
+unchanged. This is not a data migration or a recursive permissions repair.
+
+If initialization fails, dependent services are not started. Inspect
+`docker compose logs storage-init`, check that the three bind mounts are writable
+and point to directories rather than files or symbolic links, fix the mount
+permissions through your selected Docker daemon, then repeat
+`docker compose up -d --build`. Do not delete existing data to repair permissions;
+for inaccessible existing files, inspect their ownership separately. With rootless
+Docker, container IDs are mapped: do not assume host `chown 100:101` is correct.
+
 ## Migrating existing installations
 
 Migration is only needed when changing existing named volumes to the new bind mounts—not when updating the Docker image alone. Copy Vauxr's data into `./data/`, Piper's cache into `./data/piper/`, and Whisper's cache into `./data/whisper/`. Keep the old volumes and a backup until everything works; never use `docker compose down -v` during migration.
