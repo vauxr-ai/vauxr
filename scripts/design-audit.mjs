@@ -2,7 +2,14 @@
 export async function auditPage(page, tokens, label = 'page') {
   const results = [];
   const add = (rule, status, detail, fixable = false) => results.push({ rule, status, detail: `${label}: ${detail}`, fixable });
-  const snapshot = await page.evaluate((tokens) => {
+  // A native dialog can report visible while its entrance still has opacity zero.
+  await page.evaluate(async () => {
+    const entrances = [...document.querySelectorAll('dialog[open],[aria-modal="true"]')]
+      .flatMap(el => el.getAnimations({subtree:true}))
+      .filter(a => a instanceof CSSAnimation && Number(a.effect?.getComputedTiming().endTime) <= 1000);
+    await Promise.all(entrances.map(a => a.finished.catch(() => {})));
+  });
+  const capture = (tokens) => {
     const visible = (el) => {
       if (!(el instanceof Element) || el.closest('[hidden], [inert], .sr-only, .visually-hidden')) return false;
       for (let p = el; p; p = p.parentElement) {
@@ -16,6 +23,15 @@ export async function auditPage(page, tokens, label = 'page') {
     };
     const elements = [...document.querySelectorAll('body *')].filter(visible);
     const tag = (el) => el.tagName.toLowerCase();
+    const selector = el => {
+      const parts=[];
+      for(let p=el;p && p!==document.body;p=p.parentElement) {
+        const siblings=[...(p.parentElement?.children || [])].filter(s=>s.tagName===p.tagName);
+        parts.unshift(`${p.tagName.toLowerCase()}${[...p.classList].slice(0,3).map(c=>'.'+CSS.escape(c)).join('')}:nth-of-type(${siblings.indexOf(p)+1})`);
+        if(parts.length===4) break;
+      }
+      return parts.join(' > ');
+    };
     const parse = (value) => {
       const rgb = value.match(/^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/);
       if(rgb) return [Number(rgb[1]),Number(rgb[2]),Number(rgb[3]),rgb[4]===undefined?1:Number(rgb[4])];
@@ -43,6 +59,9 @@ export async function auditPage(page, tokens, label = 'page') {
     const same = (a, b) => a.slice(0, 3).every((n, i) => Math.abs(n - b[i]) <= 1);
     const colorCounts = { opaque: 0, derivedAlpha: 0, unmapped: 0, unsupported: 0 };
     const unmapped = new Set();
+    const colorEvidence=[];
+    const contrastEvidence=[];
+    const scrollEvidence=[];
     for (const el of elements) {
       const s = getComputedStyle(el);
       for (const prop of ['color', 'backgroundColor', 'borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor', 'outlineColor', 'fill', 'stroke']) {
@@ -51,16 +70,18 @@ export async function auditPage(page, tokens, label = 'page') {
           if (parseFloat(s[`border${side}Width`]) === 0 || s[`border${side}Style`] === 'none') continue;
         }
         if (prop === 'outlineColor' && (s.outlineStyle === 'none' || parseFloat(s.outlineWidth) === 0)) continue;
-        if ((prop === 'fill' || prop === 'stroke') && !(el instanceof SVGElement)) continue;
+        // SVG containers inherit paint but do not draw it; inspect their actual shapes.
+        if ((prop === 'fill' || prop === 'stroke') && !el.matches('path,rect,circle,ellipse,line,polyline,polygon,text,tspan,use')) continue;
+        if (prop === 'fill' && el.matches('line')) continue;
         if (s[prop] === 'none') continue;
         const c = parse(s[prop]);
         if (!c) { colorCounts.unsupported++; continue; }
         if (c[3] === 0) continue;
         if (palette.some(p => same(c, p))) colorCounts[c[3] < 0.999 ? 'derivedAlpha' : 'opaque']++;
-        else { colorCounts.unmapped++; unmapped.add(s[prop]); }
+        else { colorCounts.unmapped++; unmapped.add(s[prop]); colorEvidence.push({selector:selector(el),property:prop,color:s[prop]}); }
       }
       const stops = s.backgroundImage.match(/#[a-f\d]{3,8}\b|rgba?\([^)]+\)/gi) || [];
-      for (const stop of stops) { const c = parse(stop); if(c && c[3]>0 && !palette.some(p=>same(c,p))) {colorCounts.unmapped++;unmapped.add(stop);} }
+      for (const stop of stops) { const c = parse(stop); if(c && c[3]>0 && !palette.some(p=>same(c,p))) {colorCounts.unmapped++;unmapped.add(stop);colorEvidence.push({selector:selector(el),property:"backgroundImage",color:stop});} }
     }
     const over = elements.filter(el => {
       if (el.matches('input,select,textarea,option')) return false;
@@ -106,29 +127,49 @@ export async function auditPage(page, tokens, label = 'page') {
       const ratio = (Math.max(l1, l2) + .05) / (Math.min(l1, l2) + .05);
       const large = parseFloat(s.fontSize) >= 24 || (parseFloat(s.fontSize) >= 18.6667 && parseFloat(s.fontWeight) >= 700);
       contrastChecked++;
-      if (ratio + .01 < (large ? 3 : 4.5)) contrastFailed++;
+      if (ratio + .01 < (large ? 3 : 4.5)) {
+        contrastFailed++;
+        contrastEvidence.push({selector:selector(el),foreground:s.color,background:bg,ratio,required:large?3:4.5,fontSize:s.fontSize,fontWeight:s.fontWeight});
+      }
     }
     return {
       pageScroll: elements.filter(el => {
         if (el.closest('[role="dialog"],dialog,[aria-modal="true"]') || el.matches('input,textarea,select,option,svg,svg *')) return false;
         const style = getComputedStyle(el);
-        return el.clientHeight > 0 && el.clientWidth > 0 && ((/auto|scroll/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 2) || (/auto|scroll/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 2));
+        const scroll = el.clientHeight > 0 && el.clientWidth > 0 && ((/auto|scroll/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 2) || (/auto|scroll/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 2));
+        if(scroll) scrollEvidence.push({selector:selector(el),width:el.clientWidth,height:el.clientHeight,scrollWidth:el.scrollWidth,scrollHeight:el.scrollHeight,overflowX:style.overflowX,overflowY:style.overflowY,backgroundUnderModal:!!document.querySelector('dialog:modal')});
+        return scroll;
       }).length,
       overflow: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0) > innerWidth + 1,
       over: over.length, modalCount: modals.length, modalBounds, modalScroll, modalClip,
       colorCounts, unmappedCount: unmapped.size, unmappedValues: [...unmapped].slice(0,12), paletteSize: palette.length,
-      contrastChecked, contrastFailed, contrastUnknown,
+      contrastChecked, contrastFailed, contrastUnknown, colorEvidence, contrastEvidence, scrollEvidence,
+      finiteTransitions: document.getAnimations().some(a => a instanceof CSSTransition && Number(a.effect?.getComputedTiming().endTime) <= 1000),
       loading: elements.filter(el => [...el.childNodes].some(n => n.nodeType === Node.TEXT_NODE && /\bLoading\s*(?:…|\.\.\.)/i.test(n.textContent))).length,
       headings: elements.filter(el => el.matches('main h1, [role="main"] h1')).length,
       hoverCount: elements.filter(el => el.matches('button,a[href],summary') && !el.matches(':disabled,[aria-disabled="true"]')).length,
       tags: [...new Set(elements.map(tag))].filter(t => ['iframe', 'canvas'].includes(t)).length,
     };
-  }, tokens || {});
+  };
+  const snapshot = await page.evaluate(capture, tokens || {});
+  if (snapshot.colorCounts.unmapped && snapshot.finiteTransitions) {
+    // Token endpoints are the contract, not the temporary interpolated RGB values.
+    // Contrast keeps its original instantaneous sample; only paint-token evidence is resampled.
+    await page.evaluate(async () => {
+      await Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition &&
+        Number(a.effect?.getComputedTiming().endTime) <= 1000).map(a => a.finished.catch(() => {})));
+    });
+    const settled = await page.evaluate(capture, tokens || {});
+    for (const key of ['colorCounts','unmappedCount','unmappedValues','paletteSize','colorEvidence']) snapshot[key] = settled[key];
+  }
   add('overflow', snapshot.overflow || snapshot.over || snapshot.pageScroll ? 'FAIL' : 'PASS', `page overflow=${snapshot.overflow}; ${snapshot.over} visible boxes outside horizontal viewport; ${snapshot.pageScroll} page scrolling containers`, true);
   add('overflow', snapshot.modalBounds || snapshot.modalScroll || snapshot.modalClip ? 'FAIL' : 'PASS', `${snapshot.modalCount} visible dialogs; ${snapshot.modalBounds} outside viewport; ${snapshot.modalScroll} internal scroll axes; ${snapshot.modalClip} clipped axes`, true);
+  results[0].evidence = snapshot.scrollEvidence;
   const colors = snapshot.colorCounts;
   add('token-colors', colors.unmapped ? 'FAIL' : !snapshot.paletteSize || colors.unsupported ? 'WARN' : 'PASS', `${snapshot.paletteSize} token colors; ${colors.opaque} opaque matches; ${colors.derivedAlpha} alpha-derived matches; ${snapshot.unmappedCount} unmapped colors (${colors.unmapped} uses); ${colors.unsupported} unsupported uses; unmapped=${snapshot.unmappedValues.join(", ")}`, true);
+  results.at(-1).evidence = snapshot.colorEvidence;
   add('contrast', snapshot.contrastFailed ? 'FAIL' : snapshot.contrastChecked ? 'PASS' : 'WARN', `${snapshot.contrastChecked} solid-background text checks; ${snapshot.contrastFailed} below WCAG AA`, true);
+  results.at(-1).evidence = snapshot.contrastEvidence;
   if (snapshot.contrastUnknown) add('contrast', 'WARN', `${snapshot.contrastUnknown} text elements require manual contrast review (images, gradients, effects, or disabled controls)`);
   add('loading-text', snapshot.loading ? 'FAIL' : 'PASS', `${snapshot.loading} visible Loading ellipsis placeholders`, true);
   add('page-headings', snapshot.headings > 1 ? 'FAIL' : snapshot.headings ? 'PASS' : 'WARN', `${snapshot.headings} visible h1 headings`, true);

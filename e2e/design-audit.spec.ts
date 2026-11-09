@@ -28,3 +28,36 @@ test('hover checks include card descendants, not only button boxes', async ({pag
   const rows=await auditPage(page,tokens,'card-descendant');
   expect(rows.find(row=>row.rule==='hover-motion')?.status).toBe('FAIL');
 });
+
+
+test('token check validates settled transition endpoints without allowing raw colors',async({page})=>{
+  await page.setContent(`<style>body{background:white;color:black}.sample{color:black;transition:color .15s}.valid{color:white}.invalid{color:red}</style><main><h1>Agents</h1><p class="sample">Status</p></main>`);
+  const sample=page.locator('.sample');
+  await sample.evaluate(el=>{getComputedStyle(el).color;el.classList.add('valid');});
+  let rows=await auditPage(page,tokens,'valid-transition');
+  expect(rows.find(r=>r.rule==='token-colors')?.status).toBe('PASS');
+  await sample.evaluate(el=>el.classList.replace('valid','invalid'));
+  rows=await auditPage(page,tokens,'invalid-transition');
+  expect(rows.find(r=>r.rule==='token-colors')?.status).toBe('FAIL');
+  expect(rows.find(r=>r.rule==='token-colors')?.evidence.some(e=>e.selector.includes('.sample')&&e.color==='rgb(255, 0, 0)')).toBe(true);
+});
+
+
+test('SVG container default fill is not paint, but a raw filled shape still fails',async({page})=>{
+ const paper={colors:{paper:'#ffffff'}};
+ await page.setContent(`<style>body{background:white;color:white}</style><svg width="40" height="40"><path d="M1 1L30 30" fill="none" stroke="white"/></svg>`);
+ let rows=await auditPage(page,paper,'unpainted-container');
+ expect(rows.find(r=>r.rule==='token-colors')?.status).toBe('PASS');
+ await page.locator('svg').evaluate(el=>{el.innerHTML='<rect width="30" height="30" fill="red"/>';});
+ rows=await auditPage(page,paper,'painted-shape');
+ expect(rows.find(r=>r.rule==='token-colors')?.status).toBe('FAIL');
+});
+
+test('entrance opacity cannot hide an overflowing native modal from the audit',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await page.setContent(`<style>body{background:white;color:black}dialog{width:500px;max-width:none;animation:enter .15s}@keyframes enter{from{opacity:0}to{opacity:1}}</style><dialog><p>Content</p></dialog>`);
+ await page.locator('dialog').evaluate(el=>(el as HTMLDialogElement).showModal());
+ const rows=await auditPage(page,tokens,'entering-dialog');
+ expect(rows.filter(r=>r.rule==='overflow')[1].status).toBe('FAIL');
+ expect(rows.filter(r=>r.rule==='overflow')[1].detail).toContain('1 visible dialogs');
+});
