@@ -21,9 +21,11 @@ async def remove_agent(request: web.Request, agent_id: str) -> web.Response:
         return web.json_response({"error": "Agent not found"}, status=404)
     if agent.active:
         return web.json_response({"error": "Set another agent as default before deleting this agent"}, status=409)
-    if agent.builtin:
+    if agent.builtin and agent.definition_id != "vauxr-support":
         return web.json_response({"error": "Bundled agent cannot be deleted"}, status=409)
     try:
+        if agent.id == "vauxr-support":
+            update_json(Path(get_config().data_dir) / "support-installation.json", lambda _: {"removed": True})
         get_store().detach_agent(agent_id)
         if agent.integration:
             request.app[LIFECYCLE].execute("revoke", {

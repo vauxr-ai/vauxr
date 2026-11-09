@@ -32,6 +32,7 @@ export default function Modal({
       aria-label={titleContent ? title : undefined}
       onKeyDown={(event) => {
         if (event.key !== "Tab") return;
+        event.stopPropagation();
         const controls = Array.from(
           dialog.current!.querySelectorAll<HTMLElement>(
             'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [href], [tabindex="0"]',
@@ -49,6 +50,7 @@ export default function Modal({
       }}
       onCancel={(event) => {
         event.preventDefault();
+        event.stopPropagation();
         onClose();
       }}
     >

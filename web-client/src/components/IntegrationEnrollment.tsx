@@ -1,5 +1,6 @@
 import RefreshButton from "./RefreshButton";
-import { useState } from "react";
+import { useState, useRef } from "react";
+import Modal from "./Modal";
 import { ownerPost } from "../auth/api";
 
 interface Request {
@@ -13,6 +14,8 @@ interface Request {
 }
 
 export default function IntegrationEnrollment({compact = false}: {compact?: boolean}) {
+  const denyReturnFocus = useRef<HTMLElement | null>(null);
+  const [denyingRequest, setDenyingRequest] = useState<Request | null>(null);
   const [page, setPage] = useState(0);
   const [requests, setRequests] = useState<Request[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -49,7 +52,11 @@ export default function IntegrationEnrollment({compact = false}: {compact?: bool
         <button type="button" disabled={busy || page >= requests.length - 1} onClick={() => setPage(value => value + 1)}>Next request</button>
       </nav>}
       {(compact ? requests.slice(Math.min(page, requests.length - 1), Math.min(page, requests.length - 1) + 1) : requests).map(request => (
-        <RequestRow key={`${request.request_id}-${request.state}`} request={request} busy={busy} compact={compact}
+        <RequestRow key={`${request.request_id}-${request.state}`} request={request} busy={busy} compact={compact} onDeny={trigger => {
+          denyReturnFocus.current = trigger;
+          setError("");
+          setDenyingRequest(request);
+        }}
           act={(action, code) => run(async () => {
             await ownerPost(`/api/integrations/v1/${action}`, {
               request_id: request.request_id,
@@ -59,6 +66,19 @@ export default function IntegrationEnrollment({compact = false}: {compact?: bool
           })} />
       ))}
       {(!compact || !requests.length) && <EnrollmentOutcome/>}
+      {denyingRequest && <Modal title="Deny integration request" returnFocus={denyReturnFocus} onClose={() => { if (!busy) setDenyingRequest(null); }}>
+        <p>Deny integration request <strong>{denyingRequest.request_id}</strong>?</p>
+        <p>This denies the selected integration enrollment request. Cancel to leave it unchanged.</p>
+        {error && <p role="alert">{error} Refresh requests to reconcile before retrying.</p>}
+        <div className="flex gap-2">
+          <button type="button" disabled={busy} onClick={() => setDenyingRequest(null)}>Cancel</button>
+          <button type="button" className="button-primary" disabled={busy} onClick={() => void run(async () => {
+            await ownerPost("/api/integrations/v1/deny", {request_id: denyingRequest.request_id});
+            await refresh();
+            setDenyingRequest(null);
+          })}>{busy ? "Denying request…" : "Deny request"}</button>
+        </div>
+      </Modal>}
     </section>
   );
 }
@@ -73,7 +93,8 @@ function EnrollmentOutcome() { return <p>Approval lets the client receive its ow
         its save acknowledgement. Then refresh routing agents and explicitly set it as default.
         Rotate or revoke existing access in Pairing and access.</p>; }
 
-function RequestRow({ request, busy, act, compact }: {
+function RequestRow({ request, busy, act, compact, onDeny }: {
+  onDeny: (trigger: HTMLButtonElement) => void;
   compact: boolean;
   request: Request;
   busy: boolean;
@@ -147,9 +168,7 @@ function RequestRow({ request, busy, act, compact }: {
           onClick={() => void submit("approve")}>Approve matching integration</button>
         </>}
       </>}
-      {live && (!compact || step === 1) && <button disabled={busy} onClick={() => {
-        if (confirm(`Deny integration request ${request.request_id}?`)) void submit("deny");
-      }}>Deny integration request</button>}
+      {live && (!compact || step === 1) && <button disabled={busy} onClick={event => onDeny(event.currentTarget)}>Deny integration request</button>}
     </section>
   );
 }

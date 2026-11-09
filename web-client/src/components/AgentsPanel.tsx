@@ -182,6 +182,7 @@ export default function AgentsPanel({
           }}
         />
       </div>
+      <hr className="agents-divider" />
       <section className="card agent-inventory" aria-label="Agents available for use on voice devices">
         <div className="section-heading">
           <div>
@@ -230,7 +231,7 @@ export default function AgentsPanel({
             } catch (failure) {setError(failure instanceof Error ? failure.message : "Unable to save the agent name.");}
             finally {setBusy(false);}
           }}><label className="sr-only" htmlFor="agent-name-edit">Agent name</label>
-            <input id="agent-name-edit" value={nameDraft} maxLength={120} required disabled={busy} autoFocus
+            <input id="agent-name-edit" value={nameDraft} maxLength={200} required disabled={busy} autoFocus
               onChange={event => setNameDraft(event.target.value)} onKeyDown={event => {if(event.key === "Escape" && !busy){setNameDraft(selected?.name || "");setEditingName(false);setError("");}}} />
             <div className="name-edit-actions"><button type="submit" aria-label="Save name" title="Save name" className="name-edit-save" disabled={busy || !nameDraft.trim()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></button>
             <button type="button" aria-label="Cancel name edit" title="Cancel name edit" className="name-edit-cancel" disabled={busy} onClick={() => {setNameDraft(selected?.name || ""); setEditingName(false); setError("");}}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
@@ -277,20 +278,20 @@ export default function AgentsPanel({
                 <button className="agent-route-action" aria-label={`Runtime settings for ${agent.name}`} title="Agent runtime settings"
                   onClick={event => { (diagnosticsReturnFocus as {current: HTMLElement | null}).current = dismissActionMenu(event.currentTarget); setError(""); setDiagnosticsId(agent.id); }}><Icon name="settings" size={20}/>Runtime settings</button>
                 <span className="agent-action-tooltip-trigger"
-                  tabIndex={agent.active || agent.builtin ? 0 : undefined}
-                  aria-label={agent.active || agent.builtin ? `Delete ${agent.name} unavailable` : undefined}
-                  aria-describedby={agent.active || agent.builtin ? `delete-reason-${agent.id}` : undefined}
+                  tabIndex={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") ? 0 : undefined}
+                  aria-label={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") ? `Delete ${agent.name} unavailable` : undefined}
+                  aria-describedby={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") ? `delete-reason-${agent.id}` : undefined}
                   onPointerEnter={event => { if (event.pointerType !== "touch") positionDeleteTooltip(event.currentTarget, {x:event.clientX,y:event.clientY}); }}
                   onPointerMove={event => { if (event.pointerType !== "touch") positionDeleteTooltip(event.currentTarget, {x:event.clientX,y:event.clientY}); }}
                   onFocus={event => { if (event.currentTarget.matches(":focus-visible")) positionDeleteTooltip(event.currentTarget); }}
-                  onPointerDown={event => { if (agent.active || agent.builtin) {
+                  onPointerDown={event => { if (agent.active || (agent.builtin && agent.definition_id !== "vauxr-support")) {
                     event.currentTarget.focus();
                     positionDeleteTooltip(event.currentTarget, event.pointerType === "touch" ? undefined : {x:event.clientX,y:event.clientY});
                   } }}>
-                  <button type="button" className="agent-delete-action" disabled={agent.active || agent.builtin || busy} onClick={event => {
+                  <button type="button" className="agent-delete-action" disabled={agent.active || (agent.builtin && agent.definition_id !== "vauxr-support") || busy} onClick={event => {
                     (deleteReturnFocus as {current:HTMLElement|null}).current=dismissActionMenu(event.currentTarget); setDeleteId(agent.id); setDeleteError("");
                   }}><Icon name="trash" size={20}/>Delete agent</button>
-                  {(agent.active || agent.builtin) && <span role="tooltip" className="agent-action-tooltip" id={`delete-reason-${agent.id}`}>
+                  {(agent.active || (agent.builtin && agent.definition_id !== "vauxr-support")) && <span role="tooltip" className="agent-action-tooltip" id={`delete-reason-${agent.id}`}>
                     {agent.active ? "Set another agent as default first" : "Bundled agent cannot be deleted"}
                   </span>}
                 </span>

@@ -397,3 +397,5 @@ revision separately from newer unpublished or documentation-only commits.
   into a closed menu.
 - No simulated persistence/audio/telemetry presented as real behavior; no framework
   replacement, unapproved runtime rearchitecture, or claim of untested acceptance.
+
+Agents refinements: Add Agent sits above the inventory divider. The blue-pencil name editor uses approximately 40ch of text space (shrinking on phones), accepts up to 200 characters, and retains save/cancel. Newly added Vauxr Support agents persist their catalog avatar and can be removed with the React confirmation dialog; active defaults and other bundled agents remain protected. Integration denial uses a nested React confirmation dialog with cancellation, Escape isolation and focus restoration.

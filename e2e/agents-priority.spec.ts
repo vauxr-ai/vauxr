@@ -7,9 +7,9 @@ for(const width of [390,1366]) test(`Agents priority layout and inline icon cont
   await expect(page.getByText('Not default',{exact:true})).toHaveCount(0);
   const add=page.getByRole('button',{name:'+ Add Agent',exact:true});
   expect(await page.locator('.page-heading').evaluate(el=>getComputedStyle(el).borderBottomWidth)).toBe('0px');
-  expect(await page.locator('.agents-toolbar').evaluate(el=>getComputedStyle(el).borderBottomWidth)).toBe('1px');
-  const toolbar=(await page.locator('.agents-toolbar').boundingBox())!, addBox=(await add.boundingBox())!;
-  expect(addBox.y+addBox.height).toBeLessThan(toolbar.y+toolbar.height-10);
+  expect(await page.locator('.agents-toolbar').evaluate(el=>getComputedStyle(el).borderBottomWidth)).toBe('0px');
+  const toolbar=(await page.locator('.agents-divider').boundingBox())!, addBox=(await add.boundingBox())!;
+  expect(addBox.y+addBox.height).toBeLessThan(toolbar.y);
   const agentId=await page.locator('.agent-list>li').filter({has:page.getByRole('heading',{name:'Vauxr Support',level:3,exact:true})}).getAttribute('data-agent-id');
   const row=page.locator(`main li[data-agent-id="${agentId}"]`);
   const setDefault=row.getByRole('button',{name:'Set as default',exact:true});
@@ -30,11 +30,15 @@ for(const width of [390,1366]) test(`Agents priority layout and inline icon cont
   }
   const artifacts='/home/node/.openclaw/media/agents-priority';mkdirSync(artifacts,{recursive:true});
   await page.screenshot({path:`${artifacts}/inline-${width}.png`});
+  await expect(input).toHaveAttribute('maxlength','200');
+  const editBox=(await input.boundingBox())!; expect(editBox.x+editBox.width).toBeLessThanOrEqual(width);
+  if(width===1366) expect(editBox.width).toBeGreaterThan(350);
   await input.fill('Cancelled name');await row.getByRole('button',{name:'Cancel name edit',exact:true}).click();
   await expect(name).toBeVisible();
-  await pencil.click();await input.fill('Priority agent');await input.press('Enter');
-  await expect(page.getByRole('heading',{name:'Priority agent',exact:true})).toBeVisible();
-  await openAgentAction(page,'Voice pipeline for Priority agent');
+  await pencil.click();await input.fill('P'.repeat(200));await input.press('Enter');
+  await expect(page.getByRole('heading',{name:'P'.repeat(200),exact:true})).toBeVisible();
+  await page.reload(); await expect(page.getByRole('heading',{name:'P'.repeat(200),exact:true})).toBeVisible();
+  await openAgentAction(page,'Voice pipeline for '+'P'.repeat(200));
   const modal=page.getByRole('dialog',{name:'Voice pipeline',exact:true});await expect(modal).toBeVisible();
   await expect(modal.getByText('MAKE IT YOURS',{exact:true})).toHaveCount(0);
   expect(await modal.getByRole('heading',{name:'Voice pipeline',exact:true}).evaluate(el=>parseFloat(getComputedStyle(el).fontSize))).toBeLessThanOrEqual(24);

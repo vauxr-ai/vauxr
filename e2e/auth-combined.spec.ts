@@ -160,6 +160,7 @@ test("matching code errors and denial never deliver credentials; legacy forms st
   await expect(row.getByLabel("Integration matching code")).toHaveValue("");
   expect((await client(server, "status", first.secret)).state).toBe("pending");
   await row.getByText("Deny integration request", { exact: true }).click();
+  await page.getByRole("dialog", { name: "Deny integration request", exact: true }).getByRole("button", { name: "Deny request", exact: true }).click();
   await expect(row).toContainText("State: denied");
   expect((await native(server, "/api/integrations/v1/deliver", first.secret)).status).toBe(409);
   expect((await client(server, "status", second.secret)).state).toBe("pending");
