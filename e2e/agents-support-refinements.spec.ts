@@ -1,3 +1,4 @@
+import {readFileSync,writeFileSync} from "node:fs";
 import {test,expect,login} from './auth-fixture';
 for(const width of [390,1366]) test(`Support avatar and deletion persist ${width}`,async({page,server})=>{
  await page.setViewportSize({width,height:844});await login(page,server);
@@ -20,4 +21,31 @@ for(const width of [390,1366]) test(`Support avatar and deletion persist ${width
  await expect(confirmation).toBeVisible();await confirmation.getByRole('button',{name:'Cancel',exact:true}).click();await expect(row).toBeVisible();
  await row.locator('details.agent-actions summary').click();await row.getByRole('button',{name:'Delete agent',exact:true}).click();await confirmation.getByRole('button',{name:'Delete agent',exact:true}).click();
  await expect(row).toHaveCount(0);await server.restart();await page.reload();await expect(row).toHaveCount(0);expect(dialogs).toBe(0);
+});
+
+for (const width of [390, 1366]) test(`Default Support wire identity and header action ${width}`, async ({page,server}) => {
+ await page.setViewportSize({width,height:844}); await login(page,server);
+ // Disposable persisted configuration mirrors the bundled OpenClaw route on Nova.
+ const path = server.data+'/agents.json';
+ const inventory = JSON.parse(readFileSync(path,'utf8'));
+ inventory.agents.push({id:'bundled-openclaw',name:'OpenClaw',type:'openclaw',builtin:true,createdAt:new Date(0).toISOString()});
+ inventory.active_agent = 'bundled-openclaw';
+ writeFileSync(path,JSON.stringify(inventory));
+ await server.restart(); await page.reload();
+ const agents = await (await page.request.get(server.origin+'/api/agents')).json();
+ const support = agents.find((a: any) => a.definition_id === 'vauxr-support' && a.builtin);
+ const protectedAgent = agents.find((a: any) => a.builtin && a.definition_id !== 'vauxr-support');
+ expect(support).toBeTruthy(); expect(protectedAgent).toBeTruthy(); expect(support.active).toBe(false);
+ const header = page.locator('.page-heading');
+ await expect(header.getByRole('button',{name:'+ Add Agent',exact:true})).toBeVisible();
+ expect(await header.evaluate(el => getComputedStyle(el).borderBottomStyle)).not.toBe('none');
+ const protectedRow = page.locator(`[data-agent-id="${protectedAgent.id}"]`);
+ await protectedRow.locator('details.agent-actions summary').click();
+ await expect(protectedRow.getByRole('button',{name:'Delete agent',exact:true})).toBeDisabled();
+ const row = page.locator(`[data-agent-id="${support.id}"]`);
+ await row.locator('details.agent-actions summary').click();
+ await expect(row.getByRole('button',{name:'Delete agent',exact:true})).toBeEnabled();
+ await row.getByRole('button',{name:'Delete agent',exact:true}).click();
+ await page.getByRole('dialog',{name:'Delete agent',exact:true}).getByRole('button',{name:'Delete agent',exact:true}).click();
+ await expect(row).toHaveCount(0); await server.restart(); await page.reload(); await expect(row).toHaveCount(0);
 });

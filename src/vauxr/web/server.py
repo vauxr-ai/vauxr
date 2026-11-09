@@ -347,6 +347,7 @@ async def list_agents(_request: web.Request) -> web.Response:
     agents = [
         {
             "id": c.id,
+            "definition_id": c.definition_id,
             "name": c.name,
             "chat_only": voice_store().chat_only_agent(c.id),
             "integration_metadata": public_metadata(c),

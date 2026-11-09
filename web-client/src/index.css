@@ -1160,9 +1160,7 @@ dialog.modal.agent-diagnostics-modal[open] { height:min(720px,calc(100dvh - 24px
 /* Agents refinements: keep editing on the title baseline and actions inside its field. */
 :root { --edit-ink:96 165 250; }
 :root[data-theme="light"] { --edit-ink:37 99 235; }
-.resource-page:has(.agents-toolbar) > .page-heading { border-bottom:0; padding-bottom:0; margin-bottom:20px; }
-.agents-toolbar { padding-bottom:0; }
-.agents-divider { border:0; border-top:1px solid var(--line); margin-block:22px; }
+.agents-toolbar { margin-top:20px; padding-bottom:0; }
 .modal-heading > button { display:grid; place-items:center; width:44px; height:44px; min-height:44px; padding:0; line-height:1; border-radius:12px; }
 .modal-heading > button > svg { display:block; }
 .agent-voice-modal .modal-heading h2 { font-size:clamp(20px,2.4vw,24px); font-weight:650; line-height:1.25; letter-spacing:-.025em; }
