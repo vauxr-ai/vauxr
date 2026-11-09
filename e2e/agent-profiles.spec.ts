@@ -43,7 +43,8 @@ for (const width of [390, 1366]) test(`saved profile drives registered runtime a
     console.log(`Profile ${width}: saved profile`);
     await closeAgentDetail(page);
     await page.getByRole("button", { name: "Agents", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Default", exact: true })).toBeDisabled();
+    await expect(page.locator(".agent-list .pill").getByText("Default", { exact: true })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Default", exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "+ Add Agent", exact: true }).click();
     await expect(page.getByRole("group",{name:"Agent type"}).getByRole("button")).toHaveCount(3);
     await page.getByRole("button",{name:"Choose Household assistant",exact:true}).click();
@@ -91,7 +92,8 @@ for (const width of [390, 1366]) test(`saved profile drives registered runtime a
     const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "Profile household", level:3, exact: true }) });
     page.once("dialog", dialog => dialog.accept());
     await card.getByRole("button", { name: "Set as default", exact: true }).click();
-    await expect(card.getByRole("button", { name: "Default", exact: true })).toBeDisabled();
+    await expect(card.locator(".pill").getByText("Default", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Default", exact: true })).toHaveCount(0);
     expect(JSON.parse(readFileSync(resolve(server.data, "agents.json"), "utf8")).active_agent).toBe(agent.id);
   } finally {
     transport.closeAllConnections();

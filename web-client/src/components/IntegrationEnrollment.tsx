@@ -92,7 +92,7 @@ function RequestRow({ request, busy, act, compact }: {
     await act(action, submitted);
   }
   return (
-    <section aria-label={`Integration request ${request.request_id}`} className="border-t space-y-2 py-3">
+    <section aria-label={`Integration request ${request.request_id}`} className="border-t border-white/5 space-y-2 py-3">
       {compact && <nav className="enrollment-pages" aria-label="Enrollment setup steps">
         <button type="button" disabled={busy || step === 0} onClick={() => setStep(value => value - 1)}>Back</button>
         <strong aria-live="polite">{step + 1} / {steps.length} · {steps[step]}</strong>

@@ -20,6 +20,21 @@ function dismissActionMenu(button: HTMLButtonElement): HTMLElement {
   return menu.querySelector<HTMLElement>("summary") || button;
 }
 
+/** Fixed viewport coordinates keep pointer hints near the cursor without clipping. */
+function positionDeleteTooltip(trigger: HTMLElement, pointer?: {x: number; y: number}) {
+  const tooltip = trigger.querySelector<HTMLElement>('[role="tooltip"]');
+  if (!tooltip) return;
+  const box = tooltip.getBoundingClientRect();
+  const target = trigger.getBoundingClientRect();
+  const margin = 8, offset = 12;
+  let x = pointer ? pointer.x + offset : target.right - box.width;
+  if (pointer && x + box.width > window.innerWidth - margin) x = pointer.x - box.width - offset;
+  let y = pointer ? pointer.y - box.height / 2 : target.bottom + offset;
+  if (!pointer && y + box.height > window.innerHeight - margin) y = target.top - box.height - offset;
+  tooltip.style.setProperty('--tooltip-x', `${Math.max(margin, Math.min(x, window.innerWidth - box.width - margin))}px`);
+  tooltip.style.setProperty('--tooltip-y', `${Math.max(margin, Math.min(y, window.innerHeight - box.height - margin))}px`);
+}
+
 export default function AgentsPanel({
   onContext,
   onSelection,
@@ -235,16 +250,22 @@ export default function AgentsPanel({
                       ? "Default"
                       : "Not default"}
                 </span>
-                <button
+                {!agent.active && <button
                   className="agent-route-action"
-                  disabled={agent.active || busy}
+                  disabled={busy}
                   onClick={() => void activate(agent)}
                 >
-                  {agent.active ? "Default" : "Set as default"}
-                </button>
+                  Set as default
+                </button>}
                 <details className="agent-actions" onToggle={event => {
                   const actions = event.currentTarget.querySelector<HTMLElement>(".agent-actions-list");
-                  if (actions) actions.inert = !event.currentTarget.open;
+                  if (actions) {
+                    actions.inert = !event.currentTarget.open;
+                    if (event.currentTarget.open) {
+                      const trigger = event.currentTarget.querySelector("summary")!.getBoundingClientRect();
+                      event.currentTarget.dataset.placement = trigger.bottom + 6 + actions.getBoundingClientRect().height > window.innerHeight - 16 ? "above" : "below";
+                    }
+                  }
                 }}><summary aria-label={`Actions for ${agent.name}`} onClick={event => {
                   const menu = event.currentTarget.parentElement as HTMLDetailsElement;
                   const actions = menu.querySelector<HTMLElement>(".agent-actions-list");
@@ -258,7 +279,13 @@ export default function AgentsPanel({
                   tabIndex={agent.active || agent.builtin ? 0 : undefined}
                   aria-label={agent.active || agent.builtin ? `Delete ${agent.name} unavailable` : undefined}
                   aria-describedby={agent.active || agent.builtin ? `delete-reason-${agent.id}` : undefined}
-                  onPointerDown={event => { if (agent.active || agent.builtin) event.currentTarget.focus(); }}>
+                  onPointerEnter={event => { if (event.pointerType !== "touch") positionDeleteTooltip(event.currentTarget, {x:event.clientX,y:event.clientY}); }}
+                  onPointerMove={event => { if (event.pointerType !== "touch") positionDeleteTooltip(event.currentTarget, {x:event.clientX,y:event.clientY}); }}
+                  onFocus={event => { if (event.currentTarget.matches(":focus-visible")) positionDeleteTooltip(event.currentTarget); }}
+                  onPointerDown={event => { if (agent.active || agent.builtin) {
+                    event.currentTarget.focus();
+                    positionDeleteTooltip(event.currentTarget, event.pointerType === "touch" ? undefined : {x:event.clientX,y:event.clientY});
+                  } }}>
                   <button type="button" className="agent-delete-action" disabled={agent.active || agent.builtin || busy} onClick={event => {
                     (deleteReturnFocus as {current:HTMLElement|null}).current=dismissActionMenu(event.currentTarget); setDeleteId(agent.id); setDeleteError("");
                   }}><Icon name="trash" size={20}/>Delete agent</button>
@@ -307,10 +334,13 @@ export default function AgentsPanel({
       </Modal>}
       {diagnostics && <Modal title="Agent runtime settings" className="agent-detail-modal agent-detail agent-diagnostics-modal"
         returnFocus={diagnosticsReturnFocus} onClose={() => setDiagnosticsId("")}>
-        <h3>{diagnostics.name}</h3>
-        <button disabled={diagnostics.active || busy} onClick={() => void activate(diagnostics)}>
-          {diagnostics.active ? "Default" : "Set as default"}
-        </button>
+        <div className="agent-runtime-identity">
+          <h3>{diagnostics.name}</h3>
+          <span className="pill">{diagnostics.active ? "Default" : "Not default"}</span>
+          {!diagnostics.active && <button disabled={busy} onClick={() => void activate(diagnostics)}>
+            Set as default
+          </button>}
+        </div>
         {error && <p role="alert">{error}</p>}
         <div className="runtime-tabs" role="tablist" aria-label="Agent runtime sections">
           {["configuration", "diagnostics"].map((tab,index) => <button type="button" role="tab" key={tab}
@@ -336,8 +366,7 @@ export default function AgentsPanel({
                 ? "Built-in · independent runtime"
                 : diagnostics.type === "openclaw-direct"
                   ? "OpenClaw direct"
-                  : "OpenClaw connection"}{" "}
-          · {diagnostics.active ? "Default" : "Not default"}
+                  : "OpenClaw connection"}
         </p>
         <p>
           This route is shared by devices. Changing its display name does

@@ -3,6 +3,20 @@ name: Vauxr management
 version: alpha
 description: Quiet violet management UI, with semantic dark and light themes.
 colors:
+  status-ok: "rgb(16, 185, 129)"
+  status-ok-dot: "rgb(52, 211, 153)"
+  status-ok-ink-dark: "rgb(110, 231, 183)"
+  status-ok-ink-light: "rgb(18, 101, 77)"
+  status-error: "rgb(220, 84, 95)"
+  voice-start: "rgb(228, 210, 255)"
+  voice-mid: "rgb(177, 139, 234)"
+  voice-end: "rgb(157, 119, 220)"
+  action-start: "rgb(135, 80, 208)"
+  action-mid: "rgb(133, 68, 225)"
+  action-end: "rgb(98, 38, 184)"
+  action-hover-start: "rgb(146, 86, 223)"
+  action-hover-mid: "rgb(139, 78, 219)"
+  action-hover-end: "rgb(118, 52, 208)"
   canvas-dark: "#111214"
   panel-dark: "#1b1c20"
   panel-raised-dark: "#24252b"
@@ -225,7 +239,11 @@ spinner with an accessible loading name, not visible “Loading …” placehold
 Do not expand from a short loading box after data arrives.
 
 At 1366×768 desktop and 390×844 phone, in both themes, dialogs must fit without
-inner scrollbars **or hidden/clipped content**. The voice dialog currently uses
+inner scrollbars **or hidden/clipped content**. The no-page-scroll restriction
+applies to modal content, not long management pages: normal vertical page scrolling
+is permitted. Horizontal page overflow remains forbidden, including horizontal
+scroll containers. Background page content being taller than the viewport while a
+modal is open does not itself violate the modal constraint. The voice dialog currently uses
 `min(700px, calc(100dvh - 24px))`; this is not a universal height for every dialog.
 Compact graph spacing and layouts responsively. Use deliberate accessible steps
 or tabs for lengthy setup/diagnostics, not `overflow: hidden` to conceal content.
@@ -247,6 +265,14 @@ validation, authenticated persistence, rename save/cancel/error, and reload beha
 Large agent-type choices in Add Agent use the canonical OpenClaw logo and approved
 Vauxr Support artwork, not generic substitute glyphs.
 
+The current default agent shows only its Default pill, not a disabled duplicate
+Default/Set as default action in the list or runtime settings modal. Keep the
+runtime identity, status pill and optional action in a compact wrapping row so
+the non-default configuration form and its Save action remain within the modal.
+
+Anchor the ⋯ menu below its trigger with a 6px gap; flip upward only when
+the panel would clip the viewport (16px margin).
+
 The ⋯ menu contains icon-led **Voice pipeline**, **Runtime settings**, and
 **Delete agent** actions. Use a comfortable raised panel: current width 252px,
 viewport margin 16px, 48px rows, generous 12px icon/label gaps, quiet violet tint,
@@ -254,7 +280,10 @@ thin border, and soft elevation. Do not turn it into a tiny utility dropdown.
 
 Disabled reasons belong in hover/focus/touch-accessible tooltips, not inline menu
 prose. A disabled button needs a focusable wrapper and described reason. Position
-those tooltips clear of sticky headers (currently below the menu on phones).
+pointer tooltips just to the right of the mouse cursor with a small gap, vertically
+centered on it. Fall back left only when the right side would clip; clamp to the viewport.
+Keyboard focus and touch use a viewport-clamped position beside the disabled action,
+without requiring a mouse. Retain accessible descriptions and dismissal.
 Escape/outside interaction dismisses the menu. Selecting an action closes it
 before opening a dialog; return focus to the visible ⋯ trigger, not a hidden item.
 If a close fade retains native `<details>` content, make it inert synchronously so
@@ -303,6 +332,13 @@ Device overrides remain subordinate to agent assignment; label inherited routing
 **Use default agent (<name>)**. Metrics must show real telemetry and timeframe,
 never invented history or synthetic counters.
 
+Theme changes apply ink and surfaces atomically; suppress transitions for the
+first painted theme frame, then restore ordinary hover/focus motion. Primary
+gradient stops use the named `action-*` RGB tokens. Management and avatar
+tints derive from the theme-aware accent ramps rather than extra violet literals.
+The voice orb retains its pale-violet stops as `voice-*` tokens; the volume track
+uses accent/neutral ramps. Companion status labels must retain AA contrast.
+
 ### Motion and interaction
 
 Use short, restrained opacity/color/shadow transitions to clarify state, not decorate
@@ -325,12 +361,24 @@ visible disabled reasons, loading/error states, reload persistence, and graph
 geometry. [Menu/motion checks](e2e/agent-menu-motion.spec.ts) cover retained-menu
 focus, tooltips, and stationary primary actions.
 
-Target a focused local verification loop of about 15 minutes. Deploy authorized
-Nova test builds after that gate passes; CI runs the full suite once per PR update
-in the background and remains the merge gate. Do not repeat the full suite locally,
-rebuild for a pure test rerun, or claim pending CI passed. A future design-check
-script is not evidence until implemented and run. Report live source revision
-separately from a newer documentation-only PR head.
+For each in-scope Nova test iteration, first run a quick build/start smoke, focused
+checks for touched behavior, and a short affected-UI review. Deploy promptly when
+smoke passes; pending full design/E2E/CI does not block this test deployment.
+Verify exact deployed source/assets, health, and configuration/data preservation.
+Then complete design review and `scripts/design-check.mjs` before final acceptance;
+the full browser suite and CI run once per PR update in CI, not duplicated locally.
+A smoke deployment is not full acceptance or merge clearance. Keep failures and
+unverified live rendering explicit. Fix, smoke, and redeploy changed code; do not
+redeploy unchanged code solely for a test rerun.
+
+Preserve bounded gate histories, including the prior completed round 3/3. Attempts
+are counted per commit in Git worktree metadata, including interrupted attempts,
+at most three. Do not reset exhausted counters or silently start a fourth repair
+round. A newly requested behavior is a distinct identified candidate, not proof
+that a previous gate covered it. Missing design evidence or FAIL blocks final
+acceptance, not an otherwise passing authorized Nova smoke deployment. WARN is
+incomplete analysis or a review limitation, not a proven pass. Report actual live
+revision separately from newer unpublished or documentation-only commits.
 
 ## Do's and Don'ts
 

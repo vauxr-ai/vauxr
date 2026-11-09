@@ -24,6 +24,31 @@ jobs:
       - run: npm --prefix web-client ci
       - run: npm --prefix web-client run design:lint
 
+  design-check:
+    name: Management design finish gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm --prefix web-client ci
+      - run: npm --prefix web-client run build
+      - run: npm --prefix e2e ci
+      - run: npm --prefix e2e exec -- playwright install --with-deps chromium
+      - run: node --test scripts/design-check.test.mjs
+      - run: node scripts/design-check.mjs
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: design-check-report
+          path: e2e/test-results/design-check.json
+
   # On every push/PR: run the Python test suite
   pytest:
     name: Unit tests (pytest)
@@ -148,11 +173,20 @@ jobs:
           path: e2e/playwright-report/
           retention-days: 7
 
+      - name: Upload targeted design triage evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: design-triage-evidence
+          path: /tmp/vauxr-design-triage/
+          if-no-files-found: ignore
+          retention-days: 7
+
   # On push to main: compute version and create a draft release
   draft-release:
     name: Draft release (main only)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [pytest, e2e]
+    needs: [pytest, e2e, design-lint, design-check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -205,7 +239,7 @@ jobs:
   publish:
     name: Publish Docker image (release only)
     if: github.event_name == 'release'
-    needs: [pytest, e2e]
+    needs: [pytest, e2e, design-lint, design-check]
     runs-on: ubuntu-latest
     environment: Production
     permissions:
