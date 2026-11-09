@@ -409,13 +409,17 @@
   background: var(--panel-raised);
 }
 .auth-panel input:not([type="checkbox"]),
-.auth-panel select {
+.auth-panel select,
+#interface-editor textarea {
   background: var(--canvas);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 7px;
   max-width: 100%;
+}
+#interface-editor iframe {
+  border-color: var(--line);
 }
 .auth-panel [role="alert"] {
   color: rgb(var(--status-error));
