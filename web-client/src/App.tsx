@@ -572,9 +572,11 @@ function OwnerApp() {
         <div className="resource-page">
           <header className="page-heading">
             <p className="eyebrow">Workspace</p>
-            <h1>{pageTitle}</h1>
+            <div className="page-title-row">
+              <h1>{pageTitle}</h1>
+              {activeSection === "agents" && <div className="agents-toolbar"><AddAgent onCreated={async () => { setAgentsRefreshVersion(value => value + 1); }} /></div>}
+            </div>
             <p>{pageDescription}</p>
-            {activeSection === "agents" && <div className="resource-toolbar agents-toolbar"><AddAgent onCreated={async () => { setAgentsRefreshVersion(value => value + 1); }} /></div>}
           </header>
           {activeSection === "devices" ? (
             <DevicesPanel browserDeviceId={deviceId} browserConnected={isConnected} browserCredential={browserCredential}

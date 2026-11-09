@@ -403,3 +403,5 @@ Agents refinements: Add Agent lives inside the page heading, above its original 
 Long agent names retain their full stored/accessibility text and hover title; voice-pipeline headings ellipsize to one line and graph endpoint labels clamp to two lines so neither can overlap graph actions or Save.
 
 Agent overflow actions use native currentColor SVGs at the shared 20px size: Voice pipeline is a wide flanged warp pipe; Runtime settings combines two gears with circular loop arrows. Labels, focus behavior and actions remain unchanged in both themes.
+
+Agents places Add Agent beside the page title in a single centered header row on phone and desktop, above the description and visible divider.

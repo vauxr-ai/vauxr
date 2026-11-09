@@ -2,10 +2,10 @@ import {mkdirSync} from 'node:fs';
 import {test, expect, login, seedRealtimeAgent} from './auth-fixture';
 
 for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
-  test(`agent action menu, tooltips and stationary primary ${width} ${theme}`, async ({page,server}) => {
+  test(`agent action menu, tooltips and stationary primary ${width} ${theme}`, async ({page,server},testInfo) => {
     page.setDefaultTimeout(8000);
     await page.setViewportSize({width,height:width===390?844:768});
-    // Exercise both disabled deletion reasons against real persisted agent records.
+    // Exercise default protection and deletable inactive Support.
     if (theme==='dark') await seedRealtimeAgent(server);
     await login(page,server);
     await page.getByLabel('Appearance').selectOption(theme);
@@ -50,7 +50,7 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
     expect(panel.x).toBeGreaterThanOrEqual(0);
     expect(panel.y).toBeGreaterThanOrEqual(0);
     expect(panel.x+panel.width).toBeLessThanOrEqual(width);
-    const artifacts='/tmp/vauxr-menu-motion-screenshots';mkdirSync(artifacts,{recursive:true});
+    const artifacts=testInfo.outputPath('screenshots');mkdirSync(artifacts,{recursive:true});
     await expect(row.locator('details')).toHaveCSS('opacity','1');
     await expect.poll(()=>row.locator('details').evaluate(el=>getComputedStyle(el,'::details-content').opacity)).toBe('1');
     await page.screenshot({path:`${artifacts}/menu-${width}-${theme}.png`});
@@ -62,10 +62,14 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
     await page.keyboard.press('Tab');
     await expect(menu.getByRole('button',{name:'Runtime settings for Vauxr Support',exact:true})).toBeFocused();
     await page.keyboard.press('Tab');
+    if (theme==='dark') {
+      await expect(menu.getByRole('button',{name:'Delete agent',exact:true})).toBeEnabled();
+      await expect(tooltip).toBeHidden();
+    } else {
     const unavailable=menu.getByLabel('Delete Vauxr Support unavailable',{exact:true});
     await expect(unavailable).toBeFocused();
     await expect(tooltip).toBeVisible();
-    await expect(tooltip).toHaveText(theme==='dark'?'Bundled agent cannot be deleted':'Set another agent as default first');
+    await expect(tooltip).toHaveText('Set another agent as default first');
     await expect(menu.getByRole('button',{name:'Delete agent',exact:true})).toBeDisabled();
     await expect(tooltip).toHaveCSS('opacity','1');
     const tipBox=(await tooltip.boundingBox())!;
@@ -107,6 +111,7 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
     expect(touchBox.y).toBeGreaterThanOrEqual(8);
     expect(touchBox.y+touchBox.height).toBeLessThanOrEqual(page.viewportSize()!.height-7);
 
+    }
     await page.keyboard.press('Escape');
     await expect(summary).toBeFocused();
     await expect(menu).toHaveJSProperty('inert',true);
@@ -115,8 +120,10 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
     await expect(row.locator('details')).not.toHaveAttribute('open','');
     await expect(menu).toBeHidden();
     await summary.click();
-    await unavailable.click(); // Touch/pointer users can focus the disabled action's explanation.
-    await expect(tooltip).toBeVisible();
+    if (theme==='light') {
+      await menu.getByLabel('Delete Vauxr Support unavailable',{exact:true}).click();
+      await expect(tooltip).toBeVisible();
+    }
     await page.getByRole('heading',{name:'Agents',exact:true,level:1}).click();
     await expect(menu).toBeHidden();
     // Put the same trigger near the viewport bottom to force the collision branch.

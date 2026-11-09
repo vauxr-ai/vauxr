@@ -11,6 +11,11 @@ for(const width of [390,1366]) for(const theme of ["light","dark"]) test(`Agents
   const heading=(await page.locator('.page-heading').boundingBox())!, addBox=(await add.boundingBox())!;
   await expect(page.locator('.page-heading').getByRole('button',{name:'+ Add Agent',exact:true})).toBeVisible();
   expect(addBox.y+addBox.height).toBeLessThan(heading.y+heading.height);
+  const titleBox=(await page.getByRole('heading',{name:'Agents',exact:true,level:1}).boundingBox())!;
+  expect(Math.abs(titleBox.y+titleBox.height/2-addBox.y-addBox.height/2)).toBeLessThan(1);
+  expect(addBox.x).toBeGreaterThan(titleBox.x+titleBox.width);
+  console.log(JSON.stringify({width,theme,titleBox,addBox,dividerY:heading.y+heading.height}));
+  await page.screenshot({path:testInfo.outputPath(`header-${width}-${theme}.png`)});
   const agentId=await page.locator('.agent-list>li').filter({has:page.getByRole('heading',{name:'Vauxr Support',level:3,exact:true})}).getAttribute('data-agent-id');
   const row=page.locator(`main li[data-agent-id="${agentId}"]`);
   const setDefault=row.getByRole('button',{name:'Set as default',exact:true});
