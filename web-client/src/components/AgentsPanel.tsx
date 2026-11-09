@@ -246,7 +246,7 @@ export default function AgentsPanel({
                 {agent.chat_only && <span className="pill">Chat-only · no voice</span>}
                 {agent.active && <span className="pill">Default</span>}
                 {!agent.active && <button
-                  className="agent-route-action"
+                  className="agent-route-action agent-default-action"
                   disabled={busy}
                   onClick={() => void activate(agent)}
                 >
@@ -332,7 +332,7 @@ export default function AgentsPanel({
         <div className="agent-runtime-identity">
           <h3>{diagnostics.name}</h3>
           {diagnostics.active && <span className="pill">Default</span>}
-          {!diagnostics.active && <button className="agent-route-action" disabled={busy} onClick={() => void activate(diagnostics)}>
+          {!diagnostics.active && <button className="agent-route-action agent-default-action" disabled={busy} onClick={() => void activate(diagnostics)}>
             Set as default
           </button>}
         </div>
