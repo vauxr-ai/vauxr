@@ -69,6 +69,11 @@ async def mint(request: web.Request) -> web.Response:
 
 
 async def download(request: web.Request) -> web.StreamResponse:
+    """Consume a process-local capability before opening or streaming its file.
+
+    Any redemption attempt spends the token, including a filename mismatch or
+    interrupted transfer. Retries need a new owner-minted capability.
+    """
     name = request.match_info["filename"]
     token = request.match_info["token"]
     # No await between lookup/removal: concurrent requests cannot both redeem.

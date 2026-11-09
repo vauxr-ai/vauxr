@@ -5,6 +5,10 @@ export function setCsrf(value: string) {
   if (csrf !== value) authorityRevision++;
   csrf = value;
 }
+/** Use owner cookies only; caller Authorization is deliberately removed.
+ * Ignore an old request's 401 after authority changes, so it cannot expire a
+ * replacement session. Network failure does not imply a mutation rolled back.
+ */
 export async function ownerFetch(path: string, init: RequestInit = {}) {
   if (!path.startsWith("/api/") || path.includes("?") || path.includes("#"))
     throw new Error("Invalid API path");

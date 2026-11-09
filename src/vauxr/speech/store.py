@@ -417,6 +417,12 @@ class SpeechStore:
         )
 
     def resolve(self, device_id: str = "", agent_id: str | None = None) -> Selection:
+        """Snapshot Standard deployments after agent/global then device inheritance.
+
+        Device voices override only their selected provider's voice. This checks
+        configured compatibility, not network readiness, and never falls back to
+        another deployment when a service is unavailable.
+        """
         if (agent_id and self.chat_only_agent(agent_id)) or (device_id and self.chat_only(device_id)):
             raise VoiceConflict(self.no_voice_message())
         settings = self.agent_defaults(agent_id) if agent_id else self.inherited(device_id)

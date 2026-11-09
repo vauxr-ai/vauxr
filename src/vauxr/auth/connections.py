@@ -13,6 +13,10 @@ CLOSE_SECONDS = 2.0
 
 @dataclass(eq=False)
 class Teardown:
+    """Retain one close attempt even when its callback ignores cancellation.
+
+    run has a two-second observation deadline; failure is not proof of closure.
+    Keeping the task prevents concurrent retirement callers spawning duplicates."""
     close: Callable[[], Awaitable[None]]
     task: asyncio.Task | None = field(default=None, init=False)
 
@@ -58,6 +62,7 @@ _connections: set[Connection] = set()
 
 
 def retain(principal: Principal, close: Callable[[], Awaitable[None]]) -> Connection:
+    """Retain authority independently of the visible device registry until released."""
     from vauxr.auth.service import get_store
 
     connection = Connection(close, get_store().path, principal)
@@ -66,13 +71,17 @@ def retain(principal: Principal, close: Callable[[], Awaitable[None]]) -> Connec
 
 
 def release(connection: Connection | None) -> None:
+    """Forget ordinary ownership; retiring connections remain visible until closed."""
     if connection is None or not connection.retiring:
         _connections.discard(connection)
 
 
 async def disconnect_stale(store: CredentialStore) -> None:
-    # Keep in-flight attempts visible to concurrent HTTP/maintenance callers so
-    # neither can report success while another caller is still closing authority.
+    """Close retained connections whose principals are no longer current.
+
+    Filter by authority-store path. Successful closures are removed; any failed
+    attempt stays retained and makes the aggregate call fail closed."""
+    # Concurrent callers must still see an in-flight retirement attempt.
     stale = [connection for connection in _connections if connection.path == store.path
              and not store.current(connection.principal)]
 

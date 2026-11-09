@@ -1,10 +1,8 @@
 """Per-device feature settings.
 
-These are runtime feature flags (not persisted device config like name/voice in
-``device_config.py``). For now they're hardcoded defaults, but every lookup is
-keyed by ``device_id`` so that when the devices API + per-device tokens land, the
-only change is the data source here — callers already pass ``device_id`` and
-never read globals/env for these flags.
+These shared runtime defaults are separate from persisted device configuration
+in ``vauxr.devices.config``. Lookup signatures accept ``device_id`` but currently
+ignore it; they do not implement per-device overrides or credential policy.
 """
 
 from __future__ import annotations
@@ -139,8 +137,7 @@ _DEFAULT_REALTIME = RealtimeDeviceSettings(
 def get_segmentation(device_id: str) -> SegmentationSettings:
     """Resolve a device's TTS segmentation settings.
 
-    TODO(devices-api): source per-device overrides (and the device's own token)
-    from device_config / the devices API. For now every device gets the defaults.
+    Every device currently gets the shared defaults; authentication is separate.
     """
     return get_realtime_settings(device_id).segmentation
 
@@ -163,8 +160,7 @@ def get_realtime_vad_barge_in(device_id: str) -> RealtimeVadSettings:
 def get_realtime_settings(device_id: str) -> RealtimeDeviceSettings:
     """Resolve all per-device realtime settings.
 
-    TODO(devices-api): source per-device overrides from device_config / the
-    devices API. For now every device gets the defaults.
+    Every device currently gets the same immutable bundle.
     """
     _ = device_id
     return _DEFAULT_REALTIME

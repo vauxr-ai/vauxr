@@ -16,6 +16,12 @@ from vauxr.web.owner import session_principal
 
 
 async def remove_agent(request: web.Request, agent_id: str) -> web.Response:
+    """Retire an inactive agent across authority, routing and auxiliary stores.
+
+    This is not a multi-file transaction: 503 can follow partial durable progress.
+    Refresh inventory before retrying; integration teardown must finish before
+    success is reported. The caller supplies the owner/CSRF boundary.
+    """
     agent = registry.get_by_id(agent_id)
     if agent is None:
         return web.json_response({"error": "Agent not found"}, status=404)

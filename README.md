@@ -16,6 +16,13 @@ server defaults (legacy environment names remain supported), or configure a
 catalog for global/device selections. See [speech settings](docs/configuration.md)
 for precedence, examples, and protocol limitations.
 
+## Documentation
+
+[Learn the system](docs/tutorial.md) · [Complete a task](docs/how-to.md) ·
+[Look up a contract](docs/reference.md) · [Understand the design](ARCHITECTURE.md)
+
+See the [documentation library](docs/README.md) for topic ownership and navigation.
+
 ## How it works
 
 **Auth compatibility:** shared device/channel tokens grant no access. Start with

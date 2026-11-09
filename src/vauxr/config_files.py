@@ -43,6 +43,11 @@ def read_json(path: Path) -> object:
 
 
 def write_json(path: Path, payload: object) -> None:
+    """Replace one JSON snapshot durably using a same-directory temporary file.
+
+    File and directory fsync errors propagate, including errors after replace;
+    callers must reread before assuming a failed call left the old state intact.
+    This function does not lock: use update_json for read/modify/write."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.stem}-", dir=path.parent)
     try:
@@ -64,6 +69,10 @@ def write_json(path: Path, payload: object) -> None:
 
 @contextmanager
 def locked(path: Path) -> Iterator[None]:
+    """Hold the sibling .lock advisory file lock for the context lifetime.
+
+    The lock coordinates cooperating processes, not arbitrary manual writers.
+    Acquisition is synchronous and may block the event-loop thread."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.with_suffix(".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -71,6 +80,10 @@ def locked(path: Path) -> Iterator[None]:
 
 
 def update_json(path: Path, change: Callable[[dict], dict]) -> dict:
+    """Serialize read/change/write and return the committed candidate.
+
+    change runs under the file lock and must return a JSON object. Exceptions
+    propagate; an unchanged existing snapshot is not rewritten."""
     with locked(path):
         data = read_json(path) if path.exists() else {}
         if not isinstance(data, dict):

@@ -15,6 +15,12 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 
 class OutputJitterBuffer(FrameProcessor):
+    """Prefill once per response using signed 16-bit PCM duration in milliseconds.
+
+    Timer and frame-driven flushes share a lock; epochs invalidate old flushes
+    after interruption. Normal end markers drain held audio, while cancellation
+    discards it. Downstream transport still owns pacing and consumption receipts.
+    """
     def __init__(self, *, lead_ms: float = 120, **kwargs):
         super().__init__(**kwargs)
         if not 0 < lead_ms <= 500:

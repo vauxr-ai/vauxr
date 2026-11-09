@@ -15,6 +15,11 @@ log = logging.getLogger("vauxr.segment_queue")
 
 
 class SegmentQueue:
+    """Own one eagerly started synthesizer task on the running event loop.
+
+    Producers never wait: pending text is unbounded. close drains queued work;
+    abort is observed between syntheses and while idle, not raced against an
+    in-flight synthesize call. The callback must implement its own abort checks."""
     def __init__(
         self,
         *,
@@ -31,18 +36,21 @@ class SegmentQueue:
         self._worker = asyncio.create_task(self._run())
 
     def push(self, segment: str) -> None:
+        """Append nonempty text unless closed; this provides ordering, not backpressure."""
         if self._closed or not segment:
             return
         self._items.append(segment)
         self._wakeup.set()
 
     def close(self) -> None:
+        """Stop accepting text and wake the worker to drain existing items."""
         if self._closed:
             return
         self._closed = True
         self._wakeup.set()
 
     async def done(self) -> None:
+        """Join the worker; call close or set abort first to avoid waiting while idle."""
         await self._worker
 
     async def _run(self) -> None:

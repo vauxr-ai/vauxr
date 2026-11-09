@@ -1,5 +1,5 @@
 /** 16 kHz PCM endpointing. Memory is bounded to 300 ms before speech.
- * Two voiced chunks reject brief clicks; 700 ms silence ends a turn.
+ * 200 ms sustained speech rejects brief clicks; 700 ms silence ends a turn.
  * Capture stays open, including while the response plays (browser AEC enabled).
  */
 export class SpeechSegmenter {

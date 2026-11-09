@@ -1,4 +1,4 @@
-# Vauxr — maintainer architecture
+# Vauxr — system explanation
 
 Vauxr is a Python 3.12 asyncio/aiohttp voice gateway. One application serves
 HTTP management, device WebSockets and integration WebSockets; optional in-process
@@ -193,3 +193,54 @@ two concurrent slots and a 35-second timeout; busy/unavailable speech returns
 JSON with the same guided flow and a local USB-console fallback. Audio has no
 public URL and is not persisted or logged. Legacy clients receive the unchanged
 JSON proof response. All responses retain `Cache-Control: no-store`.
+
+## Why these boundaries matter
+
+### Selection is not authority or readiness
+
+Routing metadata answers *which agent*, speech configuration answers *which
+deployment*, and credentials answer *who may act*. They are separate stores and
+checks. This means a visible agent/provider can still be unavailable, and removing
+a display entry is not a substitute for credential retirement. Standard speech
+selections are frozen per turn: configuration changes affect later work rather
+than mutating a deployment halfway through its response. Device overrides layer
+on agent/global policy; they cannot enable voice for a chat-only agent.
+
+### Sent, consumed and heard are different observations
+
+```mermaid
+flowchart LR
+    A[Agent text] --> S[Serial synthesis]
+    S --> B[Output buffer]
+    B --> T[Transport writes]
+    T --> C[Consumption accounting]
+    C -. physical acceptance .-> H[Audible playback]
+```
+
+A completed synthesis or send does not prove the speaker played the reply. The
+realtime path tracks media consumption and response boundaries before follow-up
+transitions. Startup separately waits for a bound consumer and provider readiness;
+opening a peer alone is insufficient. The prefill buffer absorbs an initial burst
+without changing downstream pacing; it cannot compensate for a producer that
+remains slower than playback.
+
+### Cancellation is ownership transfer, not rollback
+
+A reconnect or replacement turn can leave old callbacks completing later. Registry
+entry and abort-handle identity prevent those callbacks from clearing or resuming
+a new owner's session. Authority teardown retains even superseded transports so
+revocation can still close them. These local guarantees do not undo an external
+tool action or prove remote cancellation. After a lost response, inspect actual
+state before retrying.
+
+### The portal is not an arbitrary execution environment
+
+Owner management and enrolled browser voice use different authority. Companion
+context is explicitly untrusted descriptive data, bound to current authority and
+a revision; UI events need correlated receipts. The static interface accepts only
+bounded HTML/CSS with sanitization and CSP. It does not provide shell, script or
+network execution. These are implemented boundaries, not claims that every
+provider or browser error path has been fault-tested.
+
+For guided practice see the [tutorial](docs/tutorial.md), for operational steps
+see [how-to guides](docs/how-to.md), and for exact limits see [reference](docs/reference.md).

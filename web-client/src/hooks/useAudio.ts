@@ -16,6 +16,10 @@ interface UseAudioOpts {
   onInputLevel?: (level: number) => void;
 }
 
+/** Own capture attempts separately from playback scheduling.
+ * Stopping capture invalidates late permission/worklet completions; callers
+ * must stop playback separately when abandoning a response.
+ */
 export function useAudio(arg: ((pcm: Int16Array) => void) | UseAudioOpts) {
   // Backwards-compatible: callers may pass a bare onPcmChunk function.
   const opts: UseAudioOpts =

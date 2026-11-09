@@ -41,6 +41,11 @@ def read() -> dict:
 
 
 def save(body: dict) -> dict:
+    """Compare the supplied revision under the write lock, then publish source.
+
+    Raises ValueError on stale/invalid input. A failed response is not evidence
+    of rollback: callers should read again before retrying a storage failure.
+    """
     if set(body) != {"title", "html", "css", "revision"} or not isinstance(body["revision"], str):
         raise ValueError("Expected source and exact revision")
     source = validate({key: body[key] for key in DEFAULT})
@@ -55,6 +60,11 @@ def save(body: dict) -> dict:
 
 
 def render(source: dict) -> str:
+    """Build a sanitized, resource-blocked document without publishing it.
+
+    CSS is retained but cannot escape its style element; CSP blocks its loads.
+    This return value is document text, never executable server-side source.
+    """
     source = validate(source)
     clean = nh3.clean(source["html"], tags=TAGS,
                       clean_content_tags={"script", "style", "iframe", "object", "template", "svg", "math", "form"},
