@@ -90,8 +90,8 @@ test('horizontal page overflow remains forbidden even inside a viewport-sized sc
 test('pipeline ellipsis requires the complete name in its title', async ({page}) => {
   await page.setContent(`<style>body{margin:0;background:white;color:black}dialog{display:block;position:static;width:300px;height:140px} .pipeline-agent-name{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;width:60px;overflow-wrap:anywhere;line-height:16px}</style><main><h1>Agents</h1><dialog open><span class="pipeline-agent-name">${'P'.repeat(200)}</span></dialog></main>`);
   const bad=await auditPage(page,tokens,'missing-full-name');
-  expect(bad.find(row=>row.rule==='overflow')?.status).toBe('FAIL');
+  expect(bad.some(row=>row.rule==='overflow' && row.status==='FAIL')).toBe(true);
   await page.locator('.pipeline-agent-name').evaluate(el=>el.setAttribute('title',el.textContent!));
   const good=await auditPage(page,tokens,'accessible-ellipsis');
-  expect(good.find(row=>row.rule==='overflow')?.status).toBe('PASS');
+  expect(good.filter(row=>row.rule==='overflow').every(row=>row.status==='PASS')).toBe(true);
 });
