@@ -191,7 +191,7 @@ export default function TalkPanel(props: Props) {
           <span>Latency</span>
           <span
             className={
-              latencyMs == null ? "text-zinc-600" : "font-mono text-zinc-300"
+              latencyMs == null ? "text-zinc-500" : "font-mono text-zinc-300"
             }
           >
             {latencyMs == null ? "—" : `${latencyMs} ms`}

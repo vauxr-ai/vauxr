@@ -19,7 +19,7 @@ export default function VolumeSlider({
     <div className="space-y-2">
       <div className="flex items-center justify-between px-0.5 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">
         <span>Output volume</span>
-        <span className={muted ? "text-zinc-600" : "text-zinc-300"}>{pct}%</span>
+        <span className={muted ? "text-zinc-500" : "text-zinc-300"}>{pct}%</span>
       </div>
       <div className="flex items-center gap-3">
         <button
@@ -45,8 +45,8 @@ export default function VolumeSlider({
           className="vauxr-volume-range h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-800 accent-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
           style={{
             background: muted
-              ? "rgb(39 39 42)"
-              : `linear-gradient(to right, rgb(99 102 241) 0%, rgb(99 102 241) ${pct}%, rgb(39 39 42) ${pct}%, rgb(39 39 42) 100%)`,
+              ? "rgb(var(--neutral-800))"
+              : `linear-gradient(to right, rgb(var(--accent-500)) 0%, rgb(var(--accent-500)) ${pct}%, rgb(var(--neutral-800)) ${pct}%, rgb(var(--neutral-800)) 100%)`,
           }}
         />
       </div>

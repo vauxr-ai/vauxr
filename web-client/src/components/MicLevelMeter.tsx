@@ -31,7 +31,7 @@ export default function MicLevelMeter({
     >
       <div className="flex justify-between px-0.5 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">
         <span>Mic input</span>
-        <span className={active ? "text-indigo-300" : "text-zinc-600"}>
+        <span className={active ? "text-indigo-300" : "text-zinc-500"}>
           {dbDisplay}
         </span>
       </div>

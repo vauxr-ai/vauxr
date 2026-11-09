@@ -26,9 +26,17 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    let frame = 0;
     const apply = () => {
-      document.documentElement.dataset.theme =
+      cancelAnimationFrame(frame);
+      const root = document.documentElement;
+      // Switch ink and surfaces together; interpolated old-theme ink can fail AA.
+      root.dataset.themeSwitching = "";
+      root.dataset.theme =
         theme === "system" ? (media?.matches ? "dark" : "light") : theme;
+      frame = requestAnimationFrame(() => {
+        frame = requestAnimationFrame(() => { delete root.dataset.themeSwitching; });
+      });
     };
     apply();
     media?.addEventListener("change", apply);
@@ -37,7 +45,11 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     } catch {
       /* Appearance still works without storage. */
     }
-    return () => media?.removeEventListener("change", apply);
+    return () => {
+      cancelAnimationFrame(frame);
+      delete document.documentElement.dataset.themeSwitching;
+      media?.removeEventListener("change", apply);
+    };
   }, [theme]);
 
   return (

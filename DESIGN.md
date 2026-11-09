@@ -3,6 +3,15 @@ name: Vauxr management
 version: alpha
 description: Quiet violet management UI, with semantic dark and light themes.
 colors:
+  voice-start: "rgb(228, 210, 255)"
+  voice-mid: "rgb(177, 139, 234)"
+  voice-end: "rgb(157, 119, 220)"
+  action-start: "rgb(135, 80, 208)"
+  action-mid: "rgb(133, 68, 225)"
+  action-end: "rgb(98, 38, 184)"
+  action-hover-start: "rgb(146, 86, 223)"
+  action-hover-mid: "rgb(139, 78, 219)"
+  action-hover-end: "rgb(118, 52, 208)"
   canvas-dark: "#111214"
   panel-dark: "#1b1c20"
   panel-raised-dark: "#24252b"
@@ -302,6 +311,13 @@ provenance belong in the separate **Agent runtime settings** dialog, not this gr
 Device overrides remain subordinate to agent assignment; label inherited routing
 **Use default agent (<name>)**. Metrics must show real telemetry and timeframe,
 never invented history or synthetic counters.
+
+Theme changes apply ink and surfaces atomically; suppress transitions for the
+first painted theme frame, then restore ordinary hover/focus motion. Primary
+gradient stops use the named `action-*` RGB tokens. Management and avatar
+tints derive from the theme-aware accent ramps rather than extra violet literals.
+The voice orb retains its pale-violet stops as `voice-*` tokens; the volume track
+uses accent/neutral ramps. Companion status labels must retain AA contrast.
 
 ### Motion and interaction
 
