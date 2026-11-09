@@ -44,7 +44,7 @@ Keep it out of screenshots, logs and shell history.
 **Checkpoint:** the management portal is available. Reload it: the owner session
 is a same-origin cookie, not a token pasted into a voice connection form. If
 claim/login fails, compare the browser's full origin (scheme, host, port) with
-[the configured owner origin](../README.md#browser-on-another-machine-or-address).
+[the configured owner origin](how-to.md#browser-on-another-machine-or-address).
 Do not switch to a Vite URL to bypass the boundary.
 
 ## 3. Inspect what exists before creating traffic
@@ -63,7 +63,7 @@ The [reference map](reference.md) shows which credential each boundary uses.
 
 Choose one next exercise, rather than changing every layer together:
 
-- Connect OpenClaw using [the plugin instructions](../README.md#connecting-to-openclaw).
+- Connect OpenClaw using [the plugin instructions](how-to.md#connecting-to-openclaw).
   Approve the displayed enrollment code and let the plugin save and ACK its
   credential. Then select the connected agent.
 - Configure and preview a speech deployment using [the task guide](how-to.md#change-speech-without-losing-the-working-selection).

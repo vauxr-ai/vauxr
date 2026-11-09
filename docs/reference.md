@@ -1,9 +1,9 @@
 # Interface reference
 
 This is a lookup map for current boundaries, not a second API implementation.
-[Configuration](configuration.md) owns persisted schemas; [README HTTP API](../README.md#http-api)
-owns device/channel/webhook route tables. Versioned source schemas below are the
-field validators used by the service. Legacy Postman token examples are not
+[Configuration](configuration.md) owns persisted schemas; [HTTP API](http-api.md)
+owns HTTP routes, authorization and request/response details. Versioned source
+schemas below are the field validators used by the service. Legacy Postman token examples are not
 current authorization examples.
 
 ## Authority by operation
