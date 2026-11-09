@@ -53,7 +53,7 @@ export default function SupportSettings({agentId}:{agentId?:string}) {
       </select></label>}
       {provider === "ollama" && <><label>Local endpoint<input value={endpoint} onChange={e => setEndpoint(e.target.value)} placeholder="http://127.0.0.1:11434" required disabled={busy} /></label>
         <label>Installed local model<input value={model} onChange={e => setModel(e.target.value)} required maxLength={120} disabled={busy} /></label></>}
-      <button disabled={busy}>{agentId ? "Save agent runtime" : "Save Support runtime"}</button>
+      <div className="modal-actions"><button disabled={busy}>{agentId ? "Save agent runtime" : "Save Support runtime"}</button></div>
     </form>
   </section>;
 }

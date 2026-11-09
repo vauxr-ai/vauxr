@@ -1176,3 +1176,11 @@ dialog.modal.agent-diagnostics-modal[open] { height:min(720px,calc(100dvh - 24px
 
 .agent-list .agent-default-action,.agent-runtime-identity .agent-default-action { border-color:transparent; background:transparent; box-shadow:none; color:var(--muted); font-size:12px; min-height:44px; padding:8px; }
 .agent-list .agent-default-action:hover:not(:disabled),.agent-runtime-identity .agent-default-action:hover:not(:disabled) { background:transparent; color:var(--text); text-decoration:underline; }
+
+/* Footer actions share one trailing row without stretching form buttons. */
+.modal .modal-actions { display:flex; flex-wrap:nowrap; justify-content:flex-end; align-items:center; gap:8px; width:100%; }
+.modal .modal-actions > button { flex:0 1 auto; width:auto; min-width:0; }
+
+.agent-guide-link { font-size:13px; line-height:1.4; }
+.agent-create-modal:has(.is-connecting) .modal-body { gap:6px; }
+.agent-create-modal .is-connecting .agent-type-choice { min-height:80px; }

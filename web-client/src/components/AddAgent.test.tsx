@@ -60,3 +60,23 @@ it("shows processing, retains failed creation and closes only after success", as
   await waitFor(()=>expect(screen.queryByRole("dialog")).toBeNull());
   expect(created).toHaveBeenCalledTimes(1);
 });
+
+it("offers keyboard-accessible guide help without submitting or clearing the draft", async () => {
+  const user = userEvent.setup();
+  const onCreated = vi.fn();
+  const fetcher = vi.fn(async () => ({ok:true,json:async()=>({definitions:[{id:"custom",name:"Custom",framework:"langchain",supported_modes:["standard"]}]})}));
+  vi.stubGlobal("fetch", fetcher);
+  render(<AddAgent onCreated={onCreated}/>);
+  await user.click(screen.getByRole("button",{name:"+ Add Agent"}));
+  await user.type(await screen.findByLabelText("Agent name"), "Draft agent");
+  const help = screen.getByRole("link",{name:"How to create a custom agent (opens in a new tab)"});
+  expect(help).toHaveAttribute("href","https://github.com/vauxr-ai/vauxr/blob/docs/maintainer-review-20261109/docs/how-to-create-custom-agent.md");
+  expect(help).toHaveAttribute("target","_blank");
+  expect(help).toHaveAttribute("rel","noopener noreferrer");
+  help.focus();
+  expect(help).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByLabelText("Agent name")).toHaveValue("Draft agent");
+  expect(onCreated).not.toHaveBeenCalled();
+  expect(fetcher.mock.calls).toHaveLength(1);
+});

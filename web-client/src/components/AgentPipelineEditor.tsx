@@ -136,7 +136,7 @@ export default function AgentPipelineEditor({agentId, agentType, agentName, poli
     {runtimeError && <p role="alert">{runtimeError}</p>}
     {dirty ? <p role="status">Unsaved pipeline changes.</p> : saved && <p role="status">{saved}</p>}
     {saving && <p role="status">Saving pipeline configuration…</p>}
-    <footer className="pipeline-save"><button type="button" className="button-primary" disabled={busy || saving || !!enabled.length && !enabled.includes(defaultMode || "")} onClick={() => void save()}>{saving ? "Saving…" : "Save pipeline configuration"}</button></footer>
+    <footer className="pipeline-save modal-actions"><button type="button" className="button-primary" disabled={busy || saving || !!enabled.length && !enabled.includes(defaultMode || "")} onClick={() => void save()}>{saving ? "Saving…" : "Save pipeline configuration"}</button></footer>
     {open && <EntityPopover anchor={open.anchor} title={`${titles[open.kind]} settings`} onClose={() => setOpen(null)}>
       {open.kind === "agent" ? !local ? <p>This agent’s model is managed by its enrolled integration. Model choices are configured there.</p> : <>
         {runtimeLoading && <p role="status">Loading model profiles…</p>}

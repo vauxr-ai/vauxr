@@ -58,6 +58,10 @@ export default function AddAgent({
           <p>
             Choose your agent type. Each agent keeps its own identity and voice defaults.
           </p>
+          <a className="agent-guide-link" href="https://github.com/vauxr-ai/vauxr/blob/docs/maintainer-review-20261109/docs/how-to-create-custom-agent.md"
+            target="_blank" rel="noopener noreferrer">
+            How to create a custom agent <span className="sr-only">(opens in a new tab)</span><span aria-hidden="true">↗</span>
+          </a>
           {error && <p role="alert">{error}</p>}
           {!definitions && !error && (
             <LoadingIndicator label="Loading registered agents"/>
@@ -117,12 +121,12 @@ export default function AddAgent({
                 />
               </label>
               {busy && <p role="status">Creating agent…</p>}
-              <button
+              <div className="modal-actions"><button
                 className="button-primary"
                 disabled={busy || !selected || !name.trim()}
               >
                 {busy ? "Creating agent…" : "Create agent"}
-              </button>
+              </button></div>
             </form>
           )}
         </Modal>
