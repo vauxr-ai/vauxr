@@ -3,6 +3,8 @@ name: Vauxr management
 version: alpha
 description: Quiet violet management UI, with semantic dark and light themes.
 colors:
+  edit-ink-dark: "rgb(96, 165, 250)"
+  edit-ink-light: "rgb(37, 99, 235)"
   status-ok: "rgb(16, 185, 129)"
   status-ok-dot: "rgb(52, 211, 153)"
   status-ok-ink-dark: "rgb(110, 231, 183)"
