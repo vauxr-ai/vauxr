@@ -359,11 +359,24 @@ visible disabled reasons, loading/error states, reload persistence, and graph
 geometry. [Menu/motion checks](e2e/agent-menu-motion.spec.ts) cover retained-menu
 focus, tooltips, and stationary primary actions.
 
-Target a focused local verification loop of about 15 minutes. Deploy authorized
-Nova test builds after that gate passes; CI runs the full suite once per PR update
-in the background and remains the merge gate. Do not repeat the full suite locally,
-rebuild for a pure test rerun, or claim pending CI passed. Run `node scripts/design-check.mjs` locally before deploy; the same disposable-browser gate runs in CI. Any FAIL or missing rendered evidence blocks deploy. Attempts are counted per commit in Git worktree metadata (including failed or interrupted attempts), at most three. After fixes, rerun with `--round=2` then `--round=3`; stop and report unresolved failures rather than looping or bypassing them. WARN means incomplete analysis or a review limitation, not a proven pass. Report live source revision
-separately from a newer documentation-only PR head.
+For each in-scope Nova test iteration, first run a quick build/start smoke, focused
+checks for touched behavior, and a short affected-UI review. Deploy promptly when
+smoke passes; pending full design/E2E/CI does not block this test deployment.
+Verify exact deployed source/assets, health, and configuration/data preservation.
+Then complete design review and `scripts/design-check.mjs` before final acceptance;
+the full browser suite and CI run once per PR update in CI, not duplicated locally.
+A smoke deployment is not full acceptance or merge clearance. Keep failures and
+unverified live rendering explicit. Fix, smoke, and redeploy changed code; do not
+redeploy unchanged code solely for a test rerun.
+
+Preserve bounded gate histories, including the prior completed round 3/3. Attempts
+are counted per commit in Git worktree metadata, including interrupted attempts,
+at most three. Do not reset exhausted counters or silently start a fourth repair
+round. A newly requested behavior is a distinct identified candidate, not proof
+that a previous gate covered it. Missing design evidence or FAIL blocks final
+acceptance, not an otherwise passing authorized Nova smoke deployment. WARN is
+incomplete analysis or a review limitation, not a proven pass. Report actual live
+revision separately from newer unpublished or documentation-only commits.
 
 ## Do's and Don'ts
 
