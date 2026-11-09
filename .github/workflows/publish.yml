@@ -13,9 +13,6 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: read
-
 jobs:
   design-lint:
     name: DESIGN.md lint
