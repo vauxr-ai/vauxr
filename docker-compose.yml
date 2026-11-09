@@ -1,4 +1,16 @@
 services:
+  storage-init:
+    build:
+      context: .
+      target: storage-init
+    user: "0:0"
+    restart: "no"
+    network_mode: none
+    volumes:
+      - ./data:/data
+      - ./recordings:/data/recordings
+      - ./firmware:/data/firmware
+
 
   # The WebRTC realtime transport (aiortc, in-process Pipecat) gathers ICE on
   # ephemeral UDP ports that can't be predicted/published in Docker bridge mode,
@@ -14,6 +26,8 @@ services:
     restart: unless-stopped
     network_mode: host
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       whisper:
         condition: service_healthy
       piper:
@@ -72,6 +86,9 @@ services:
       - ./firmware:/data/firmware
 
   whisper:
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
     image: rhasspy/wyoming-whisper
     container_name: whisper
     restart: unless-stopped
@@ -87,6 +104,9 @@ services:
       start_period: 300s
 
   piper:
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
     image: rhasspy/wyoming-piper
     container_name: piper
     restart: unless-stopped

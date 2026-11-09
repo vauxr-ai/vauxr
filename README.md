@@ -38,19 +38,19 @@ git clone https://github.com/vauxr-ai/vauxr.git
 cd vauxr
 ```
 
-2. Prepare the persistent directory and start the stack:
+2. Build and start the stack:
 
 ```bash
-mkdir -p data/piper data/whisper
-docker compose build vauxr
-docker compose run --rm --no-deps --user 0 vauxr \
-  sh -c 'chown 100:101 /data && chmod 700 /data'
-docker compose up -d
+docker compose up -d --build
 ```
 
-The initialization runs through the selected Docker daemon so ownership works
-with both rootful and rootless Docker. Vauxr runs as container UID 100/GID 101;
-do not use host `chown 100:101` for a rootless deployment.
+Compose automatically prepares the bind-mounted storage before starting the
+services. Vauxr still runs as non-root UID 100/GID 101. Initialization adjusts
+only the data, recordings, and firmware directory roots, never existing files
+or speech caches. It is safe to repeat and works through the selected Docker
+daemon with rootful or rootless Docker; no host `chown` is needed. If storage
+initialization fails, startup stops: inspect `docker compose logs storage-init`,
+fix the mount permissions, then repeat the command above.
 
 3. On the same machine, open the web client at [http://localhost:8080](http://localhost:8080).
 Then open the local owner claim flow from a private terminal:

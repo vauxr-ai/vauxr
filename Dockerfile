@@ -1,3 +1,8 @@
+# A small, one-shot target: no application or speech dependencies required.
+FROM python:3.12-slim AS storage-init
+COPY docker/init-storage.py /usr/local/bin/init-storage.py
+CMD ["python", "/usr/local/bin/init-storage.py"]
+
 FROM node:22-alpine AS web-build
 WORKDIR /app/web-client
 COPY web-client/package.json web-client/package-lock.json* ./
