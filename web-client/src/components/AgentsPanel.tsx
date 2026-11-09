@@ -27,12 +27,10 @@ function positionDeleteTooltip(trigger: HTMLElement, pointer?: {x: number; y: nu
   const box = tooltip.getBoundingClientRect();
   const target = trigger.getBoundingClientRect();
   const margin = 8, offset = 12;
-  const x = pointer ? pointer.x + offset : target.right - box.width;
-  const anchorY = pointer ? pointer.y : target.bottom;
-  let y = anchorY + offset;
-  if (y + box.height > window.innerHeight - margin) {
-    y = (pointer ? pointer.y : target.top) - box.height - offset;
-  }
+  let x = pointer ? pointer.x + offset : target.right - box.width;
+  if (pointer && x + box.width > window.innerWidth - margin) x = pointer.x - box.width - offset;
+  let y = pointer ? pointer.y - box.height / 2 : target.bottom + offset;
+  if (!pointer && y + box.height > window.innerHeight - margin) y = target.top - box.height - offset;
   tooltip.style.setProperty('--tooltip-x', `${Math.max(margin, Math.min(x, window.innerWidth - box.width - margin))}px`);
   tooltip.style.setProperty('--tooltip-y', `${Math.max(margin, Math.min(y, window.innerHeight - box.height - margin))}px`);
 }

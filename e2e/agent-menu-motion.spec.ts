@@ -82,8 +82,9 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
     const cursor={x:disabledBox.x+20,y:disabledBox.y+20};
     await page.mouse.move(cursor.x,cursor.y);
     let cursorBox=(await tooltip.boundingBox())!;
-    expect(Math.abs(cursorBox.x-Math.min(cursor.x+12,width-cursorBox.width-8))).toBeLessThanOrEqual(1);
-    expect(Math.abs(cursorBox.y-(cursor.y+12))).toBeLessThanOrEqual(1);
+    const expectedX=cursor.x+12+cursorBox.width <= width-8 ? cursor.x+12 : Math.max(8,cursor.x-cursorBox.width-12);
+    expect(Math.abs(cursorBox.x-expectedX)).toBeLessThanOrEqual(1);
+    expect(Math.abs(cursorBox.y-(cursor.y-cursorBox.height/2))).toBeLessThanOrEqual(1);
     await page.mouse.move(cursor.x+10,cursor.y+3);
     const movedBox=(await tooltip.boundingBox())!;
     expect(movedBox.y-cursorBox.y).toBeCloseTo(3,0);
@@ -91,7 +92,7 @@ for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
     await unavailable.dispatchEvent('pointermove',{pointerType:'mouse',clientX:width-2,clientY:page.viewportSize()!.height-2});
     cursorBox=(await tooltip.boundingBox())!;
     expect(cursorBox.x).toBeGreaterThanOrEqual(8);
-    expect(cursorBox.x+cursorBox.width).toBeLessThanOrEqual(width-7);
+    expect(cursorBox.x+cursorBox.width).toBeLessThanOrEqual(width-14);
     expect(cursorBox.y+cursorBox.height).toBeLessThanOrEqual(page.viewportSize()!.height-7);
     await unavailable.dispatchEvent('pointerdown',{pointerType:'touch',clientX:0,clientY:0});
     const touchBox=(await tooltip.boundingBox())!;

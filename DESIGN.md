@@ -278,7 +278,8 @@ thin border, and soft elevation. Do not turn it into a tiny utility dropdown.
 
 Disabled reasons belong in hover/focus/touch-accessible tooltips, not inline menu
 prose. A disabled button needs a focusable wrapper and described reason. Position
-pointer tooltips at the mouse cursor with a small offset and viewport clamping.
+pointer tooltips just to the right of the mouse cursor with a small gap, vertically
+centered on it. Fall back left only when the right side would clip; clamp to the viewport.
 Keyboard focus and touch use a viewport-clamped position beside the disabled action,
 without requiring a mouse. Retain accessible descriptions and dismissal.
 Escape/outside interaction dismisses the menu. Selecting an action closes it
