@@ -325,7 +325,7 @@ export default function AgentsPanel({
       </Modal>}
       {voiceAgent && <Modal title="Voice pipeline" className="agent-detail-modal agent-detail agent-voice-modal"
         returnFocus={voiceReturnFocus} onClose={() => setVoiceId("")}>
-        <h3>{voiceAgent.name}</h3>
+        <h3 title={voiceAgent.name}>{voiceAgent.name}</h3>
         <SpeechSettings onSaved={() => setVoiceId("")} key={`voice-${voiceAgent.id}`} agentId={voiceAgent.id} agentName={voiceAgent.name} agentType={voiceAgent.type}
           browserDeviceId={browserDeviceId} browserConnected={browserConnected} browserCredential={browserCredential} />
       </Modal>}

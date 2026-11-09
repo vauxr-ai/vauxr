@@ -1054,7 +1054,7 @@ button.button-primary:focus-visible { outline:2px solid var(--accent); outline-o
 dialog.modal.agent-voice-modal[open] { height:min(700px,calc(100dvh - 24px)); }
 .agent-voice-modal .modal-heading { padding:16px 20px; }
 .agent-voice-modal .modal-body { display:flex; flex-direction:column; gap:8px; padding:16px 20px; overflow:visible; }
-.agent-voice-modal .modal-body > h3 { flex:none; }
+.agent-voice-modal .modal-body > h3 { flex:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .agent-voice-modal .agent-pipeline-settings,
 .agent-voice-modal .agent-pipeline-editor { display:flex; flex-direction:column; flex:1; min-height:0; gap:8px; }
 .agent-voice-modal .pipeline-editor-content { display:flex; flex:1; min-height:0; }

@@ -1,9 +1,9 @@
 import {mkdirSync} from 'node:fs';
 import {test,expect,login,seedRealtimeAgent,openAgentAction} from './auth-fixture';
 
-for(const width of [390,1366]) test(`Agents priority layout and inline icon controls ${width}`,async({page,server})=>{
+for(const width of [390,1366]) for(const theme of ["light","dark"]) test(`Agents priority layout and inline icon controls ${width} ${theme}`,async({page,server})=>{
   await page.setViewportSize({width,height:844});seedRealtimeAgent(server);await login(page,server);
-  await page.getByLabel('Appearance').selectOption(width===390?'dark':'light');
+  await page.getByLabel('Appearance').selectOption(theme);
   await expect(page.getByText('Not default',{exact:true})).toHaveCount(0);
   const add=page.getByRole('button',{name:'+ Add Agent',exact:true});
   expect(await page.locator('.page-heading').evaluate(el=>getComputedStyle(el).borderBottomWidth)).toBe('0px');
@@ -29,7 +29,7 @@ for(const width of [390,1366]) test(`Agents priority layout and inline icon cont
     expect(b.y).toBe(f.y);expect(b.height).toBe(f.height);
   }
   const artifacts='/home/node/.openclaw/media/agents-priority';mkdirSync(artifacts,{recursive:true});
-  await page.screenshot({path:`${artifacts}/inline-${width}.png`});
+  await page.screenshot({path:`${artifacts}/inline-${width}-${theme}.png`});
   await expect(input).toHaveAttribute('maxlength','200');
   const editBox=(await input.boundingBox())!; expect(editBox.x+editBox.width).toBeLessThanOrEqual(width);
   if(width===1366) expect(editBox.width).toBeGreaterThan(350);
@@ -47,7 +47,16 @@ for(const width of [390,1366]) test(`Agents priority layout and inline icon cont
   expect(Math.abs(b.x+b.width/2-svg.x-svg.width/2)).toBeLessThan(1);
   expect(Math.abs(b.y+b.height/2-svg.y-svg.height/2)).toBeLessThan(1);
   await modal.evaluate(el=>Promise.all(el.getAnimations().map(animation=>animation.finished.catch(()=>{}))));
-  await page.screenshot({path:`${artifacts}/voice-modal-${width}.png`});
+  const endpoint=modal.getByRole('button',{name:'Edit '+'P'.repeat(200),exact:true});
+  await expect(endpoint).toHaveAttribute('title','P'.repeat(200));
+  const labelBox=(await endpoint.boundingBox())!, graphBox=(await modal.locator('.pipeline-graph').boundingBox())!;
+  const saveBox=(await modal.getByRole('button',{name:'Save pipeline configuration',exact:true}).boundingBox())!;
+  expect(labelBox.y).toBeGreaterThanOrEqual(graphBox.y);
+  expect(labelBox.y+labelBox.height).toBeLessThanOrEqual(graphBox.y+graphBox.height);
+  expect(labelBox.y+labelBox.height).toBeLessThan(saveBox.y);
+  expect(labelBox.height).toBeLessThanOrEqual(48);
+  await expect(modal.locator('.modal-body > h3')).toHaveAttribute('title','P'.repeat(200));
+  await page.screenshot({path:`${artifacts}/voice-modal-${width}-${theme}.png`});
   await close.click();await add.click();
   await expect(page.getByRole('dialog',{name:'Add Agent',exact:true}).getByText('MAKE IT YOURS',{exact:true})).toHaveCount(0);
 });

@@ -399,3 +399,5 @@ revision separately from newer unpublished or documentation-only commits.
   replacement, unapproved runtime rearchitecture, or claim of untested acceptance.
 
 Agents refinements: Add Agent sits above the inventory divider. The blue-pencil name editor uses approximately 40ch of text space (shrinking on phones), accepts up to 200 characters, and retains save/cancel. Newly added Vauxr Support agents persist their catalog avatar and can be removed with the React confirmation dialog; active defaults and other bundled agents remain protected. Integration denial uses a nested React confirmation dialog with cancellation, Escape isolation and focus restoration.
+
+Long agent names retain their full stored/accessibility text and hover title; voice-pipeline headings ellipsize to one line and graph endpoint labels clamp to two lines so neither can overlap graph actions or Save.
