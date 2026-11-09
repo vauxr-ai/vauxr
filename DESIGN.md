@@ -234,7 +234,11 @@ spinner with an accessible loading name, not visible “Loading …” placehold
 Do not expand from a short loading box after data arrives.
 
 At 1366×768 desktop and 390×844 phone, in both themes, dialogs must fit without
-inner scrollbars **or hidden/clipped content**. The voice dialog currently uses
+inner scrollbars **or hidden/clipped content**. The no-page-scroll restriction
+applies to modal content, not long management pages: normal vertical page scrolling
+is permitted. Horizontal page overflow remains forbidden, including horizontal
+scroll containers. Background page content being taller than the viewport while a
+modal is open does not itself violate the modal constraint. The voice dialog currently uses
 `min(700px, calc(100dvh - 24px))`; this is not a universal height for every dialog.
 Compact graph spacing and layouts responsively. Use deliberate accessible steps
 or tabs for lengthy setup/diagnostics, not `overflow: hidden` to conceal content.

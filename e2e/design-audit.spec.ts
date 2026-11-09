@@ -61,3 +61,28 @@ test('entrance opacity cannot hide an overflowing native modal from the audit',a
  expect(rows.filter(r=>r.rule==='overflow')[1].status).toBe('FAIL');
  expect(rows.filter(r=>r.rule==='overflow')[1].detail).toContain('1 visible dialogs');
 });
+
+
+test('vertical management scrolling is allowed, including behind a modal', async ({page}) => {
+  await page.setViewportSize({width:390,height:844});
+  await page.setContent(`<style>body{margin:0;background:white;color:black}main{height:200px;overflow:auto}article{height:1200px}dialog{width:200px;border:0;background:white;color:black}</style><main><h1>Agents</h1><article>Long list</article></main><dialog><p>Modal content</p></dialog>`);
+  let rows=await auditPage(page,tokens,'vertical-page');
+  expect(rows.filter(r=>r.rule==='overflow').every(r=>r.status==='PASS')).toBe(true);
+  await page.locator('dialog').evaluate(el=>(el as HTMLDialogElement).showModal());
+  rows=await auditPage(page,tokens,'vertical-page-under-modal');
+  expect(rows.filter(r=>r.rule==='overflow').every(r=>r.status==='PASS')).toBe(true);
+  await page.locator('dialog').evaluate(el=>{el.style.height='50px';el.style.overflow='auto';el.firstElementChild!.setAttribute('style','height:300px');});
+  rows=await auditPage(page,tokens,'scrolling-modal');
+  expect(rows.filter(r=>r.rule==='overflow')[1].status).toBe('FAIL');
+  await page.locator('dialog').evaluate(el=>el.style.overflow='hidden');
+  rows=await auditPage(page,tokens,'clipped-modal');
+  expect(rows.filter(r=>r.rule==='overflow')[1].status).toBe('FAIL');
+});
+
+test('horizontal page overflow remains forbidden even inside a viewport-sized scroller', async ({page}) => {
+  await page.setViewportSize({width:390,height:844});
+  await page.setContent(`<style>body{margin:0;background:white;color:black}main{width:300px;overflow:auto}article{width:600px}</style><main><h1>Agents</h1><article>Wide list</article></main>`);
+  const rows=await auditPage(page,tokens,'horizontal-page');
+  expect(rows.filter(r=>r.rule==='overflow')[0].status).toBe('FAIL');
+  expect(rows.filter(r=>r.rule==='overflow')[0].detail).toContain('1 horizontal page scrolling containers');
+});

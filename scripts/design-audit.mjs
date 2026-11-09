@@ -133,10 +133,11 @@ export async function auditPage(page, tokens, label = 'page') {
       }
     }
     return {
-      pageScroll: elements.filter(el => {
+      horizontalScroll: elements.filter(el => {
         if (el.closest('[role="dialog"],dialog,[aria-modal="true"]') || el.matches('input,textarea,select,option,svg,svg *')) return false;
         const style = getComputedStyle(el);
-        const scroll = el.clientHeight > 0 && el.clientWidth > 0 && ((/auto|scroll/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 2) || (/auto|scroll/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 2));
+        // Long management pages may scroll vertically; modal interiors are checked above.
+        const scroll = el.clientHeight > 0 && el.clientWidth > 0 && /auto|scroll/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 2;
         if(scroll) scrollEvidence.push({selector:selector(el),width:el.clientWidth,height:el.clientHeight,scrollWidth:el.scrollWidth,scrollHeight:el.scrollHeight,overflowX:style.overflowX,overflowY:style.overflowY,backgroundUnderModal:!!document.querySelector('dialog:modal')});
         return scroll;
       }).length,
@@ -162,7 +163,7 @@ export async function auditPage(page, tokens, label = 'page') {
     const settled = await page.evaluate(capture, tokens || {});
     for (const key of ['colorCounts','unmappedCount','unmappedValues','paletteSize','colorEvidence']) snapshot[key] = settled[key];
   }
-  add('overflow', snapshot.overflow || snapshot.over || snapshot.pageScroll ? 'FAIL' : 'PASS', `page overflow=${snapshot.overflow}; ${snapshot.over} visible boxes outside horizontal viewport; ${snapshot.pageScroll} page scrolling containers`, true);
+  add('overflow', snapshot.overflow || snapshot.over || snapshot.horizontalScroll ? 'FAIL' : 'PASS', `page overflow=${snapshot.overflow}; ${snapshot.over} visible boxes outside horizontal viewport; ${snapshot.horizontalScroll} horizontal page scrolling containers`, true);
   add('overflow', snapshot.modalBounds || snapshot.modalScroll || snapshot.modalClip ? 'FAIL' : 'PASS', `${snapshot.modalCount} visible dialogs; ${snapshot.modalBounds} outside viewport; ${snapshot.modalScroll} internal scroll axes; ${snapshot.modalClip} clipped axes`, true);
   results[0].evidence = snapshot.scrollEvidence;
   const colors = snapshot.colorCounts;
