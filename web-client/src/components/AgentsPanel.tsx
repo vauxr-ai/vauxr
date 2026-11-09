@@ -235,16 +235,22 @@ export default function AgentsPanel({
                       ? "Default"
                       : "Not default"}
                 </span>
-                <button
+                {!agent.active && <button
                   className="agent-route-action"
-                  disabled={agent.active || busy}
+                  disabled={busy}
                   onClick={() => void activate(agent)}
                 >
-                  {agent.active ? "Default" : "Set as default"}
-                </button>
+                  Set as default
+                </button>}
                 <details className="agent-actions" onToggle={event => {
                   const actions = event.currentTarget.querySelector<HTMLElement>(".agent-actions-list");
-                  if (actions) actions.inert = !event.currentTarget.open;
+                  if (actions) {
+                    actions.inert = !event.currentTarget.open;
+                    if (event.currentTarget.open) {
+                      const trigger = event.currentTarget.querySelector("summary")!.getBoundingClientRect();
+                      event.currentTarget.dataset.placement = trigger.bottom + 6 + actions.getBoundingClientRect().height > window.innerHeight - 16 ? "above" : "below";
+                    }
+                  }
                 }}><summary aria-label={`Actions for ${agent.name}`} onClick={event => {
                   const menu = event.currentTarget.parentElement as HTMLDetailsElement;
                   const actions = menu.querySelector<HTMLElement>(".agent-actions-list");

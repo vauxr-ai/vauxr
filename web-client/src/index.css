@@ -976,12 +976,14 @@ dialog.modal.agent-detail-modal[open] { height:auto; width:min(1000px,calc(100% 
 .agent-inline-title { min-width:0; }
 .agent-inline-title form { min-width:0; }
 .agent-inline-title input { width:100%; min-width:0; }
-.agent-list > li:has(.agent-actions[open]) { z-index:6; }
+/* An open action panel must remain clickable above the fixed voice dock. */
+.agent-list > li:has(.agent-actions[open]) { z-index:21; }
 
-.agent-actions-list { bottom:calc(100% + 6px); width:252px; max-width:calc(100vw - 32px); gap:4px; padding:8px; overflow:visible;
+.agent-actions-list { top:calc(100% + 6px); bottom:auto; width:252px; max-width:calc(100vw - 32px); gap:4px; padding:8px; overflow:visible;
   background:linear-gradient(145deg,rgb(var(--accent-500) / .05),transparent 65%),var(--panel);
   border-color:color-mix(in srgb,var(--line) 75%,var(--accent)); border-radius:18px;
   box-shadow:0 16px 48px #0003,inset 0 1px 0 rgb(var(--neutral-50) / .06); }
+.agent-actions[data-placement="above"] .agent-actions-list { top:auto; bottom:calc(100% + 6px); }
 .agent-actions-list button { display:flex; align-items:center; gap:12px; width:100%; min-height:48px; padding:10px 12px;
   border:1px solid transparent; border-radius:11px; background:transparent; color:var(--text); font-size:14px; font-weight:550; }
 .agent-actions-list button svg { flex:none; color:var(--accent); }
@@ -998,7 +1000,7 @@ dialog.modal.agent-detail-modal[open] { height:auto; width:min(1000px,calc(100% 
   border:1px solid var(--line); border-radius:12px; background:var(--panel-raised); color:var(--text); box-shadow:0 8px 24px #0003;
   font-size:12px; line-height:1.45; visibility:hidden; opacity:0; pointer-events:none; transition:opacity .12s,visibility .12s; }
 .agent-action-tooltip-trigger:hover .agent-action-tooltip,.agent-action-tooltip-trigger:focus-within .agent-action-tooltip { visibility:visible; opacity:1; }
-@media(max-width:600px) { .agent-action-tooltip { bottom:auto; top:calc(100% + 8px); } }
+@media(max-width:600px) { .agent-actions[data-placement="above"] .agent-action-tooltip { bottom:auto; top:calc(100% + 8px); } }
 /* The close handler makes retained content inert before this native-details fade. */
 .agent-actions::details-content { opacity:0; transition:opacity .14s ease,content-visibility .14s allow-discrete; }
 .agent-actions[open]::details-content { opacity:1; }
