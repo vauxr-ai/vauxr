@@ -102,7 +102,7 @@ export default function Sidebar({
         <div
           className={`pill ${
             isConnected
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              ? "connection-status-connected"
               : "border-zinc-700/50 bg-zinc-800/40 text-zinc-400"
           }`}
         >
@@ -110,7 +110,7 @@ export default function Sidebar({
             aria-hidden
             className={`h-1.5 w-1.5 rounded-full ${
               isConnected
-                ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]"
+                ? "connection-status-dot"
                 : "bg-zinc-500"
             }`}
           />

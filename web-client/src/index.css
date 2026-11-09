@@ -4,6 +4,10 @@
 
 :root {
   color-scheme: dark;
+  --status-ok: 16 185 129;
+  --status-ok-dot: 52 211 153;
+  --status-ok-ink: 110 231 183;
+  --status-error: 220 84 95;
   --voice-start: 228 210 255;
   --voice-mid: 177 139 234;
   --voice-end: 157 119 220;
@@ -45,6 +49,7 @@
 }
 :root[data-theme="light"] {
   color-scheme: light;
+  --status-ok-ink: 18 101 77;
   --canvas: #f5f4f8;
   --panel: #fff;
   --panel-raised: #efedf5;
@@ -413,7 +418,7 @@
   max-width: 100%;
 }
 .auth-panel [role="alert"] {
-  color: #dc545f;
+  color: rgb(var(--status-error));
 }
 #root > .auth-panel {
   max-width: 580px;
@@ -641,7 +646,7 @@
   color: #805300;
 }
 :root[data-theme="light"] [class*="text-emerald-"] {
-  color: #12654d;
+  color: rgb(var(--status-ok-ink));
 }
 :root[data-theme="light"] [class*="text-cyan-"] {
   color: #0b6277;
@@ -1141,3 +1146,8 @@ dialog.modal.agent-diagnostics-modal[open] { height:min(720px,calc(100dvh - 24px
 .agent-create-modal .is-connecting ~ section { font-size:12px; line-height:1.35; }
 .agent-create-modal .is-connecting ~ section > section { padding-block:8px; }
 .agent-create-modal:has(.is-connecting) .modal-body > p:first-child { display:none; }
+
+/* Native range backgrounds vary by platform; keep device controls on the palette. */
+.vauxr-volume-range { background-color: rgb(var(--neutral-800)); }
+.connection-status-connected { color:rgb(var(--status-ok-ink)); background:rgb(var(--status-ok) / .1); border-color:rgb(var(--status-ok) / .3); }
+.connection-status-connected > span { background:rgb(var(--status-ok-dot)); box-shadow:0 0 8px rgb(var(--status-ok-dot) / .6); }
