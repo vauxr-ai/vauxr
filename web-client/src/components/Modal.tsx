@@ -54,11 +54,10 @@ export default function Modal({
     >
       <header className="modal-heading">
         <div>
-          <span className="eyebrow">MAKE IT YOURS</span>
           <div className="modal-title-line"><h2 id={titleId}>{titleContent || title}</h2>{headerAction}</div>
         </div>
         <button type="button" aria-label="Close dialog" onClick={onClose}>
-          ×
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
         </button>
       </header>
       <div className="modal-body">{children}</div>

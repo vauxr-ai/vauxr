@@ -225,9 +225,9 @@ export default function AgentsPanel({
             finally {setBusy(false);}
           }}><label className="sr-only" htmlFor="agent-name-edit">Agent name</label>
             <input id="agent-name-edit" value={nameDraft} maxLength={120} required disabled={busy} autoFocus
-              onChange={event => setNameDraft(event.target.value)} />
-            <div className="name-edit-actions"><button type="submit" disabled={busy || !nameDraft.trim()}>Save name</button>
-            <button type="button" disabled={busy} onClick={() => {setNameDraft(selected?.name || ""); setEditingName(false); setError("");}}>Cancel name edit</button></div>
+              onChange={event => setNameDraft(event.target.value)} onKeyDown={event => {if(event.key === "Escape" && !busy){setNameDraft(selected?.name || "");setEditingName(false);setError("");}}} />
+            <div className="name-edit-actions"><button type="submit" aria-label="Save name" title="Save name" className="name-edit-save" disabled={busy || !nameDraft.trim()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></button>
+            <button type="button" aria-label="Cancel name edit" title="Cancel name edit" className="name-edit-cancel" disabled={busy} onClick={() => {setNameDraft(selected?.name || ""); setEditingName(false); setError("");}}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
           </form> : <h3 aria-label={agent.name}>{agent.name}<button type="button" aria-label="Edit agent name" title="Edit agent name"
             onClick={() => {setSelectedId(agent.id); setNameDraft(agent.name); setEditingName(true); setSaved(""); setError("");}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L5 15Z" /></svg></button></h3>}
                   </div>
@@ -243,13 +243,8 @@ export default function AgentsPanel({
                             : "OpenClaw connection"}
                   </p>
                 </div>
-                <span className="pill">
-                  {agent.chat_only
-                    ? "Chat-only · no voice"
-                    : agent.active
-                      ? "Default"
-                      : "Not default"}
-                </span>
+                {agent.chat_only && <span className="pill">Chat-only · no voice</span>}
+                {agent.active && <span className="pill">Default</span>}
                 {!agent.active && <button
                   className="agent-route-action"
                   disabled={busy}
@@ -336,7 +331,7 @@ export default function AgentsPanel({
         returnFocus={diagnosticsReturnFocus} onClose={() => setDiagnosticsId("")}>
         <div className="agent-runtime-identity">
           <h3>{diagnostics.name}</h3>
-          <span className="pill">{diagnostics.active ? "Default" : "Not default"}</span>
+          {diagnostics.active && <span className="pill">Default</span>}
           {!diagnostics.active && <button disabled={busy} onClick={() => void activate(diagnostics)}>
             Set as default
           </button>}
