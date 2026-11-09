@@ -116,4 +116,4 @@
 .pipeline-graph .pipeline-entity-label:hover { border:0; background:transparent; box-shadow:none; }
 
 /* Bound endpoint names so user text cannot displace graph controls. */
-.pipeline-agent .pipeline-entity-label,.pipeline-agent .pipeline-entity > strong { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; max-width:100%; line-height:1.4; }
+.pipeline-agent-name,.pipeline-agent .pipeline-entity > strong { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; max-width:100%; line-height:1.4; }
