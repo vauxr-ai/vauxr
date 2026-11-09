@@ -85,8 +85,8 @@ jobs:
 
   # Keep the container ownership smoke and exercise the owner/browser contract
   # against isolated aiohttp servers. Legacy shared-token channel forms are gone.
-  e2e:
-    name: E2E UI smoke (Playwright)
+  e2e-container:
+    name: E2E container ownership smoke
     runs-on: ubuntu-latest
     needs: [pytest]
     steps:
@@ -128,6 +128,24 @@ jobs:
           docker logs vauxr-e2e
           exit 1
 
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs vauxr-e2e
+
+  e2e-domains:
+    name: Playwright (${{ matrix.domain }})
+    runs-on: ubuntu-latest
+    needs: [pytest, e2e-container]
+    strategy:
+      fail-fast: false
+      matrix:
+        domain: [agents, management, voice, design]
+    env:
+      VAUXR_E2E_DOMAIN: ${{ matrix.domain }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Set up Python for isolated browser servers
         uses: actions/setup-python@v6
         with:
@@ -155,32 +173,48 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
+      - name: Validate complete domain coverage
+        run: node --test scripts/playwright-domains.test.mjs
+
       - name: Run Playwright tests
         working-directory: e2e
         # Both auth specs own disposable servers/data; no shared-token forms.
         # Includes loopback integration workflows and LAN browser restrictions.
-        run: npx playwright test
-
-      - name: Dump container logs on failure
-        if: failure()
-        run: docker logs vauxr-e2e
+        run: npx playwright test --reporter=github,list,html,json
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/results.json
 
       - name: Upload Playwright report
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: playwright-report
-          path: e2e/playwright-report/
+          name: playwright-${{ matrix.domain }}
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/results.json
           retention-days: 7
 
       - name: Upload targeted design triage evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: design-triage-evidence
+          name: design-triage-evidence-${{ matrix.domain }}
           path: /tmp/vauxr-design-triage/
           if-no-files-found: ignore
           retention-days: 7
+
+  # Retain the original required-check name and release dependency.
+  e2e:
+    name: E2E UI smoke (Playwright)
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [pytest, e2e-container, e2e-domains]
+    steps:
+      - name: Require every browser domain and container smoke
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          node -e 'const jobs = JSON.parse(process.env.RESULTS); if (Object.values(jobs).some(job => job.result !== "success")) process.exit(1)'
 
   # On push to main: compute version and create a draft release
   draft-release:
