@@ -1,8 +1,9 @@
 import {mkdirSync} from 'node:fs';
 import {test, expect, login, seedRealtimeAgent} from './auth-fixture';
 
-for (const width of [390,1366]) for (const theme of ['light','dark']) {
+for (const width of [390,768,1366]) for (const theme of ['light','dark']) {
   test(`agent action menu, tooltips and stationary primary ${width} ${theme}`, async ({page,server}) => {
+    page.setDefaultTimeout(8000);
     await page.setViewportSize({width,height:width===390?844:768});
     // Exercise both disabled deletion reasons against real persisted agent records.
     if (theme==='dark') await seedRealtimeAgent(server);
@@ -32,6 +33,12 @@ for (const width of [390,1366]) for (const theme of ['light','dark']) {
       await expect(item.locator('svg')).toHaveCount(1);
     }
     const panel=(await menu.boundingBox())!;
+    const trigger=(await summary.boundingBox())!;
+    expect(panel.y).toBeGreaterThanOrEqual(trigger.y+trigger.height+5);
+    expect(panel.y+panel.height).toBeLessThanOrEqual(page.viewportSize()!.height-16);
+    const defaultRow=page.locator('.agent-list > li').filter({has:page.locator('.pill').getByText('Default',{exact:true})});
+    await expect(defaultRow).toHaveCount(1);
+    await expect(defaultRow.getByRole('button',{name:/^(Default|Set as default)$/})).toHaveCount(0);
     expect(panel.width).toBeGreaterThanOrEqual(240);
     expect(panel.x).toBeGreaterThanOrEqual(0);
     expect(panel.y).toBeGreaterThanOrEqual(0);
@@ -55,14 +62,13 @@ for (const width of [390,1366]) for (const theme of ['light','dark']) {
     await expect(menu.getByRole('button',{name:'Delete agent',exact:true})).toBeDisabled();
     await expect(tooltip).toHaveCSS('opacity','1');
     const tipBox=(await tooltip.boundingBox())!;
-    if(width===390) expect(tipBox.y).toBeGreaterThanOrEqual(panel.y+panel.height);
-    else expect(tipBox.y+tipBox.height).toBeLessThanOrEqual(panel.y);
+    expect(tipBox.y+tipBox.height).toBeLessThanOrEqual(panel.y);
     expect(tipBox.y).toBeGreaterThanOrEqual(0);
     expect(tipBox.y+tipBox.height).toBeLessThanOrEqual(width===390?844:768);
     // A rectangle may be in bounds yet hidden behind sticky navigation.
     expect(await tooltip.evaluate(el=>{
       const previous=el.style.pointerEvents;el.style.pointerEvents='auto';
-      try {const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}
+      try {const r=el.getBoundingClientRect(); const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2); return el.contains(hit) ? true : {hit:hit?.tagName,classes:hit?.className,rect:r.toJSON()};}
       finally {el.style.pointerEvents=previous;}
     })).toBe(true);
     expect(tipBox.x).toBeGreaterThanOrEqual(0);
@@ -79,6 +85,16 @@ for (const width of [390,1366]) for (const theme of ['light','dark']) {
     await expect(tooltip).toBeVisible();
     await page.getByRole('heading',{name:'Agents',exact:true,level:1}).click();
     await expect(menu).toBeHidden();
+    // Put the same trigger near the viewport bottom to force the collision branch.
+    await row.evaluate(el => { el.style.position='fixed'; el.style.bottom='24px'; el.style.right='24px'; el.style.zIndex='30'; });
+    await summary.click();
+    await expect(row.locator('details')).toHaveAttribute('data-placement','above');
+    const flipped=(await menu.boundingBox())!;
+    const lowTrigger=(await summary.boundingBox())!;
+    expect(flipped.y+flipped.height).toBeLessThanOrEqual(lowTrigger.y-5);
+    expect(flipped.y).toBeGreaterThanOrEqual(16);
+    await page.keyboard.press('Escape');
+    await row.evaluate(el => {el.style.position='';el.style.bottom='';el.style.right='';el.style.zIndex='';});
     await primary.click();
     const dialog=page.getByRole('dialog',{name:'Add Agent',exact:true});
     await expect(dialog).toBeVisible();
