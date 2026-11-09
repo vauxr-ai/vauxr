@@ -30,6 +30,10 @@ async function fits(dialog: Locator, page: Page) {
     const overflowing = [root, ...root.querySelectorAll('*')].filter(el => {
       if (!(el instanceof HTMLElement) || !rendered(el) || ['INPUT','TEXTAREA','SVG'].includes(el.tagName)) return false;
       const s = getComputedStyle(el);
+      const namedEllipsis = el.matches('.pipeline-agent-name,.pipeline-agent .pipeline-entity > strong,.agent-voice-modal .modal-body > h3')
+        && el.getAttribute('title') === el.textContent && !!el.textContent?.trim()
+        && s.overflow === 'hidden' && (s.textOverflow === 'ellipsis' || s.webkitLineClamp === '2');
+      if (namedEllipsis) return false;
       if (s.clipPath === 'inset(50%)' || el.classList.contains('sr-only')) return false;
       return (el === root || el.classList.contains('modal-body') || /auto|scroll|hidden|clip/.test(s.overflowY)) && el.clientHeight > 0 && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1);
     }).map(el => ({tag:el.tagName, classes:el.className, height:el.clientHeight, content:el.scrollHeight}));

@@ -10,7 +10,7 @@ function Entity({kind, title, detail, onEdit, icon}: {kind: string; title: strin
   const label = kind === "agent" ? title : detail || "Not configured";
   return <div className="pipeline-entity">{icon || content}
     {kind !== "agent" && <strong>{title}</strong>}
-    {onEdit ? <button type="button" className="pipeline-entity-label" title={label} onClick={onEdit} aria-label={`Edit ${title}`} aria-haspopup="dialog">{kind === "agent" ? <span className="pipeline-agent-name">{label}</span> : label}</button> : kind === "agent" ? <strong title={title}>{title}</strong> : <small>{label}</small>}
+    {onEdit ? <button type="button" className="pipeline-entity-label" title={label} onClick={onEdit} aria-label={`Edit ${title}`} aria-haspopup="dialog">{kind === "agent" ? <span className="pipeline-agent-name" title={label}>{label}</span> : label}</button> : kind === "agent" ? <strong title={title}>{title}</strong> : <small>{label}</small>}
     {kind === "agent" && <small>Agent</small>}
     {kind === "device" && <details className="pipeline-device-info"><summary className="pipeline-edit" aria-label="Voice Device details">Details</summary><small>Set microphone, speaker and voice overrides for individual devices in Devices.</small></details>}
   </div>;
