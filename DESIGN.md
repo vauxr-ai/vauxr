@@ -235,6 +235,13 @@ Use [Modal](web-client/src/components/Modal.tsx): center horizontally **and**
 vertically, standard × close, Escape dismissal, contained keyboard focus, inert
 background, and focus return to the visible launching control.
 
+Modal footer actions use `.modal-actions`: one right-aligned row, secondary action
+before primary, with intrinsic-width buttons (including Delete agent). Do not apply
+footer styling to navigation, refresh controls or inline editing. Add Agent exposes
+“How to create a custom agent” as a keyboard-accessible external guide link with an
+explicit new-tab hint; opening it must preserve the in-progress form. Until the
+guide in documentation PR #121 merges, link to its published documentation branch.
+
 Data-loading dialogs reserve their final viewport-constrained footprint immediately.
 Show a centered [LoadingIndicator](web-client/src/components/LoadingIndicator.tsx)
 spinner with an accessible loading name, not visible “Loading …” placeholder prose.
