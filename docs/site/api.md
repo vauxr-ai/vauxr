@@ -1,58 +1,79 @@
-# HTTP API: rename an agent
+# HTTP API reference
 
-Use this representative owner operation to understand request shape, authority
-and failure handling. The HTTP API is served at the portal authority, normally
-`http://localhost:8080`. It is separate from the channel WebSocket port 8765.
+Reference for server source **25469df63362853a2a4daf18cc0a115c6626b6bf**.
+The portal HTTP authority (normally `http://localhost:8080`) serves these routes.
+This is not the device/agent WebSocket authority. IDs are opaque inventory IDs,
+not display names. Bodies and responses below are JSON unless stated otherwise.
 
-## PATCH /api/agents/{agent_id}
+- [Devices, agents, webhooks and firmware](api-http-control.md)
+- [Owner authentication and provisioning](api-http-auth.md)
+- [Speech, settings and browser features](api-http-settings.md)
+- [Registered-route coverage ledger](api-http-coverage.json)
 
-Rename an existing agent instance without changing its identity or routing.
-Get the opaque `agent_id` from owner inventory (`GET /api/agents`); do not use a
-display name or registered type ID in its place.
+## Authentication and shared failures
 
-Authentication requires a logged-in same-origin owner session cookie. Mutations
-also require the exact configured `Origin` and `X-CSRF-Token` from the owner session
-(`GET /api/auth/session` returns `csrf_token` and `expires_at`). An enrolled
-integration credential cannot administer agents. No legacy shared token grants
-owner access.
+**Owner** means a logged-in same-origin session, not an operator bearer token.
+Use the exact configured owner HTTP/HTTPS origin, including port. HTTPS uses
+`__Host-vauxr_owner`; LAN HTTP uses `vauxr_owner`. Both are HttpOnly, SameSite=Strict,
+path `/`. Mutations with the owner cookie need the exact `Origin` and
+`X-CSRF-Token` returned by login or `GET /api/auth/session`. Do not send both cookie
+names. A cross-origin development server cannot authenticate owner requests.
+Forwarding is accepted only under the configured trusted-proxy contract.
 
-| Request element | Required value |
-| --- | --- |
-| Content-Type | `application/json` |
-| Body | Exactly one field, `name` |
-| `name` | Nonempty display string, 1–200 characters after trimming; no control characters |
+**Integration** means `Authorization: Bearer <enrolled-integration-credential>`.
+Only explicitly marked operations accept it. **Device** credentials cannot manage
+other devices. Legacy shared tokens grant no owner access. Neither credential nor
+cookie values belong in logs or examples. For browser-bound operations,
+`X-Vauxr-Browser` carries this browser's enrolled device credential *in addition*
+to the owner session; a submitted device ID never grants authority.
 
-Example request body:
+Policy-wrapped routes return `401 {"error":"unauthorized"}` for no principal,
+`403 {"error":"forbidden"}` for denied operations. Owner boundary failures use
+JSON `error` (`forbidden`, `invalid_request`, `owner_unavailable`), with 403 or
+503 as applicable. Endpoint-specific errors are listed on each page. Do not
+assume every framework error is JSON: unwrapped aiohttp exceptions can be text
+(e.g. avatar size limits or speech authorization without an owner cookie).
+Uncaught infrastructure failures are not a stable application error schema.
 
-```json
-{"name":"Patio garden helper"}
+## Safe request example
+
+After logging into the owner portal, run this in its developer console. It uses
+the current same-origin cookie automatically and does not embed credentials:
+
+```js
+const session = await fetch('/api/auth/session').then(r => r.json());
+const response = await fetch('/api/agents/<agent-id>', {
+  method: 'PATCH',
+  headers: {'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token},
+  body: JSON.stringify({name: 'Patio helper'})
+});
+console.log(response.status, await response.json());
 ```
 
-Example success (`200`, illustrative opaque ID):
+Replace `<agent-id>` with an ID from `GET /api/agents`. Success is
+`200 {"id":"<agent-id>","name":"Patio helper"}`. Examples are illustrative,
+source-checked, not executed against a live installation.
 
-```json
-{"id":"0123456789abcdef0123456789abcdef","name":"Patio garden helper"}
-```
+## Non-API registrations
 
-For a safe first exercise, rename an instance using the owner portal and inspect
-that PATCH in browser developer tools. Keep cookies, CSRF values and operator
-tokens out of shared captures. This example intentionally does not embed them in
-a shell command or prescribe a generic bearer token.
+`OPTIONS /{tail:.*}` returns 204. CORS advertises GET/POST/PATCH/DELETE/OPTIONS,
+Authorization and Content-Type, max-age 86400; this is not a credentialed
+cross-origin owner API and does not advertise PUT or CSRF headers.
 
-## Failures and recovery
+`GET /{tail:.*}` serves `web-client/dist` files or its `index.html` SPA fallback.
+Traversal is rejected. Missing distribution/index returns JSON 404; unmatched
+`/api`, `/api/*`, `/firmware-delivery` and its descendants return JSON
+`{"error":"not found"}` instead of the SPA. The combined server also registers
+this fallback on its device/agent listener. Treat it as static delivery, not an
+API. aiohttp GET registrations implicitly accept HEAD except firmware capability
+download, which explicitly disables HEAD. WebSocket upgrades and configurable
+realtime offer/signaling are transport reference scope, not HTTP management.
 
-| Status | Meaning / next action |
-| --- | --- |
-| 400 | Invalid JSON, extra/missing field, or invalid name; correct the request |
-| 401 | Missing or invalid owner session; log in again |
-| 403 | Authority/origin/CSRF boundary rejected; use the configured owner origin |
-| 404 | Agent not found; refresh inventory and use its current ID |
-| 503 | Save unavailable; refresh before retrying, since persistence may be uncertain |
+## Evidence
 
-Handler failures use a JSON `error` string, for example
-`{"error":"provide only the agent name"}` for an extra body field. Do not assume
-all server routes share this operation's body or error details. Success confirms
-the metadata update, not model inference or audio playback.
-
-See [types and instances](concepts.md), [the tutorial](tutorial.md) and
-[setup troubleshooting](guides.md) for the user-facing workflow.
+Registration roots: `src/vauxr/web/server.py:attach_http_routes`,
+`src/vauxr/server.py`; delegated registrars and exact locations appear in the
+ledger. Source links use the pinned revision in the ledger. Tests and the portal
+consumer (`web-client/src`) were inspected alongside handlers; see the ledger for
+checks and explicit limitations. This reference describes implemented behavior,
+not a promise that optional providers or media services are available.

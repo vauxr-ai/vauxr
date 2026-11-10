@@ -1,0 +1,882 @@
+{
+  "source_revision": "25469df63362853a2a4daf18cc0a115c6626b6bf",
+  "repository": "https://github.com/vauxr-ai/vauxr",
+  "scope": "Every explicit router registration under src, expanding the speech-path loop. Includes both composition roots; duplicate static fallback registrations retained. HEAD is implicit, not counted as an explicit registration.",
+  "registration_calls": 59,
+  "expanded_registrations": 63,
+  "unique_method_paths": 62,
+  "classification_counts": {
+    "excluded-transport": 3,
+    "http": 54,
+    "legacy-unimplemented": 2,
+    "internal-browser": 1,
+    "static-fallback": 2,
+    "cors-preflight": 1
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "${cfg.agent.ws_path}",
+      "classification": "excluded-transport",
+      "reference": null,
+      "source": "src/vauxr/server.py",
+      "line": 663,
+      "handler": "agent_ws_handler",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/server.py#L663",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "${cfg.offer_path}",
+      "classification": "excluded-transport",
+      "reference": null,
+      "source": "src/vauxr/realtime/app.py",
+      "line": 226,
+      "handler": "_offer_handler",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/realtime/app.py#L226",
+      "implicit_head": false,
+      "conditional": "REALTIME_ENABLED plus optional realtime dependencies"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 679,
+      "handler": "list_agents",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L679",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents",
+      "classification": "legacy-unimplemented",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 682,
+      "handler": "create_agent",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L682",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/agents/{agent_id}",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 683,
+      "handler": "delete_agent",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L683",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/agents/{agent_id}",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 685,
+      "handler": "rename_agent",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L685",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/{agent_id}/activate",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 684,
+      "handler": "activate_agent",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L684",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/{agent_id}/avatar",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 680,
+      "handler": "agent_avatar",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L680",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/{agent_id}/avatar",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 681,
+      "handler": "agent_avatar",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L681",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/{agent_id}/rotate",
+      "classification": "legacy-unimplemented",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 686,
+      "handler": "rotate_token",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L686",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/{agent_id}/speech",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/web/speech.py",
+      "line": 65,
+      "handler": "settings",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L65",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/agents/{agent_id}/speech",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/web/speech.py",
+      "line": 66,
+      "handler": "settings",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L66",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/{action}",
+      "classification": "http",
+      "reference": "api-http-auth.md",
+      "source": "src/vauxr/web/owner.py",
+      "line": 166,
+      "handler": "owner_endpoint",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/owner.py#L166",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/{action}",
+      "classification": "http",
+      "reference": "api-http-auth.md",
+      "source": "src/vauxr/web/owner.py",
+      "line": 167,
+      "handler": "owner_endpoint",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/owner.py#L167",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/companion/{action}",
+      "classification": "internal-browser",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/web/companion.py",
+      "line": 88,
+      "handler": "boundary(operation)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/companion.py#L88",
+      "implicit_head": false,
+      "conditional": "Combined app state required for chat action"
+    },
+    {
+      "method": "GET",
+      "path": "/api/devices",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 673,
+      "handler": "list_devices",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L673",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/devices/{device_id}",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 676,
+      "handler": "update_device",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L676",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/devices/{device_id}/announce",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 677,
+      "handler": "announce",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L677",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/devices/{device_id}/command",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 678,
+      "handler": "device_command",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L678",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/devices/{device_id}/metrics",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 674,
+      "handler": "device_metrics",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L674",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/devices/{device_id}/metrics/{window}",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 675,
+      "handler": "device_metrics",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L675",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/devices/{device_id}/speech",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/web/speech.py",
+      "line": 65,
+      "handler": "settings",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L65",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/devices/{device_id}/speech",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/web/speech.py",
+      "line": 66,
+      "handler": "settings",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L66",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/enrollment/v1/{action}",
+      "classification": "http",
+      "reference": "api-http-auth.md",
+      "source": "src/vauxr/provisioning/enrollment_http.py",
+      "line": 107,
+      "handler": "enrollment_endpoint",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/provisioning/enrollment_http.py#L107",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/firmware-delivery/{filename}",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 695,
+      "handler": "mint_firmware_delivery",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L695",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/integrations/v1/{action}",
+      "classification": "http",
+      "reference": "api-http-auth.md",
+      "source": "src/vauxr/provisioning/integration_http.py",
+      "line": 83,
+      "handler": "integration_endpoint",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/provisioning/integration_http.py#L83",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/interface",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/interface.py",
+      "line": 97,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/interface.py#L97",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/interface",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/interface.py",
+      "line": 98,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/interface.py#L98",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/interface/preview",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/interface.py",
+      "line": 99,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/interface.py#L99",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/lifecycle/v1/{action}",
+      "classification": "http",
+      "reference": "api-http-auth.md",
+      "source": "src/vauxr/provisioning/lifecycle_http.py",
+      "line": 111,
+      "handler": "lifecycle_endpoint",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/provisioning/lifecycle_http.py#L111",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/local-agents",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/agents/local.py",
+      "line": 109,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/local.py#L109",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/local-agents",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/agents/local.py",
+      "line": 110,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/local.py#L110",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/local-agents/{agent_id}",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/agents/local.py",
+      "line": 113,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/local.py#L113",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/local-agents/{agent_id}/runtime",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/agents/local.py",
+      "line": 111,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/local.py#L111",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/local-agents/{agent_id}/runtime",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/agents/local.py",
+      "line": 112,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/local.py#L112",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/plugins/__init__.py",
+      "line": 49,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/plugins/__init__.py#L49",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/openclaw/package",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/plugins/__init__.py",
+      "line": 50,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/plugins/__init__.py#L50",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/plugins",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/plugins/settings.py",
+      "line": 225,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/plugins/settings.py#L225",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "PUT",
+      "path": "/api/settings/plugins/{plugin_id}",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/plugins/settings.py",
+      "line": 226,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/plugins/settings.py#L226",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/providers",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/settings/http.py",
+      "line": 206,
+      "handler": "wrapped",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L206",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "PUT",
+      "path": "/api/settings/providers/profiles/{profile_id}",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/settings/http.py",
+      "line": 207,
+      "handler": "wrapped",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L207",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/providers/profiles/{profile_id}/discover",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/settings/http.py",
+      "line": 208,
+      "handler": "wrapped",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L208",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "PUT",
+      "path": "/api/settings/providers/speech-auth",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/settings/http.py",
+      "line": 209,
+      "handler": "wrapped",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L209",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/speech",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/settings/http.py",
+      "line": 210,
+      "handler": "wrapped",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L210",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "PUT",
+      "path": "/api/settings/speech/{backend_id}",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/settings/http.py",
+      "line": 211,
+      "handler": "wrapped",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L211",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/speech/{backend_id}/discover",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/settings/http.py",
+      "line": 212,
+      "handler": "wrapped",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L212",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/speech",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/web/speech.py",
+      "line": 65,
+      "handler": "settings",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L65",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/speech",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/web/speech.py",
+      "line": 66,
+      "handler": "settings",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L66",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/speech/preview",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/web/speech.py",
+      "line": 61,
+      "handler": "boundary(preview)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L61",
+      "implicit_head": false,
+      "conditional": "Connected enrolled browser and speech backend"
+    },
+    {
+      "method": "GET",
+      "path": "/api/support",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/agents/support.py",
+      "line": 128,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/support.py#L128",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/support",
+      "classification": "http",
+      "reference": "api-http-settings.md",
+      "source": "src/vauxr/agents/support.py",
+      "line": 129,
+      "handler": "boundary(handle)",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/support.py#L129",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/webhooks",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 687,
+      "handler": "list_webhooks",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L687",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/webhooks",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 689,
+      "handler": "create_webhook",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L689",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/webhooks/{webhook_id}",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 691,
+      "handler": "delete_webhook",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L691",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/webhooks/{webhook_id}",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 688,
+      "handler": "get_webhook_configuration",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L688",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/webhooks/{webhook_id}",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 690,
+      "handler": "update_webhook",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L690",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/webhooks/{webhook_id}/duplicate",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 692,
+      "handler": "duplicate_webhook",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L692",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/firmware-delivery/{token}/{filename}",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 696,
+      "handler": "download_firmware_delivery",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L696",
+      "implicit_head": false,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/firmware/{filename}",
+      "classification": "http",
+      "reference": "api-http-control.md",
+      "source": "src/vauxr/web/server.py",
+      "line": 693,
+      "handler": "serve_firmware",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L693",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/ws",
+      "classification": "excluded-transport",
+      "reference": null,
+      "source": "src/vauxr/server.py",
+      "line": 664,
+      "handler": "device_ws_handler",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/server.py#L664",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/{tail:.*}",
+      "classification": "static-fallback",
+      "reference": "api.md#non-api-registrations",
+      "source": "src/vauxr/server.py",
+      "line": 675,
+      "handler": "serve_static",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/server.py#L675",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "GET",
+      "path": "/{tail:.*}",
+      "classification": "static-fallback",
+      "reference": "api.md#non-api-registrations",
+      "source": "src/vauxr/web/server.py",
+      "line": 704,
+      "handler": "serve_static",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L704",
+      "implicit_head": true,
+      "conditional": null
+    },
+    {
+      "method": "OPTIONS",
+      "path": "/{tail:.*}",
+      "classification": "cors-preflight",
+      "reference": "api.md#non-api-registrations",
+      "source": "src/vauxr/web/server.py",
+      "line": 672,
+      "handler": "_options",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L672",
+      "implicit_head": false,
+      "conditional": null
+    }
+  ],
+  "action_dispatch": {
+    "/api/auth/{action}": {
+      "GET": [
+        "status",
+        "session"
+      ],
+      "POST": [
+        "claim",
+        "save",
+        "login",
+        "logout"
+      ]
+    },
+    "/api/enrollment/v1/{action}": {
+      "POST": [
+        "request",
+        "prove",
+        "redeem",
+        "cancel",
+        "status",
+        "initiate",
+        "approve",
+        "deny",
+        "list",
+        "prompts",
+        "save-prompts"
+      ]
+    },
+    "/api/integrations/v1/{action}": {
+      "POST": [
+        "request",
+        "status",
+        "deliver",
+        "cancel",
+        "ack",
+        "list",
+        "approve",
+        "deny"
+      ]
+    },
+    "/api/lifecycle/v1/{action}": {
+      "POST": [
+        "rotate",
+        "revoke",
+        "recover",
+        "status",
+        "poll",
+        "deliver",
+        "ack"
+      ]
+    },
+    "/api/companion/{action}": {
+      "POST": [
+        "events",
+        "ack",
+        "context",
+        "select",
+        "chat"
+      ]
+    }
+  },
+  "evidence": {
+    "handlers": "All registration files and their dispatched services/validators reviewed at source_revision; references describe current implementation, including reserved 501 handlers.",
+    "consumers": [
+      "web-client/src/auth/OwnerGate.tsx",
+      "web-client/src/auth/api.ts",
+      "web-client/src/components/ProviderSettings.tsx",
+      "web-client/src/components/CompanionControls.tsx",
+      "web-client/src/components/AddAgent.tsx",
+      "web-client/src/components/VoiceSample.tsx"
+    ],
+    "tests_inspected": [
+      "tests/test_http_api.py",
+      "tests/test_owner_auth.py",
+      "tests/test_provider_settings.py",
+      "tests/test_plugin_settings.py",
+      "tests/fixtures/enrollment-v1-vector.json"
+    ],
+    "checks": [
+      {
+        "check": "AST registration reconciliation",
+        "result": "pass: 59 calls, 63 expanded registrations, 62 unique method/path combinations; three excluded transport registrations; all 60 included registrations map to existing reference pages"
+      },
+      {
+        "check": "Local Markdown links, code-fence balance and endpoint path coverage",
+        "result": "pass"
+      },
+      {
+        "check": "Versioned action dispatch key reconciliation against service AST",
+        "result": "pass"
+      },
+      {
+        "check": "Focused pytest contracts",
+        "result": "blocked: checkout venv Python symlink target missing; system python3 has no pytest. No tests executed."
+      },
+      {
+        "check": "git diff --check",
+        "result": "pass"
+      }
+    ]
+  },
+  "gaps": [
+    "Transport upgrades and cfg.offer_path intentionally excluded: separate transport owner.",
+    "Examples are source-checked placeholders, not executed against live installation.",
+    "No full local Playwright run, deployment or AWS mutation.",
+    "Not every runtime failure is normalized to JSON; reference does not invent uniform error schemas.",
+    "Runtime regression tests unavailable in this worker environment: missing venv interpreter and system pytest. Documentation-only source/AST checks passed."
+  ]
+}
