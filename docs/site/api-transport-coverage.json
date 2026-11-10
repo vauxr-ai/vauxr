@@ -1,0 +1,198 @@
+{
+  "schema_version": 1,
+  "server_repository": "https://github.com/vauxr-ai/vauxr",
+  "server_revision": "25469df63362853a2a4daf18cc0a115c6626b6bf",
+  "scope": "All client-facing WebSocket upgrades, WebRTC signaling registrations and audio/SSE transport existence; remaining REST belongs to api.md coverage. Not a claim of whole-repository route coverage.",
+  "denominator": {
+    "explicit_registration_calls": 3,
+    "always_registered": 2,
+    "conditional": 1,
+    "implicit_HEAD_routes": 2,
+    "expanded_method_path_pairs_when_realtime_enabled": 5,
+    "documented_explicit_routes": 3,
+    "unreconciled_explicit_routes": 0,
+    "registered_SSE_routes": 0,
+    "registered_HTTP_audio_stream_routes": 0
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/ws",
+      "expression": "\"/ws\"",
+      "handler": "device_ws_handler",
+      "registration": "src/vauxr/server.py:664",
+      "condition": "always",
+      "classification": "shipping device WebSocket",
+      "implicit_head": true,
+      "reference": "api-transports.md#device-websocket-ws"
+    },
+    {
+      "method": "GET",
+      "path": "/agent",
+      "expression": "cfg.agent.ws_path",
+      "handler": "agent_ws_handler",
+      "registration": "src/vauxr/server.py:663",
+      "condition": "always; current config constructs /agent",
+      "classification": "shipping integration WebSocket",
+      "implicit_head": true,
+      "reference": "api-transports.md#integration-websocket-agent"
+    },
+    {
+      "method": "POST",
+      "path": "/api/offer",
+      "expression": "cfg.offer_path",
+      "handler": "_offer_handler",
+      "registration": "src/vauxr/realtime/app.py:226",
+      "condition": "cfg.realtime.enabled; configurable offer path; optional dependencies required",
+      "classification": "conditional WebRTC signaling",
+      "implicit_head": false,
+      "reference": "api-transports.md#webrtc-signaling-post-apioffer"
+    }
+  ],
+  "device_operations": [
+    "hello",
+    "voice.start",
+    "voice.end",
+    "abort",
+    "realtime.start",
+    "realtime.media_ready",
+    "realtime.pause",
+    "realtime.resume",
+    "realtime.stop",
+    "device.button"
+  ],
+  "agent_authenticated_operations": [
+    "agent.response.delta",
+    "agent.response.end",
+    "agent.response.error",
+    "agent.realtime.result",
+    "agent.ui.name.update",
+    "agent.ui.action"
+  ],
+  "agent_handshake_operation": "agent.auth",
+  "realtime_backend_operations": [
+    "bootstrap",
+    "record",
+    "consult",
+    "release"
+  ],
+  "evidence": [
+    {
+      "path": "src/vauxr/server.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/server.py"
+    },
+    {
+      "path": "src/vauxr/protocol.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/protocol.py"
+    },
+    {
+      "path": "src/vauxr/agents/server.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/server.py"
+    },
+    {
+      "path": "src/vauxr/auth/policy.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/auth/policy.py"
+    },
+    {
+      "path": "src/vauxr/auth/connections.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/auth/connections.py"
+    },
+    {
+      "path": "src/vauxr/web/owner.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/owner.py"
+    },
+    {
+      "path": "src/vauxr/web/server.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py"
+    },
+    {
+      "path": "src/vauxr/config.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/config.py"
+    },
+    {
+      "path": "src/vauxr/devices/registry.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/devices/registry.py"
+    },
+    {
+      "path": "src/vauxr/devices/settings.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/devices/settings.py"
+    },
+    {
+      "path": "src/vauxr/realtime/app.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/realtime/app.py"
+    },
+    {
+      "path": "src/vauxr/realtime/session.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/realtime/session.py"
+    },
+    {
+      "path": "src/vauxr/realtime/startup.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/realtime/startup.py"
+    },
+    {
+      "path": "src/vauxr/realtime/live.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/realtime/live.py"
+    },
+    {
+      "path": "src/vauxr/buttons.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/buttons.py"
+    },
+    {
+      "path": "src/vauxr/pipeline.py",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/pipeline.py"
+    },
+    {
+      "path": "pyproject.toml",
+      "url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/pyproject.toml"
+    }
+  ],
+  "consumers": [
+    {
+      "repository": "https://github.com/vauxr-ai/vauxr-openclaw",
+      "revision": "e0f6c103f904363da431f864c8b39712ee1dc329",
+      "inspected": [
+        "src/bridge.ts",
+        "src/realtime.ts"
+      ],
+      "mode": "read-only",
+      "findings": [
+        "Agent auth/transcript/result and reconnect behavior traced; agent.device_state is consumer-declared, not emitted by inspected server."
+      ]
+    },
+    {
+      "repository": "https://github.com/vauxr-ai/vauxr-assistant",
+      "revision": "68933e1aa2b4554a3e4feae6759932f428f04625",
+      "inspected": [
+        "components/vauxr_client/SignalingClient.cpp",
+        "components/vauxr_client/WebrtcTransport.cpp",
+        "components/vauxr_client/vauxr_client.cpp"
+      ],
+      "mode": "read-only",
+      "dirty_paths_preserved": [
+        "sdkconfig"
+      ],
+      "findings": [
+        "Body credential/device/startup fields and same-origin offer guard traced; RTP-ready startup cutover checked in source only."
+      ]
+    }
+  ],
+  "checks": {
+    "static": "AST registration/operation reconciliation, JSON parsing, pinned evidence paths, local source-diff scope and whitespace checks",
+    "runtime_attempt": "python3 -m pytest -q tests/test_protocol.py tests/test_server_handshake.py tests/test_agent_server.py tests/test_realtime_startup.py",
+    "runtime_result": "Blocked: system Python has no pytest; existing /home/node/.openclaw/workspace/vauxr/.venv/bin/python symlink target missing. No test pass claimed.",
+    "live_examples": "Not executed; placeholders source-reviewed only. No deployment, device mutation, full Playwright or AWS action."
+  },
+  "limitations": [
+    "Pipecat answer schema described from delegated SmallWebRTC interface and source consumers; optional runtime unavailable for execution.",
+    "Sibling api.md and concepts.md are absent at current develop and are restored/integrated by coordinator; links require that integration.",
+    "Not a general companion action or plugin tool reference; companion action payload is current UI context-specific.",
+    "Firmware source inspected read-only against pinned HEAD plus preserved unrelated dirty sdkconfig.",
+    "No standard WS capture backpressure guarantee or external-agent cancellation protocol."
+  ],
+  "excluded": [
+    "Remaining REST handlers (HTTP worker)",
+    "Static assets and artifact binary downloads (not audio)",
+    "Wyoming provider TCP protocol (not registered client-facing API)",
+    "Generated/vendor code, firmware builds and optional dependency internals"
+  ]
+}
