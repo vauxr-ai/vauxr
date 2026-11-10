@@ -1,14 +1,16 @@
-# HTTP API reference
+# API reference
 
 Reference for server source **25469df63362853a2a4daf18cc0a115c6626b6bf**.
 The portal HTTP authority (normally `http://localhost:8080`) serves these routes.
 This is not the device/agent WebSocket authority. IDs are opaque inventory IDs,
 not display names. Bodies and responses below are JSON unless stated otherwise.
 
+- [WebSockets, WebRTC and streaming lifecycle](api-transports.md)
+- [Coverage and verification](api-coverage.md)
 - [Devices, agents, webhooks and firmware](api-http-control.md)
 - [Owner authentication and provisioning](api-http-auth.md)
 - [Speech, settings and browser features](api-http-settings.md)
-- [Registered-route coverage ledger](api-http-coverage.json)
+- [Registered-route coverage ledger](https://github.com/vauxr-ai/vauxr/blob/docs/complete-api-reference/docs/site/api-http-coverage.json)
 
 ## Authentication and shared failures
 

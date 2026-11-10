@@ -2,7 +2,7 @@
 
 This reference describes server source **25469df63362853a2a4daf18cc0a115c6626b6bf**.
 For REST operations see [HTTP API](api.md); for identity and routing see
-[types and instances](concepts.md). The [coverage ledger](api-transport-coverage.json)
+[types and instances](concepts.md). The [coverage ledger](https://github.com/vauxr-ai/vauxr/blob/docs/complete-api-reference/docs/site/api-transport-coverage.json)
 records registration, evidence, consumer revisions and verification limits.
 
 ## Routes and authority
