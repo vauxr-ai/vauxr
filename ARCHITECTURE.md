@@ -2,8 +2,8 @@
 
 Vauxr is a Python 3.12 asyncio/aiohttp voice gateway. One application serves
 HTTP management, device WebSockets and integration WebSockets; optional in-process
-Pipecat provides WebRTC media. Wyoming speech services and LLM backends are
-external dependencies, not part of the gateway process. Local speech/backends
+[Pipecat](https://github.com/pipecat-ai/pipecat) provides WebRTC media.
+Wyoming speech services and LLM backends are external dependencies, not part of the gateway process. Local speech/backends
 can operate without cloud APIs; selecting a hosted provider requires its service.
 
 ## Runtime boundaries
