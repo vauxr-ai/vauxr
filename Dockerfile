@@ -15,6 +15,10 @@ WORKDIR /app
 RUN pip install --no-cache-dir --upgrade pip build
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
+# Only the official release workflow supplies this marker. Normal source builds
+# remain custom; runtime environment/version strings cannot assert a release.
+ARG VAUXR_RELEASE_TAG=""
+RUN python -c 'import json, os, pathlib; p=pathlib.Path("src/vauxr/telemetry"); tag=os.environ.get("VAUXR_RELEASE_TAG", ""); allowed=json.loads((p/"v1.policy.json").read_text())["released_versions"]; (p/"release.json").write_text(json.dumps({"source":"github-release" if tag in allowed else "custom", "version":tag if tag in allowed else "custom"}))'
 RUN pip wheel --no-cache-dir --no-deps -w /wheels .
 
 FROM python:3.12-slim
