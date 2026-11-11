@@ -76,6 +76,14 @@ for (const width of (designDir ? [390,768,1366] : [390,1366])) for (const theme 
   const add=page.getByRole('dialog',{name:'Add Agent',exact:true});
   await expect(add.getByRole('button',{name:'Choose Vauxr Support',exact:true})).toBeVisible();
   await fits(add,page);
+  const help = add.getByRole('link',{name:'How to create a custom agent (opens in a new tab)'});
+  await add.getByLabel('Agent name').fill('Preserved draft');
+  await help.focus(); await expect(help).toBeFocused();
+  await page.route('https://github.com/**', route => route.fulfill({status:200,body:'Guide fixture'}));
+  const popupPromise = page.waitForEvent('popup'); await page.keyboard.press('Enter');
+  const popup = await popupPromise; await popup.close();
+  await expect(add.getByLabel('Agent name')).toHaveValue('Preserved draft');
+  await expect(add).toBeVisible();
   await add.getByRole('button',{name:'Choose OpenClaw',exact:true}).click();
   await add.getByRole('button',{name:'Refresh integration requests',exact:true}).click();
   const requestRow=add.getByRole('region',{name:/^Integration request /});await expect(requestRow).toHaveCount(1);
@@ -131,7 +139,14 @@ for (const width of (designDir ? [390,768,1366] : [390,1366])) for (const theme 
   const runtime=page.getByRole('dialog',{name:'Agent runtime settings',exact:true});await expect(runtime.getByLabel(/^(Support|Model) provider$/)).toBeEnabled();await runtime.getByLabel(/^(Support|Model) provider$/).selectOption('ollama');await fits(runtime,page);await shot('runtime');
   const config=runtime.getByRole('tab',{name:'Configuration',exact:true}); await config.focus();await page.keyboard.press('ArrowRight');const diagnostics=runtime.getByRole('tab',{name:'Diagnostics',exact:true});await expect(diagnostics).toBeFocused();await fits(runtime,page);await shot('runtime-diagnostics');await page.keyboard.press('Home');await expect(config).toBeFocused();await close(runtime);
   await openAgentAction(page,'Runtime settings for Synthetic realtime integration');await runtime.getByRole('tab',{name:'Diagnostics',exact:true}).click();await fits(runtime,page);await close(runtime);
-  const row=page.locator('main li').filter({has:page.getByRole('heading',{name:'Removable integration',level:3,exact:true})});await row.locator('summary').click();await row.getByRole('button',{name:'Delete agent',exact:true}).click();const remove=page.getByRole('dialog',{name:'Delete agent',exact:true});await fits(remove,page);await close(remove);
+  const row=page.locator('main li').filter({has:page.getByRole('heading',{name:'Removable integration',level:3,exact:true})});await row.locator('summary').click();await row.getByRole('button',{name:'Delete agent',exact:true}).click();const remove=page.getByRole('dialog',{name:'Delete agent',exact:true});await fits(remove,page);
+  const cancel=remove.getByRole('button',{name:'Cancel',exact:true});
+  const confirm=remove.getByRole('button',{name:'Delete agent',exact:true});
+  const c=await cancel.boundingBox(), d=await confirm.boundingBox();
+  expect(c && d && Math.abs(c.y+c.height/2-d.y-d.height/2)<1 && c.x+c.width<=d.x).toBeTruthy();
+  const trailing=await remove.locator('.modal-actions').evaluate(el=>{const r=el.getBoundingClientRect();const b=el.lastElementChild!.getBoundingClientRect();return Math.abs(r.right-b.right)<1;});
+  expect(trailing).toBeTruthy();
+  await cancel.click(); await expect(remove).not.toBeVisible();
   await page.getByRole('button',{name:'Connect browser',exact:true}).click();await expect(page.locator('#voice-companion').getByLabel('Conversation agent')).toBeEnabled();
   const expand=page.getByRole('button',{name:/Expand (voice|text) companion/});if(await expand.count()) await expand.click();
   if(width===390){const companion=page.getByRole('dialog',{name:/companion/i});await expect(companion).toHaveCount(1);await fits(companion,page);await shot('companion');}

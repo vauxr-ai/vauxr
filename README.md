@@ -44,15 +44,15 @@ cd vauxr
 docker compose up -d --build
 ```
 
-Compose prepares storage automatically before starting the services. The server
-still runs as non-root UID 100/GID 101. Only the data, recordings and firmware
-directory roots are adjusted; existing files and speech cache ownership are not
-changed. No manual `mkdir` or host `chown` is needed. See
+Compose automatically prepares the bind-mounted storage before starting the
+services. Vauxr still runs as non-root UID 100/GID 101. Initialization adjusts
+only the data, recordings, and firmware directory roots, never existing files
+or speech caches. It is safe to repeat and works through the selected Docker
+daemon with rootful or rootless Docker; no host `chown` is needed. If storage
+initialization fails, startup stops: inspect `docker compose logs storage-init`,
+fix the mount permissions, then repeat the command above. See
 [storage initialization and recovery](docs/how-to.md#automatic-storage-initialization).
 
-**Revision dependency:** this simplified startup requires
-[automatic setup PR #123](https://github.com/vauxr-ai/vauxr/pull/123).
-Until it is merged, use that setup branch for this procedure.
 
 3. On the same machine, open the web client at [http://localhost:8080](http://localhost:8080).
 Then open the local owner claim flow from a private terminal:

@@ -296,7 +296,7 @@ export default function AgentsPanel({
         <p>Make <strong>{activatingAgent.name}</strong> the default fallback route for unassigned devices?</p>
         <p>This changes server routing, not just your companion. Devices with an explicit agent assignment keep their assigned route.</p>
         {activationError && <p role="alert">{activationError}</p>}
-        <div className="flex gap-2">
+        <div className="modal-actions">
           <button type="button" disabled={busy} onClick={() => setActivationId("")}>Cancel</button>
           <button type="button" className="button-primary" disabled={busy} onClick={() => void activate(activatingAgent)}>{busy ? "Setting default…" : "Set as default"}</button>
         </div>
@@ -305,13 +305,13 @@ export default function AgentsPanel({
         <p>Delete <strong>{deletingAgent.name}</strong>? Assigned devices will use the default agent.</p>
         {deleteError && <p role="alert">{deleteError}</p>}
         {deleting && <p role="status">Deleting agent…</p>}
-        <button type="button" disabled={deleting} onClick={()=>setDeleteId("")}>Cancel</button>
+        <div className="modal-actions"><button type="button" disabled={deleting} onClick={()=>setDeleteId("")}>Cancel</button>
         <button type="button" className="button-primary" disabled={deleting} onClick={async()=>{
           setDeleting(true);setDeleteError("");
           try { await api.deleteAgent(deletingAgent.id); await refresh(); setDeleteId("");setSelectedId("");setDiagnosticsId(""); window.dispatchEvent(new Event("agent-route-changed")); document.querySelector<HTMLButtonElement>('.agent-create-action > button')?.focus(); }
           catch(err){setDeleteError(err instanceof Error?err.message:"Unable to delete agent. Refresh and retry.");}
           finally {setDeleting(false);}
-        }}>{deleting?"Deleting…":"Delete agent"}</button>
+        }}>{deleting?"Deleting…":"Delete agent"}</button></div>
       </Modal>}
       {voiceAgent && <Modal title="Voice pipeline" className="agent-detail-modal agent-detail agent-voice-modal"
         returnFocus={voiceReturnFocus} onClose={() => setVoiceId("")}>
@@ -331,7 +331,7 @@ export default function AgentsPanel({
             onChange={event => {const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadAvatar(file);}} />
         </label>
         {avatarError && <p role="alert">{avatarError}</p>}
-        <button disabled={avatarBusy} onClick={() => setAvatarOpen(false)}>Cancel</button>
+        <div className="modal-actions"><button disabled={avatarBusy} onClick={() => setAvatarOpen(false)}>Cancel</button></div>
       </Modal>}
       {diagnostics && <Modal title="Agent runtime settings" className="agent-detail-modal agent-detail agent-diagnostics-modal"
         returnFocus={diagnosticsReturnFocus} onClose={() => setDiagnosticsId("")}>
