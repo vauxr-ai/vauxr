@@ -94,7 +94,13 @@ for (const width of (designDir ? [390,768,1366] : [390,1366])) for (const theme 
   const shownId=(await requestRow.getAttribute('aria-label'))!.replace('Integration request ','');
   const selected=[pending,second].find(item=>item.request.request_id===shownId)!;
   await requestRow.getByLabel('Integration matching code').fill(selected.request.user_code);await requestRow.getByRole('checkbox').check();
+  // A click starts approval; native delivery must wait for its durable response.
+  const approval = page.waitForResponse(response =>
+    new URL(response.url()).pathname === '/api/integrations/v1/approve'
+    && response.request().method() === 'POST'
+    && response.request().postDataJSON()?.request_id === selected.request.request_id);
   await requestRow.getByRole('button',{name:'Approve matching integration',exact:true}).click();
+  expect((await approval).status()).toBe(200);
   const delivery=await client(server,'deliver',selected.secret);await client(server,'ack',{...selected.secret,credential:delivery.credential,saved:true});
   await fits(add,page);
   await add.getByRole('navigation',{name:'Integration requests',exact:true}).getByRole('button',{name:'Next request',exact:true}).click();await fits(add,page);
