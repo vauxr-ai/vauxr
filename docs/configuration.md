@@ -40,7 +40,7 @@ sections. Agent activation never writes this file.
 
 ## Speech providers and selections
 
-`speech.json` has four required fields: `version: 1`, `providers`, `defaults` and
+`speech.json` accepts schema version 1 or 2 and has four required fields: `version`, `providers`, `defaults` and
 `devices`. Each provider has a unique `id`, `kind` (`stt`, `tts`, `realtime`),
 `adapter`, `model`, `host`, `port`, and `voices` for TTS/realtime. Credentials are
 not provider fields; OpenAI credentials remain deployment secrets. The shipped
@@ -61,8 +61,17 @@ the model from the selected registry entry. A realtime selection requires a
 realtime provider; custom registries can omit realtime when all selections use
 Standard mode.
 
+Agent policies and device assignments also live in `speech.json`: `agents`
+maps agent IDs to `enabled_modes`, `default_mode` and a partial `selection`;
+`assignments` maps device IDs to agent IDs; `capabilities` records device modes.
+An explicit assignment wins over the active global agent. Agent selection layers
+on global defaults, then device overrides layer on that result (voice maps merge
+by provider ID). A local LangChain agent without a policy uses Standard mode.
+An empty enabled-mode list is chat-only; dormant device overrides cannot enable
+voice. Effective modes are intersected with agent and device capabilities.
+
 `devices` maps stable device IDs to partial overrides of those settings. Missing
-fields inherit global defaults. The speech management API accepts those selection
+fields inherit the assigned/active agent's settings, then global defaults. The speech management API accepts those selection
 fields; a per-device `null` removes an override. The device API's `pipeline_mode`
 and `voice_mode` controls also write the speech `mode` override, rather than
 persisting another pipeline selection in `devices.json`. Transport stays in

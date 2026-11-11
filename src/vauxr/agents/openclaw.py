@@ -1,7 +1,7 @@
 """OpenClaw native gateway WebSocket client.
 
 Port of `src/openclaw-client.ts`. Connects outbound to OpenClaw, performs
-the v3 connect handshake using a per-server Ed25519 identity, then sends
+the v4 connect handshake using a per-server Ed25519 identity, then sends
 `chat.send` requests and routes streaming `chat` events back as deltas.
 """
 

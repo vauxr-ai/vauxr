@@ -46,6 +46,11 @@ class Integration:
                 log.info("integration enrollment %s", row["state"])
 
     def _register_agent(self, row: dict) -> None:
+        """Project completed enrollment into routing metadata, not credential authority.
+
+        Registration uses the enrollment's stable agent ID so ACK retries repair
+        metadata without manufacturing a second agent identity.
+        """
         from datetime import UTC, datetime
 
         from vauxr.agents.registry import Agent, register

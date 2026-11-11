@@ -37,6 +37,12 @@ async def run_chat(
     principal: Principal, request_id: str, text: str,
     server: AgentServer, direct: OpenClawClient | None,
 ) -> str:
+    """Run one bounded text request without admitting overlapping device voice.
+
+    Replay admission is process-local and recorded before backend dispatch.
+    Timeout/revocation releases local ownership but cannot undo external actions;
+    callers must inspect action status rather than blindly retry uncertain work.
+    """
     device_id = principal.subject
     key = (get_config().data_dir, device_id)
     replay = (*key, principal.credential_id, request_id)

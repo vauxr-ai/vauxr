@@ -1,358 +1,168 @@
-# Vauxr — Architecture
+# Vauxr — system explanation
 
-Vauxr is a self-hosted voice gateway that gives any voice device a full STT → LLM → TTS pipeline. It connects hardware to OpenClaw (or any LLM backend) with no port forwarding, no sidecar services, and no cloud dependency required.
+Vauxr is a Python 3.12 asyncio/aiohttp voice gateway. One application serves
+HTTP management, device WebSockets and integration WebSockets; optional in-process
+[Pipecat](https://github.com/pipecat-ai/pipecat) provides WebRTC media.
+Wyoming speech services and LLM backends are external dependencies, not part of the gateway process. Local speech/backends
+can operate without cloud APIs; selecting a hosted provider requires its service.
 
----
+## Runtime boundaries
 
-## The Big Picture
-
-```
-┌─────────────────────────────────────────────────────┐
-│                   Voice Device                      │
-│  (mic + speaker)                                    │
-│                                                     │
-│  vauxr_client (device library)                   │
-│  - mic capture + VAD                                │
-│  - Vauxr WS protocol                             │
-│  - audio playback                                   │
-└───────────────────┬─────────────────────────────────┘
-                    │ WebSocket (Vauxr WS protocol)
-                    ▼
-┌─────────────────────────────────────────────────────┐
-│                Vauxr                             │
-│  (self-hosted Docker stack)                      │
-│                                                     │
-│  ┌──────────┐  ┌──────────┐  ┌─────────────────┐   │
-│  │ Whisper  │  │  Piper   │  │     vauxr        │   │
-│  │ (STT)    │  │  (TTS)   │  │   (WS bridge)    │   │
-│  │ Wyoming  │  │ Wyoming  │  │                  │   │
-│  └──────────┘  └──────────┘  └────────┬────────┘   │
-│                                        │            │
-└────────────────────────────────────────┼────────────┘
-                                         │ OpenClaw native WS
-                                         ▼ (or raw LLM API)
-                              ┌─────────────────────┐
-                              │      OpenClaw        │
-                              │  (local or cloud)    │
-                              │  - persona + memory  │
-                              │  - tools + cron      │
-                              │  - proactive sends   │
-                              └─────────────────────┘
+```mermaid
+flowchart LR
+    D[Device or browser] -->|/ws control and PCM| S[vauxr.server]
+    D -->|/api/offer and WebRTC| R[vauxr.realtime]
+    W[React owner portal] -->|same-origin /api| H[vauxr.web]
+    S --> P[vauxr.pipeline]
+    P --> A[vauxr.agents]
+    R --> A
+    P --> V[vauxr.speech]
+    R --> V
+    O[OpenClaw plugin] <-->|/agent| A
 ```
 
----
+`server.make_app()` installs transport, owner-session and operation-policy
+middleware before registering routes. `run_server()` binds the **same app** on
+8765 (conventionally WS) and 8080 (conventionally HTTP); these are not separate
+security domains. Optional TLS adds another listener. Startup validates stored
+configuration, credentials, speech and routing before serving traffic.
 
-## Repos
-
-| Repo | Description |
+| Owner | Responsibility / source |
 |---|---|
-| `vauxr` | Docker stack + WS bridge server (this repo) |
-| `vauxr-openclaw` | OpenClaw channel plugin (deep integration + relay) |
-
----
-
-## Components
-
-### 1. vauxr (voice gateway server)
-
-The core of the stack. A Node.js WebSocket server that:
-
-- Accepts device connections (Vauxr WS protocol)
-- Receives audio chunks from the device
-- Forwards audio to the selected Wyoming STT deployment for transcription
-- Sends transcript to OpenClaw via native WS protocol (`chat.send`)
-- Subscribes to `chat` events for streaming reply deltas
-- Streams TTS audio back to the device via the selected Wyoming TTS deployment, flushing buffered
-  text early whenever the agent's delta stream goes idle long enough
-  to indicate a real pause (e.g. tool call or reasoning) so playback
-  starts before the full reply is generated. Idle threshold is
-  configurable via `STREAMING_TTS_IDLE_PAUSE_MS` (default `400`).
-
-### 2. wyoming-faster-whisper (STT)
-
-Local STT — no cloud, no API key. Runs via Wyoming protocol.
-
-### 3. wyoming-piper (TTS)
-
-Local TTS — no cloud, no API key. Runs via Wyoming protocol.
-
-> **Note:** When connecting to OpenClaw, `talk.speak` (OpenClaw's built-in TTS via ElevenLabs/OpenAI/Microsoft) can optionally replace Piper for higher quality voice. Piper is the default for zero-config deployments.
-
----
-
-## Vauxr WS Protocol
-
-The protocol uses two frame types over a single WebSocket connection:
-
-- **JSON text frames** — control messages (signalling, metadata)
-- **Binary frames** — raw audio (zero encoding overhead)
-
-Frames are distinguished by type: if the first byte is `0x7B` (`{`), it's JSON. Otherwise it's a binary audio frame.
-
-### Control messages (JSON text frames)
-
-**Device → Server:**
-```jsonc
-// Boot-time handshake: advertise capabilities. The device is dumb — the server
-// decides the realtime policy (see "Realtime (WebRTC) Hybrid" below).
-{ "type": "hello", "device_id": "...", "token": "...", "platform": "satellite1", "caps": ["ws", "webrtc"] }
-
-// Wake word detected, starting voice turn
-{ "type": "voice.start", "device_id": "...", "token": "..." }
-
-// VAD detected end of speech. In a cold realtime wait the device stamps its
-// WebRTC peer state so the server can branch (WS pipeline vs. text-seed Pipecat).
-{ "type": "voice.end", "webrtc_connected": false }
-
-// User interrupted — abort current response
-{ "type": "abort" }
-
-// Multi-click on the Action button (double / triple / long). Single press is
-// local wake and is not sent. The server looks up `button_actions` on the device.
-{ "type": "device.button", "button": "action",
-  "gesture": "double_press" | "triple_press" | "long_press" }
-```
-
-**Server → Device:**
-```jsonc
-// Handshake reply: realtime policy. transport is "ws" (default) or "webrtc".
-// offer_url + stun + taper timers + VAD params are only present for "webrtc".
-{ "type": "hello", "realtime": { "enabled": true, "transport": "webrtc",
-                                 "offer_url": "http://<host>:8080/api/offer",
-                                 "stun": "stun:stun.l.google.com:19302",
-                                 "taper": { "t_idle1_ms": 60000, "t_idle2_ms": 30000 },
-                                 "vad": { "confidence": 0.6, "start_secs": 0.4,
-                                          "stop_secs": 2.0, "min_volume": 0.1 } } }
-
-// Auth OK, ready for voice
-{ "type": "ready" }
-
-// STT result (useful for device display)
-{ "type": "transcript", "text": "what's the weather today?" }
-
-// All TTS audio sent for this turn. In realtime mode this carries follow_up:
-// true keeps the device listening; false drops the device to Warm-quiet (the
-// server keeps the Pipecat session alive for an instant wake-word re-wake).
-{ "type": "audio.end", "follow_up": false }
-
-// Control command (from HTTP API or agent tool)
-{ "type": "device.control", "command": "set_volume" | "mute" | "unmute" | "reboot" | "ota", "params": { ... } }
-
-// Error
-{ "type": "error", "code": "...", "message": "..." }
-```
-
-`set_barge_in` is a **server-side** control command (`POST /api/devices/{id}/command` with `params.enabled`). It persists `barge_in` on the device config and is **not** forwarded to firmware — barge-in is enforced in the Pipecat session. Default is enabled. When disabled, new user turns are suppressed for the whole TTS window so residual echo cannot cut the reply short.
-
-### Action-button gestures
-
-The device detects double / triple / long press locally and sends `device.button`. Single press stays wake. Per-device `button_actions` in `devices.json` maps each gesture to `prompt`, `announce`, `command`, `webhook`, or nothing. Named webhooks are configured globally (Settings → `DATA_DIR/webhooks.json`) and selected by `webhook_id` on the gesture. Each webhook POSTs its configured JSON `body` (for Home Assistant, typically `{"entity_id":"scene.living_room"}` to `/api/services/scene/turn_on`). If `body` is empty, the default payload is `{ "type": "vauxr.button_press", "device_id", "button", "gesture" }`.
-
-### Audio frames (binary)
-
-All audio is sent as raw binary WebSocket frames with a 3-byte header:
-
-```
-[1 byte: message type][2 bytes: sequence number, big-endian][remaining bytes: raw audio]
-```
-
-**Message type byte:**
-
-| Value | Direction | Content |
-|---|---|---|
-| `0x01` | Device → Server | Mic audio — raw PCM 16-bit, 16kHz, mono |
-| `0x02` | Server → Device | TTS audio — raw PCM (from the selected Wyoming TTS deployment) |
-| `0x03` | Server → Device | Proactive push audio — raw PCM |
-
-The sequence number allows the device to detect dropped or reordered frames and discard stale audio.
-
-**Why binary frames?**
-Base64 encoding audio inside JSON adds ~33% overhead with no benefit. Since we control both sides of the connection, we can use the most efficient format available. Binary WebSocket frames are natively supported by all major implementations.
-
----
-
-## Realtime (WebRTC) Hybrid
-
-For low-latency, barge-in conversation, capable devices (currently Satellite1, which has hardware XMOS AEC) can upgrade the media path to **WebRTC** while keeping the Vauxr WS connection for control. The server runs an in-process [Pipecat](https://github.com/pipecat-ai/pipecat) `SmallWebRTC` pipeline (`STT → channel-LLM → TTS`) gated behind `REALTIME_ENABLED=1`.
-
-The device stays dumb: it advertises capabilities in `hello` and the server returns the policy. Whether realtime is used, which transport, and the WebRTC endpoints are all decided server-side.
-
-> **Note:** realtime currently routes LLM turns through the **channel plugin** only. `openclaw-direct` (operator) mode is not yet supported in realtime — those deployments should stay on the turn-based WS path.
-
-### Lifecycle
-
-```
-boot:     device --hello{caps:[ws,webrtc]}--> server
-          device <--hello{realtime:{transport:webrtc,offer_url,stun,
-                                     taper:{t_idle1_ms,t_idle2_ms},vad:{…}}}-- server
-
-wake:     device --realtime.start{device_id,token}--> server   (cold: arm pre-roll)
-          device <--ready-- server
-          device --0x01 mic frames (pre-roll: the wake-word command)--> server
-                  (buffered server-side until the device-VAD end-of-speech marker)
-
-connect:  device --HTTP POST /api/offer {sdp,type,device_id,token}--> server
-          device <--{sdp,type:answer}-- server      (per-device auth on /api/offer)
-          ICE/DTLS-SRTP established; bidirectional Opus audio over WebRTC
-
-ready:    device --realtime.media_ready--> server    (transport state only — mic now
-                                                       on WebRTC track; NOT a turn trigger)
-
-seed/run: device --voice.end{webrtc_connected}--> server   (cold wake only)
-                  webrtc_connected:false -> run the WS turn pipeline (graceful fallback)
-                  webrtc_connected:true  -> transcribe buffered WS utterance, seed text
-                                            into Pipecat (one-time cold->warm handoff)
-
-turn(s):  device <--transcript{text}-- server
-          device <--audio.start-- server   (bot speaking; over WebRTC media)
-          device <--audio.end{follow_up}-- server
-                  follow_up:true  -> stay listening (another turn)
-                  follow_up:false -> Warm-quiet (device pauses mic); the server keeps the
-                                     Pipecat session + LLMContext ALIVE for instant re-wake
-          (warm re-wake: device resumes streaming on the WebRTC track — no new control
-           message, no device-VAD marker; Pipecat's Silero VAD end-points the turn)
-
-stop:     peer close (taper Drop) drives reactive cleanup via _on_disconnected; an
-          explicit realtime.stop is an equivalent fast signal. A long safety backstop
-          reaps a leaked session only if the peer never closes cleanly.
-```
-
-### Cold-start seeding & per-turn branch
-
-WebRTC takes ~1–2s to negotiate (ICE + DTLS), so on a **cold** wake the device streams the wake-word command as WS `0x01` frames while the peer connects. Seeding is driven by the **device-VAD `voice.end` marker** (stamped with `webrtc_connected`), not by `media_ready` — decoupling it from negotiation timing avoids partial/never-ending first turns. On that marker the server transcribes the buffered utterance once (batch Wyoming STT) and branches:
-
-- **WS-only** (`webrtc_connected:false`): feed the utterance through the turn-based WS pipeline (`pipeline.py`). Graceful-degradation path; keeps streaming STT.
-- **Text-seeded realtime** (`webrtc_connected:true`): seed the transcript into Pipecat's `LLMContext` + `LLMRunFrame`, TTS over the WebRTC track. One-time cold→warm handoff.
-- **Live realtime** (warm peer at wake): audio is on the WebRTC track; Pipecat's Silero VAD end-points the turn. No device-VAD marker, no text-seeding.
-
-No ghost turns: the server never seeds/synthesizes into a non-live peer — seeding is gated on the marker **and** a live connection.
-
-### Pristine LLMContext
-
-A transport-agnostic per-device **conversation log** is written through a single `record_turn(device_id, user_text, assistant_text)` choke point on **every** completed turn (WS in `pipeline.py`, realtime in `_on_turn_complete`). When a Pipecat session is created, `LLMContext` is reconstructed from the log so it's complete regardless of how many turns ran over WS first. Stored assistant text has `[[follow_up]]`/control tags stripped; user text is the final transcript; roles alternate correctly.
-
-### follow_up & teardown
-
-The realtime session reuses the same `follow_up` mechanism as the WS pipeline (`follow_up_mode`: `auto` | `always` | `never`, and the `[[follow_up]]` reply tag). Each turn ends with `audio.end{follow_up}`. `follow_up:false` is **not** a teardown signal — the device drops to Warm-quiet and the server keeps the Pipecat session + `LLMContext` alive so a wake-word re-wake resumes instantly. The device owns the warm idle taper (timers handed to it in the hello policy). The server only does **reactive** cleanup: on peer close (`_on_disconnected`) or `realtime.stop`, with a long safety backstop for leaked sessions.
-
-### TTS segmentation
-
-To start playback before the whole reply is generated, the streamed LLM text is cut into TTS segments per device, using one of two **mutually exclusive** strategies (resolved via `device_settings.get_segmentation(device_id)`):
-
-- **idle** (default): the shared `IdleSegmenter` flushes a segment whenever the token stream pauses for `idle_pause_ms` — punctuation-independent and low latency. TTS runs in pipecat `TOKEN` mode so each flushed segment is synthesized immediately. This is the same segmenter the WS pipeline uses.
-- **sentence**: pipecat's built-in TTS sentence aggregator (`SENTENCE` mode, NLTK Punkt) cuts on sentence boundaries; tokens are passed straight through. Takes precedence if both are enabled — they can't be combined, since a downstream sentence aggregator would just re-buffer idle's partial flushes until punctuation.
-
-These are **per-device feature flags**, not env/globals. They're hardcoded defaults today, but every lookup is keyed by `device_id` so the planned devices API (per-device tokens + config) only needs to swap the data source in `device_settings.py`. The same module also houses the warm-idle **taper timers** (`t_idle1_ms`/`t_idle2_ms`, handed to the device in the hello policy) and the server-side **Silero VAD params** for the realtime pipeline.
-
-### TTS segmentation
-
-To start playback before the whole reply is generated, the streamed LLM text is cut into TTS segments per device, using one of two **mutually exclusive** strategies (resolved via `device_settings.get_segmentation(device_id)`):
-
-- **idle** (default): the shared `IdleSegmenter` flushes a segment whenever the token stream pauses for `idle_pause_ms` — punctuation-independent and low latency. TTS runs in pipecat `TOKEN` mode so each flushed segment is synthesized immediately. This is the same segmenter the WS pipeline uses.
-- **sentence**: pipecat's built-in TTS sentence aggregator (`SENTENCE` mode, NLTK Punkt) cuts on sentence boundaries; tokens are passed straight through. Takes precedence if both are enabled — they can't be combined, since a downstream sentence aggregator would just re-buffer idle's partial flushes until punctuation.
-
-These are **per-device feature flags**, not env/globals. They're hardcoded defaults today, but every lookup is keyed by `device_id` so the planned devices API (per-device tokens + config) only needs to swap the data source in `device_settings.py`.
-
-### Config
-
-```env
-REALTIME_ENABLED=1
-REALTIME_HOST=<device-reachable-lan-ip>   # used to build offer_url + for SDP munging (esp32 mode)
-REALTIME_STUN_URL=stun:stun.l.google.com:19302
-```
-
-> WebRTC (aiortc) uses ephemeral UDP ports for ICE, so Vauxr retains `network_mode: host`, as do the existing Whisper/Piper services.
-> Optional Parakeet/Kokoro services use the Compose bridge with loopback-published ports. See `docker-compose.yml`.
-
----
-
-## OpenClaw Integration
-
-vauxr connects to OpenClaw using OpenClaw's **native gateway WebSocket protocol** — the same protocol used by the CLI and companion apps. No OpenClaw plugin required for basic operation.
-
-vauxr supports two routing modes via a channel registry:
-
-- **openclaw-direct** — vauxr connects outbound to OpenClaw WS (`chat.send` / `chat` events), collects the full reply, then synthesizes via the selected Wyoming TTS deployment and streams to device
-- **channel plugin** — the `vauxr-openclaw` plugin connects inbound to vauxr's `/channel` WS path, handles LLM routing, and streams response deltas back; vauxr synthesizes via the selected Wyoming TTS deployment and sends to device
-
-Persistent per-device session key: `vauxr:${device_id}`
-
-**Config:**
-```env
-OPENCLAW_URL=wss://your-openclaw.example.com:18789
-OPENCLAW_TOKEN=your-gateway-token
-```
-
----
-
-## Deployment
-
-### Self-hosted (local)
-
-Copy `.env.example` to `.env`, fill in your values, then:
-
-```bash
-docker compose up -d
-```
-
-Device connects to `ws://your-server-ip:8765`.
-
----
-
-## OpenClaw Channel Plugin (`vauxr-openclaw`)
-
-An optional OpenClaw plugin for deeper integration. Instead of vauxr connecting outbound to OpenClaw, the plugin connects inbound to vauxr's `/channel` WS endpoint — no OpenClaw credentials needed on the vauxr side.
-
-**What it adds:**
-- Voice sessions appear in OpenClaw's session list
-- Proactive replies (cron, tools, agent actions) automatically route to the speaker
-- Device shows up in OpenClaw `/status`
-
----
-
-## `vauxr_client` Device Library
-
-A drop-in client library for connecting voice hardware to Vauxr. The reference implementation is an ESP-IDF component, but the Vauxr WS protocol is simple enough to implement on any platform that supports WebSocket.
-
-**Scope (audio only):**
-- Mic capture
-- Energy VAD
-- Vauxr WS protocol client
-- Audio playback
-
-**Explicitly out of scope** (host application's responsibility):
-- Network / WiFi management
-- LED states / animations
-- Wake word detection
-- Display / UI
-
-ESP-IDF component will be published to the ESP-IDF Component Registry. Ports to other platforms welcome.
-
----
-
-## Security
-
-- Device auth: per-device bearer token issued at pairing
-- Pairing: approval via OpenClaw `/pair` command or Vauxr UI
-- Transport: HTTP/WS for default home-network setup; optional HTTPS/WSS with strict certificate validation
-- Tokens: scoped per device, revocable
-
-
-
-## Bounded speech provider selection
-
-Global and per-device STT/TTS/model-scoped voice selection lives in `speech.py`.
-Generic deployment/snapshot models live in `speech_models.py`; the bounded
-server-side catalog and legacy defaults live in `speech_catalog.py`. Shared
-Wyoming framing and errors live in `wyoming_protocol.py`.
-The server owns configured Wyoming endpoints; management clients select IDs only.
-Complete immutable selections are captured at turn start and used across WS,
-WebRTC, announcements and button speech. Shared Wyoming adapters replace the
-realtime path's duplicate transport clients. The boolean device `voice` flag
-retains its existing meaning. Realtime TTS still buffers an entire segment.
-See [speech settings](docs/configuration.md) for persistence, API, readiness
-limits, configuration examples and the #45/#49 owner/scoped auth integration seam.
-
+| `src/vauxr/server.py` | Device admission, connection identity, capture and realtime startup |
+| `src/vauxr/web/` | Management APIs, owner cookies/CSRF, speech preview, webhooks, static UI |
+| `src/vauxr/auth/` | Credential verification/current generation, operation policy, retained connection teardown |
+| `src/vauxr/provisioning/` | Signed enrollment, integration pairing, durable credential lifecycle |
+| `src/vauxr/agents/` | Routing metadata, inbound plugin transport, outbound direct OpenClaw, local adapters |
+| `src/vauxr/pipeline.py` | Standard STT → agent/direct reply → segmented TTS and follow-up |
+| `src/vauxr/realtime/` | Pipecat sessions, startup input ownership, output consumption, teardown and diagnostics |
+| `src/vauxr/speech/` | Server-owned deployments, immutable selections, Wyoming/OpenAI adapters |
+| `src/vauxr/devices/` | Device config, connected registry, metrics, firmware delivery |
+| `src/vauxr/settings/`, `src/vauxr/plugins/` | Provider secrets/settings and bundled integration distribution |
+| `web-client/src/` | React management portal and separately enrolled browser voice identity |
+
+## Authority and persistence
+
+`DATA_DIR` defaults to `/data` and must be writable. `config.json` owns server
+settings; environment values bootstrap absent settings. `agents.json` owns routing
+metadata, while `authz.json` owns credential/enrollment authority. `speech.json`
+owns speech providers and inherited selections. Device settings and provider
+secrets have their own stores; do not treat routing metadata as credentials or
+copy tokens into configuration examples.
+
+Owner access is an exact configured HTTP/HTTPS origin plus a console-bootstrapped
+owner session, not a shared device token. Cookie-authenticated mutations require
+Origin and CSRF checks. Devices and integrations have separate scoped bearer
+credentials. Device operations bind to the authenticated device ID; display names
+are metadata, never routing identities. Current credential generation and live
+socket ownership are rechecked during use. Use [`auth/policy.py`](src/vauxr/auth/policy.py),
+[`web/owner.py`](src/vauxr/web/owner.py) and
+[`provisioning/`](src/vauxr/provisioning/) as the current implementation evidence. The [README](README.md#quick-start)
+owns owner setup; [configuration](docs/configuration.md) owns persistence rules.
+
+Browser voice persists its non-exportable Ed25519 private key and scoped device
+credential in IndexedDB. Durable save/readback precedes credential ACK. Management
+requests use the owner session through `web-client/src/auth/api.ts`; the browser
+voice socket uses the separately enrolled device identity. Cross-origin Vite
+serving is not an authenticated owner deployment.
+
+## Device wire boundary
+
+`protocol.py` parses JSON objects from **text** frames and audio from **binary**
+frames. The first-byte JSON heuristic is a utility, not the server dispatcher.
+Audio has a three-byte header: one type byte, two big-endian sequence bytes,
+then PCM. Types are `0x01` microphone, `0x02` reply, `0x03` proactive push.
+Standard microphone PCM is 16 kHz mono signed 16-bit; output rate is signalled
+and negotiated, not inferred from the type byte. `audio.end.follow_up` controls
+continued listening; it does not itself close a warm WebRTC session.
+
+Initial device messages carry scoped credentials (`hello`, `voice.start` or
+`realtime.start`). Later controls inherit the connection principal; supplying a
+different identity/credential does not transfer ownership. See `WS_OPERATIONS`
+in `auth/policy.py` for the allowlist and `server._authorize_message()` for checks.
+
+### Realtime cold-to-warm handoff
+
+The current physical-device startup is **ordered PCM streaming**, not the old
+`voice.end.webrtc_connected` batch-transcription/text-seed protocol:
+
+1. Device sends `realtime.start` with a nonzero 32-bit `startup_id`, then ordered
+   WS microphone frames while signaling `/api/offer` with the same startup ID.
+2. Device stops the WS capture writer before starting WebRTC media. It sends
+   `realtime.media_ready` with `startup_id` and `next_seq` (the next 16-bit WS sequence).
+3. `StartupAudio.finish_ws()` checks identity and sequence. WS input is drained
+   before queued RTP, only after a consumer is bound and provider input is ready.
+   Replayed audio is paced; overflow, sequence mismatch and timeouts fail startup.
+4. Live RTP takes over after the FIFO drains. Warm re-wakes reuse the peer; pause,
+   resume and stop are separate controls. Session teardown must not let an old
+   wake's callbacks stop a replacement.
+
+`StartupAudio` bounds retained audio to 15 seconds and setup to 20 seconds; paced
+drain has a separate calculated timeout. These are implementation bounds, not
+end-to-end latency promises. Browser/provider-specific live mode also exists in
+`realtime/live.py`; it must not be confused with the standard Wyoming/channel path.
+
+### Segmentation and speech selection
+
+Standard turns resolve a speech selection at turn start. Deployments/endpoints
+are server-owned; management clients select IDs. See
+[speech configuration](docs/configuration.md) for inheritance and readiness limits.
+Realtime segmentation settings in `devices/settings.py` currently return shared
+defaults despite accepting `device_id`: idle segmentation is 1000 ms, sentence
+segmentation takes precedence if enabled. The shared default taper is 8000 ms
+active-idle and 180000 ms warm-quiet. These are not currently per-device overrides.
+
+## OpenClaw boundary
+
+Two transports are distinct:
+
+- **Direct:** `agents/openclaw.py` connects outbound to the native OpenClaw gateway
+  (`chat.send` / chat events), with gateway credentials and device session mapping.
+- **Plugin:** `vauxr-openclaw` connects inbound to **`/agent`**, sends `agent.auth`,
+  and waits for `agent.ready`. Standard traffic uses `agent.transcript` and
+  `agent.response.delta/end/error` with device/run correlation. Realtime operations
+  use `agent.realtime.request/result` with `requestId`. The server binds admission
+  to the authenticated peer and routing identity, not just a client-provided ID.
+
+Local cancellation of a waiting realtime operation removes its waiter; it does
+not send backend cancellation (`AgentServer.realtime_request`). Do not assume
+media teardown means an agent/tool operation was cancelled remotely. Direct chat
+also lacks an overall response deadline and does not race device abort; output
+ownership suppresses stale writes but does not guarantee abandoned-work cleanup.
+A failed delayed direct reconnect can stop retries. See the [bounded findings](docs/maintainer-review-2026-11-09.md#additional-bounded-findings).
+
+## Run, package and verify
+
+Install the package for Python 3.12, then run `DATA_DIR=<writable-path> python3 -m vauxr`
+or the installed `vauxr` command. `python3 -m server` is a pre-package command and
+is no longer the entrypoint. Build the UI with `npm --prefix web-client run build`;
+the backend resolves `web-client/dist` relative to its working directory.
+
+`pyproject.toml` packages `src/vauxr`. Realtime is an optional extra pinned to
+Pipecat 1.9.0; the Docker image installs realtime and ACME extras, builds the UI,
+and runs as UID/GID 100:101 to preserve older volume ownership. Compose describes
+external speech services. See [README](README.md) for installation and TLS setup.
+
+CI runs backend tests with realtime dependencies, requires non-skipped media-authority
+coverage, and runs web unit tests, container ownership smoke, design gates and
+Playwright domain jobs. Full browser suites belong in CI, not this review's local
+validation. [Review evidence](docs/maintainer-review-2026-11-09.md) records the pinned
+source, sampled coverage, findings and remaining gaps; this page is not a full
+audit or a replacement for the exact auth contracts.
+
+Standard text queues are unbounded; ordered synthesis is not producer backpressure.
+STT upload drain is outside its connection/transcript timeouts, and resampling uses
+stateful filtering with chunk-local interpolation rather than chunk-invariant rate
+conversion. STT failure does not always emit `audio.end`. These are current limits,
+not guarantees of end-to-end cancellation or terminal control.
+
+Enrollment/lifecycle/integration share one global 60-request/minute admission budget.
+Firmware ACK retries are bounded; server ACK idempotency alone cannot guarantee
+recovery from repeated lost replies. Physical pairing proves key possession and a
+matching-code ceremony, not hardware attestation or independent dual approval.
+Revocation tombstones survive credential-record restoration, not arbitrary full
+snapshot rollback. Generic LAN-mode integration APIs and provisioning differ in
+transport-boundary enforcement; see [authority distinctions](docs/maintainer-review-2026-11-09.md#authority-distinctions).
 
 ### Guided physical-device pairing
 
@@ -383,3 +193,54 @@ two concurrent slots and a 35-second timeout; busy/unavailable speech returns
 JSON with the same guided flow and a local USB-console fallback. Audio has no
 public URL and is not persisted or logged. Legacy clients receive the unchanged
 JSON proof response. All responses retain `Cache-Control: no-store`.
+
+## Why these boundaries matter
+
+### Selection is not authority or readiness
+
+Routing metadata answers *which agent*, speech configuration answers *which
+deployment*, and credentials answer *who may act*. They are separate stores and
+checks. This means a visible agent/provider can still be unavailable, and removing
+a display entry is not a substitute for credential retirement. Standard speech
+selections are frozen per turn: configuration changes affect later work rather
+than mutating a deployment halfway through its response. Device overrides layer
+on agent/global policy; they cannot enable voice for a chat-only agent.
+
+### Sent, consumed and heard are different observations
+
+```mermaid
+flowchart LR
+    A[Agent text] --> S[Serial synthesis]
+    S --> B[Output buffer]
+    B --> T[Transport writes]
+    T --> C[Consumption accounting]
+    C -. physical acceptance .-> H[Audible playback]
+```
+
+A completed synthesis or send does not prove the speaker played the reply. The
+realtime path tracks media consumption and response boundaries before follow-up
+transitions. Startup separately waits for a bound consumer and provider readiness;
+opening a peer alone is insufficient. The prefill buffer absorbs an initial burst
+without changing downstream pacing; it cannot compensate for a producer that
+remains slower than playback.
+
+### Cancellation is ownership transfer, not rollback
+
+A reconnect or replacement turn can leave old callbacks completing later. Registry
+entry and abort-handle identity prevent those callbacks from clearing or resuming
+a new owner's session. Authority teardown retains even superseded transports so
+revocation can still close them. These local guarantees do not undo an external
+tool action or prove remote cancellation. After a lost response, inspect actual
+state before retrying.
+
+### The portal is not an arbitrary execution environment
+
+Owner management and enrolled browser voice use different authority. Companion
+context is explicitly untrusted descriptive data, bound to current authority and
+a revision; UI events need correlated receipts. The static interface accepts only
+bounded HTML/CSS with sanitization and CSP. It does not provide shell, script or
+network execution. These are implemented boundaries, not claims that every
+provider or browser error path has been fault-tested.
+
+For guided practice see the [tutorial](docs/tutorial.md), for operational steps
+see [how-to guides](docs/how-to.md), and for exact limits see [reference](docs/reference.md).

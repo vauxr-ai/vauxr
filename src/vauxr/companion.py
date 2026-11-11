@@ -54,6 +54,11 @@ def _safe_name(value: object) -> bool:
 
 
 def publish(principal: Principal, body: dict) -> dict:
+    """Replace one device's transient view with validated descriptive context.
+
+    Caller supplies authenticated authority. Agent names must match stored state;
+    the returned revision correlates later operations, not permission to act.
+    """
     if set(body) != {"route", "resource_type", "resource_id", "setting_key", "current_value"}:
         raise ValueError("invalid context")
     if body["route"] not in ("agents", "devices", "settings"):
@@ -111,6 +116,12 @@ _ui_events: dict[str, tuple[str, dict, asyncio.Future[bool]]] = {}
 
 
 async def execute(device_id: str, action: dict) -> dict:
+    """Apply a bounded operation against current context or await its UI receipt.
+
+    Navigation/highlight wait up to ten seconds for the same device's receipt.
+    A timeout removes correlation, not necessarily an already-applied UI effect.
+    Listening transitions instead defer completion to consumed media/backend work.
+    """
     import asyncio
 
     if not isinstance(action, dict):

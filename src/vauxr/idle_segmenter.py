@@ -60,6 +60,9 @@ class IdleSegmenter:
             self._arm_timer()
 
     def end(self) -> None:
+        """End once, delivering the buffered tail through on_end, not on_segment.
+
+        An empty tail is reported as None. Callback execution is synchronous."""
         if self._ended:
             return
         self._ended = True
@@ -78,6 +81,7 @@ class IdleSegmenter:
             self._on_end(None)
 
     def abort(self) -> None:
+        """Discard buffered text and cancel the timer without invoking on_end."""
         if self._ended:
             return
         self._ended = True

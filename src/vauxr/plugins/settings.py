@@ -58,6 +58,11 @@ def validate_value(field: SettingField, value: object) -> None:
 
 
 def register(schema: PluginSettings) -> None:
+    """Register an immutable declaration once for this process, before use.
+
+    Package catalog presence does not call this function. Secret fields cannot
+    carry defaults; their values belong in the separate private store.
+    """
     if (
         not ID.fullmatch(schema.id)
         or not text(schema.name)

@@ -74,6 +74,11 @@ def get_config_for(device_id: str) -> DeviceConfig:
 
 
 def update_config(device_id: str, patch: DeviceConfig) -> DeviceConfig:
+    """Persist a device patch and refresh the connected entry if present.
+
+    Speech mode belongs to SpeechStore, not devices.json. On device-write
+    failure reread disk to distinguish a committed replace from a failed one;
+    rollback the prior speech mode only when the device snapshot did not commit."""
     _ensure_configs_loaded()
     from vauxr.speech.store import get_store
 
@@ -111,6 +116,10 @@ def update_config(device_id: str, patch: DeviceConfig) -> DeviceConfig:
 
 
 def register(device_id: str, ws: Any, name: str | None = None) -> DeviceEntry:
+    """Replace live ownership and abort the old turn before publishing the entry.
+
+    Preserve platform/playback metadata across reconnects, but reset sequence
+    and state. Old handlers must pass their socket to unregister."""
     abort_active_turn(device_id)
     _ensure_configs_loaded()
     cfg = get_config_for(device_id)
@@ -211,6 +220,9 @@ def set_state(device_id: str, state: ConnectionState) -> None:
 
 
 def abort_active_turn(device_id: str) -> None:
+    """Signal cooperative cancellation and relinquish the entry's abort handle.
+
+    This does not join the turn task or prove remote agent work has stopped."""
     entry = _devices.get(device_id)
     if entry is None or entry.abort_event is None:
         return
@@ -219,6 +231,7 @@ def abort_active_turn(device_id: str) -> None:
 
 
 def next_seq(device_id: str) -> int:
+    """Advance the live output sequence modulo 65536; absent devices return zero."""
     entry = _devices.get(device_id)
     if entry is None:
         return 0

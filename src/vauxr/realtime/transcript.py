@@ -8,6 +8,10 @@ from collections.abc import Awaitable, Callable
 
 
 class TranscriptRelay:
+    """Own a serial sender for browser display snapshots, not persistent history.
+
+    Only a pending nonfinal tail for the same turn can be replaced. Overflow,
+    timeout or a rejected send closes the relay and invokes fail exactly once."""
     LIMIT = 64
     TEXT_LIMIT = 6000  # Browser display already retains only this suffix.
 
@@ -88,6 +92,9 @@ class TranscriptRelay:
                 if self.started_at is not None else 0}
 
     async def close(self, *, drain: bool = False) -> None:
+        """Stop admission, optionally allow 250 ms to drain, then cancel and discard.
+
+        drain is best effort, not an acknowledgement that the browser received finals."""
         self._closed = True
         task = self._task
         try:
