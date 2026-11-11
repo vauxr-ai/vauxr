@@ -1,5 +1,5 @@
 {
-  "source_revision": "25469df63362853a2a4daf18cc0a115c6626b6bf",
+  "source_revision": "6d57a87c2ae8e0d442822482c58a041e1dbd1634",
   "repository": "https://github.com/vauxr-ai/vauxr",
   "scope": "Every explicit router registration under src, expanding the speech-path loop. Includes both composition roots; duplicate static fallback registrations retained. HEAD is implicit, not counted as an explicit registration.",
   "registration_calls": 59,
@@ -22,7 +22,7 @@
       "source": "src/vauxr/server.py",
       "line": 663,
       "handler": "agent_ws_handler",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/server.py#L663",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/server.py#L663",
       "implicit_head": true,
       "conditional": null
     },
@@ -34,7 +34,7 @@
       "source": "src/vauxr/realtime/app.py",
       "line": 226,
       "handler": "_offer_handler",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/realtime/app.py#L226",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/realtime/app.py#L226",
       "implicit_head": false,
       "conditional": "REALTIME_ENABLED plus optional realtime dependencies"
     },
@@ -46,7 +46,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 679,
       "handler": "list_agents",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L679",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L679",
       "implicit_head": true,
       "conditional": null
     },
@@ -58,7 +58,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 682,
       "handler": "create_agent",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L682",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L682",
       "implicit_head": false,
       "conditional": null
     },
@@ -70,7 +70,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 683,
       "handler": "delete_agent",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L683",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L683",
       "implicit_head": false,
       "conditional": null
     },
@@ -82,7 +82,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 685,
       "handler": "rename_agent",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L685",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L685",
       "implicit_head": false,
       "conditional": null
     },
@@ -94,7 +94,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 684,
       "handler": "activate_agent",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L684",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L684",
       "implicit_head": false,
       "conditional": null
     },
@@ -106,7 +106,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 680,
       "handler": "agent_avatar",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L680",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L680",
       "implicit_head": true,
       "conditional": null
     },
@@ -118,7 +118,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 681,
       "handler": "agent_avatar",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L681",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L681",
       "implicit_head": false,
       "conditional": null
     },
@@ -130,7 +130,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 686,
       "handler": "rotate_token",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L686",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L686",
       "implicit_head": false,
       "conditional": null
     },
@@ -142,7 +142,7 @@
       "source": "src/vauxr/web/speech.py",
       "line": 65,
       "handler": "settings",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L65",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/speech.py#L65",
       "implicit_head": true,
       "conditional": null
     },
@@ -154,7 +154,7 @@
       "source": "src/vauxr/web/speech.py",
       "line": 66,
       "handler": "settings",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L66",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/speech.py#L66",
       "implicit_head": false,
       "conditional": null
     },
@@ -166,7 +166,7 @@
       "source": "src/vauxr/web/owner.py",
       "line": 166,
       "handler": "owner_endpoint",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/owner.py#L166",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/owner.py#L166",
       "implicit_head": true,
       "conditional": null
     },
@@ -178,7 +178,7 @@
       "source": "src/vauxr/web/owner.py",
       "line": 167,
       "handler": "owner_endpoint",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/owner.py#L167",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/owner.py#L167",
       "implicit_head": false,
       "conditional": null
     },
@@ -190,7 +190,7 @@
       "source": "src/vauxr/web/companion.py",
       "line": 88,
       "handler": "boundary(operation)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/companion.py#L88",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/companion.py#L88",
       "implicit_head": false,
       "conditional": "Combined app state required for chat action"
     },
@@ -202,7 +202,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 673,
       "handler": "list_devices",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L673",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L673",
       "implicit_head": true,
       "conditional": null
     },
@@ -214,7 +214,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 676,
       "handler": "update_device",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L676",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L676",
       "implicit_head": false,
       "conditional": null
     },
@@ -226,7 +226,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 677,
       "handler": "announce",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L677",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L677",
       "implicit_head": false,
       "conditional": null
     },
@@ -238,7 +238,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 678,
       "handler": "device_command",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L678",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L678",
       "implicit_head": false,
       "conditional": null
     },
@@ -250,7 +250,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 674,
       "handler": "device_metrics",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L674",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L674",
       "implicit_head": true,
       "conditional": null
     },
@@ -262,7 +262,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 675,
       "handler": "device_metrics",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L675",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L675",
       "implicit_head": true,
       "conditional": null
     },
@@ -274,7 +274,7 @@
       "source": "src/vauxr/web/speech.py",
       "line": 65,
       "handler": "settings",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L65",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/speech.py#L65",
       "implicit_head": true,
       "conditional": null
     },
@@ -286,7 +286,7 @@
       "source": "src/vauxr/web/speech.py",
       "line": 66,
       "handler": "settings",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L66",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/speech.py#L66",
       "implicit_head": false,
       "conditional": null
     },
@@ -298,7 +298,7 @@
       "source": "src/vauxr/provisioning/enrollment_http.py",
       "line": 107,
       "handler": "enrollment_endpoint",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/provisioning/enrollment_http.py#L107",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/provisioning/enrollment_http.py#L107",
       "implicit_head": false,
       "conditional": null
     },
@@ -310,7 +310,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 695,
       "handler": "mint_firmware_delivery",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L695",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L695",
       "implicit_head": false,
       "conditional": null
     },
@@ -322,7 +322,7 @@
       "source": "src/vauxr/provisioning/integration_http.py",
       "line": 83,
       "handler": "integration_endpoint",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/provisioning/integration_http.py#L83",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/provisioning/integration_http.py#L83",
       "implicit_head": false,
       "conditional": null
     },
@@ -332,9 +332,9 @@
       "classification": "http",
       "reference": "api-http-settings.md",
       "source": "src/vauxr/interface.py",
-      "line": 97,
+      "line": 107,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/interface.py#L97",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/interface.py#L107",
       "implicit_head": true,
       "conditional": null
     },
@@ -344,9 +344,9 @@
       "classification": "http",
       "reference": "api-http-settings.md",
       "source": "src/vauxr/interface.py",
-      "line": 98,
+      "line": 108,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/interface.py#L98",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/interface.py#L108",
       "implicit_head": false,
       "conditional": null
     },
@@ -356,9 +356,9 @@
       "classification": "http",
       "reference": "api-http-settings.md",
       "source": "src/vauxr/interface.py",
-      "line": 99,
+      "line": 109,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/interface.py#L99",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/interface.py#L109",
       "implicit_head": false,
       "conditional": null
     },
@@ -370,7 +370,7 @@
       "source": "src/vauxr/provisioning/lifecycle_http.py",
       "line": 111,
       "handler": "lifecycle_endpoint",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/provisioning/lifecycle_http.py#L111",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/provisioning/lifecycle_http.py#L111",
       "implicit_head": false,
       "conditional": null
     },
@@ -382,7 +382,7 @@
       "source": "src/vauxr/agents/local.py",
       "line": 109,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/local.py#L109",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/agents/local.py#L109",
       "implicit_head": true,
       "conditional": null
     },
@@ -394,7 +394,7 @@
       "source": "src/vauxr/agents/local.py",
       "line": 110,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/local.py#L110",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/agents/local.py#L110",
       "implicit_head": false,
       "conditional": null
     },
@@ -406,7 +406,7 @@
       "source": "src/vauxr/agents/local.py",
       "line": 113,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/local.py#L113",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/agents/local.py#L113",
       "implicit_head": false,
       "conditional": null
     },
@@ -418,7 +418,7 @@
       "source": "src/vauxr/agents/local.py",
       "line": 111,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/local.py#L111",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/agents/local.py#L111",
       "implicit_head": true,
       "conditional": null
     },
@@ -430,7 +430,7 @@
       "source": "src/vauxr/agents/local.py",
       "line": 112,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/local.py#L112",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/agents/local.py#L112",
       "implicit_head": false,
       "conditional": null
     },
@@ -442,7 +442,7 @@
       "source": "src/vauxr/plugins/__init__.py",
       "line": 49,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/plugins/__init__.py#L49",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/plugins/__init__.py#L49",
       "implicit_head": true,
       "conditional": null
     },
@@ -454,7 +454,7 @@
       "source": "src/vauxr/plugins/__init__.py",
       "line": 50,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/plugins/__init__.py#L50",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/plugins/__init__.py#L50",
       "implicit_head": true,
       "conditional": null
     },
@@ -464,9 +464,9 @@
       "classification": "http",
       "reference": "api-http-settings.md",
       "source": "src/vauxr/plugins/settings.py",
-      "line": 225,
+      "line": 230,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/plugins/settings.py#L225",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/plugins/settings.py#L230",
       "implicit_head": true,
       "conditional": null
     },
@@ -476,9 +476,9 @@
       "classification": "http",
       "reference": "api-http-settings.md",
       "source": "src/vauxr/plugins/settings.py",
-      "line": 226,
+      "line": 231,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/plugins/settings.py#L226",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/plugins/settings.py#L231",
       "implicit_head": false,
       "conditional": null
     },
@@ -490,7 +490,7 @@
       "source": "src/vauxr/settings/http.py",
       "line": 206,
       "handler": "wrapped",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L206",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/settings/http.py#L206",
       "implicit_head": true,
       "conditional": null
     },
@@ -502,7 +502,7 @@
       "source": "src/vauxr/settings/http.py",
       "line": 207,
       "handler": "wrapped",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L207",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/settings/http.py#L207",
       "implicit_head": false,
       "conditional": null
     },
@@ -514,7 +514,7 @@
       "source": "src/vauxr/settings/http.py",
       "line": 208,
       "handler": "wrapped",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L208",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/settings/http.py#L208",
       "implicit_head": false,
       "conditional": null
     },
@@ -526,7 +526,7 @@
       "source": "src/vauxr/settings/http.py",
       "line": 209,
       "handler": "wrapped",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L209",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/settings/http.py#L209",
       "implicit_head": false,
       "conditional": null
     },
@@ -538,7 +538,7 @@
       "source": "src/vauxr/settings/http.py",
       "line": 210,
       "handler": "wrapped",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L210",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/settings/http.py#L210",
       "implicit_head": true,
       "conditional": null
     },
@@ -550,7 +550,7 @@
       "source": "src/vauxr/settings/http.py",
       "line": 211,
       "handler": "wrapped",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L211",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/settings/http.py#L211",
       "implicit_head": false,
       "conditional": null
     },
@@ -562,7 +562,7 @@
       "source": "src/vauxr/settings/http.py",
       "line": 212,
       "handler": "wrapped",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/settings/http.py#L212",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/settings/http.py#L212",
       "implicit_head": false,
       "conditional": null
     },
@@ -574,7 +574,7 @@
       "source": "src/vauxr/web/speech.py",
       "line": 65,
       "handler": "settings",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L65",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/speech.py#L65",
       "implicit_head": true,
       "conditional": null
     },
@@ -586,7 +586,7 @@
       "source": "src/vauxr/web/speech.py",
       "line": 66,
       "handler": "settings",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L66",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/speech.py#L66",
       "implicit_head": false,
       "conditional": null
     },
@@ -598,7 +598,7 @@
       "source": "src/vauxr/web/speech.py",
       "line": 61,
       "handler": "boundary(preview)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/speech.py#L61",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/speech.py#L61",
       "implicit_head": false,
       "conditional": "Connected enrolled browser and speech backend"
     },
@@ -610,7 +610,7 @@
       "source": "src/vauxr/agents/support.py",
       "line": 128,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/support.py#L128",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/agents/support.py#L128",
       "implicit_head": true,
       "conditional": null
     },
@@ -622,7 +622,7 @@
       "source": "src/vauxr/agents/support.py",
       "line": 129,
       "handler": "boundary(handle)",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/agents/support.py#L129",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/agents/support.py#L129",
       "implicit_head": false,
       "conditional": null
     },
@@ -634,7 +634,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 687,
       "handler": "list_webhooks",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L687",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L687",
       "implicit_head": true,
       "conditional": null
     },
@@ -646,7 +646,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 689,
       "handler": "create_webhook",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L689",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L689",
       "implicit_head": false,
       "conditional": null
     },
@@ -658,7 +658,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 691,
       "handler": "delete_webhook",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L691",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L691",
       "implicit_head": false,
       "conditional": null
     },
@@ -670,7 +670,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 688,
       "handler": "get_webhook_configuration",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L688",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L688",
       "implicit_head": true,
       "conditional": null
     },
@@ -682,7 +682,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 690,
       "handler": "update_webhook",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L690",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L690",
       "implicit_head": false,
       "conditional": null
     },
@@ -694,7 +694,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 692,
       "handler": "duplicate_webhook",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L692",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L692",
       "implicit_head": false,
       "conditional": null
     },
@@ -706,7 +706,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 696,
       "handler": "download_firmware_delivery",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L696",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L696",
       "implicit_head": false,
       "conditional": null
     },
@@ -718,7 +718,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 693,
       "handler": "serve_firmware",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L693",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L693",
       "implicit_head": true,
       "conditional": null
     },
@@ -730,7 +730,7 @@
       "source": "src/vauxr/server.py",
       "line": 664,
       "handler": "device_ws_handler",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/server.py#L664",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/server.py#L664",
       "implicit_head": true,
       "conditional": null
     },
@@ -742,7 +742,7 @@
       "source": "src/vauxr/server.py",
       "line": 675,
       "handler": "serve_static",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/server.py#L675",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/server.py#L675",
       "implicit_head": true,
       "conditional": null
     },
@@ -754,7 +754,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 704,
       "handler": "serve_static",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L704",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L704",
       "implicit_head": true,
       "conditional": null
     },
@@ -766,7 +766,7 @@
       "source": "src/vauxr/web/server.py",
       "line": 672,
       "handler": "_options",
-      "source_url": "https://github.com/vauxr-ai/vauxr/blob/25469df63362853a2a4daf18cc0a115c6626b6bf/src/vauxr/web/server.py#L672",
+      "source_url": "https://github.com/vauxr-ai/vauxr/blob/6d57a87c2ae8e0d442822482c58a041e1dbd1634/src/vauxr/web/server.py#L672",
       "implicit_head": false,
       "conditional": null
     }
