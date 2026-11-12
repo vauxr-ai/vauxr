@@ -78,6 +78,7 @@ class Telemetry:
                 'context': context(self.device_count()), 'kind': kind}
 
     def _insert(self, db, body):
+        # Persist serialized bytes once so retries cannot acquire new context or counters.
         raw = serialize(body)
         born = epoch(body.get('interval_start', body.get('started_at')))
         db.execute('INSERT OR IGNORE INTO queue VALUES (?,?,?)', (body['report_id'], raw, born))
@@ -117,6 +118,7 @@ class Telemetry:
                 remaining -= amount
                 cursor = end
                 if end == (active['start'] // 3600 + 1) * 3600:
+                    # Seal before rotating identity so the closed interval keeps its original month.
                     self._seal(db, s, end, now)
                     if timestamp(end)[:7] != s['month_high']:
                         s['identity'] = str(uuid4())
@@ -307,6 +309,7 @@ class Telemetry:
         async with self.lock:
             if not self.enabled or self.closed:
                 return False
+            # Permanent client rejection discards only this report; timeout/throttle responses retain it.
             if 200 <= status < 300 or 400 <= status < 500 and status not in (408, 429):
                 await self._db(lambda db, s: db.execute('DELETE FROM queue WHERE id=?', (row[0],)))
         return 200 <= status < 300

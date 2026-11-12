@@ -93,6 +93,7 @@ def serialize(body: dict) -> bytes:
     if body['kind'] == 'interval':
         duration = epoch(end) - epoch(start)
         m = body['metrics']
+        # Intervals are half-open: an exact hour-end still closes the preceding UTC bucket.
         if (not 0 < duration <= 3600 or start[:13] != timestamp(epoch(end) - 1)[:13]
                 or not 0 <= m['uptime_ms'] <= duration * 1000
                 or sum(m['outcomes'].values()) != sum(m['latency_ms'].values())
