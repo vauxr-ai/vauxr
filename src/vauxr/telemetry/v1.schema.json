@@ -1,0 +1,418 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vauxr:telemetry:v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "report_id",
+        "monthly_id",
+        "month",
+        "created_at",
+        "context",
+        "kind",
+        "started_at",
+        "startup_count"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "report_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "monthly_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "month": {
+          "type": "string",
+          "pattern": "^\\d{4}-(0[1-9]|1[0-2])$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "context": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "release",
+            "os",
+            "arch",
+            "devices"
+          ],
+          "properties": {
+            "release": {
+              "type": "string",
+              "enum": [
+                "2026.8.29",
+                "2026.7.6",
+                "2026.5.24-1",
+                "2026.5.24-0",
+                "2026.4.26-0",
+                "2026.4.12-0",
+                "custom"
+              ]
+            },
+            "os": {
+              "type": "string",
+              "enum": [
+                "linux",
+                "darwin",
+                "windows",
+                "other"
+              ]
+            },
+            "arch": {
+              "type": "string",
+              "enum": [
+                "x86_64",
+                "aarch64",
+                "arm",
+                "other"
+              ]
+            },
+            "devices": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1",
+                "2-5",
+                "6-20",
+                "21+"
+              ]
+            }
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "startup"
+          ]
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "startup_count": {
+          "type": "integer",
+          "const": 1
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "report_id",
+        "monthly_id",
+        "month",
+        "created_at",
+        "context",
+        "kind",
+        "interval_start",
+        "interval_end",
+        "metrics"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "report_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "monthly_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "month": {
+          "type": "string",
+          "pattern": "^\\d{4}-(0[1-9]|1[0-2])$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "context": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "release",
+            "os",
+            "arch",
+            "devices"
+          ],
+          "properties": {
+            "release": {
+              "type": "string",
+              "enum": [
+                "2026.8.29",
+                "2026.7.6",
+                "2026.5.24-1",
+                "2026.5.24-0",
+                "2026.4.26-0",
+                "2026.4.12-0",
+                "custom"
+              ]
+            },
+            "os": {
+              "type": "string",
+              "enum": [
+                "linux",
+                "darwin",
+                "windows",
+                "other"
+              ]
+            },
+            "arch": {
+              "type": "string",
+              "enum": [
+                "x86_64",
+                "aarch64",
+                "arm",
+                "other"
+              ]
+            },
+            "devices": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1",
+                "2-5",
+                "6-20",
+                "21+"
+              ]
+            }
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "interval"
+          ]
+        },
+        "interval_start": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "interval_end": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sessions",
+            "features",
+            "outcomes",
+            "providers",
+            "models",
+            "latency_ms",
+            "uptime_ms"
+          ],
+          "properties": {
+            "sessions": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "standard",
+                "realtime",
+                "custom"
+              ],
+              "properties": {
+                "standard": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "realtime": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "custom": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                }
+              }
+            },
+            "features": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "stt",
+                "tts",
+                "llm",
+                "realtime"
+              ],
+              "properties": {
+                "stt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "tts": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "llm": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "realtime": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                }
+              }
+            },
+            "outcomes": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "success",
+                "failure",
+                "cancelled"
+              ],
+              "properties": {
+                "success": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "failure": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "cancelled": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                }
+              }
+            },
+            "providers": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "openai",
+                "ollama",
+                "wyoming",
+                "custom"
+              ],
+              "properties": {
+                "openai": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "ollama": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "wyoming": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "custom": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                }
+              }
+            },
+            "models": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "gpt-live-1",
+                "gpt-4o-mini-tts",
+                "custom"
+              ],
+              "properties": {
+                "gpt-live-1": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "gpt-4o-mini-tts": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "custom": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                }
+              }
+            },
+            "latency_ms": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "lt_250",
+                "250_999",
+                "1000_4999",
+                "5000_29999",
+                "ge_30000"
+              ],
+              "properties": {
+                "lt_250": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "250_999": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "1000_4999": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "5000_29999": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                "ge_30000": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                }
+              }
+            },
+            "uptime_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3600000
+            }
+          }
+        }
+      }
+    }
+  ]
+}

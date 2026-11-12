@@ -126,6 +126,8 @@ def test_route_inventory_complete():
                  ("GET", "/api/interface"), ("POST", "/api/interface"), ("POST", "/api/interface/preview"), ("GET", "/api/local-agents"), ("POST", "/api/local-agents"),
                  ("GET", "/api/local-agents/{agent_id}/runtime"), ("POST", "/api/local-agents/{agent_id}/runtime"), ("DELETE", "/api/local-agents/{agent_id}")}
     expected |= {
+        ("GET", "/api/settings/telemetry"),
+        ("PUT", "/api/settings/telemetry"),
         ("GET", "/api/settings/providers"),
         ("PUT", "/api/settings/providers/profiles/{profile_id}"),
         ("POST", "/api/settings/providers/profiles/{profile_id}/discover"),
@@ -744,3 +746,18 @@ async def test_lifecycle_http_teardown_timeout_and_maintenance_retry(monkeypatch
             finish.set()
             for connection in retained:
                 auth_connections.release(connection)
+
+
+@pytest.mark.parametrize("method,outcome", [("GET", 200), ("PUT", 400)])
+@pytest.mark.parametrize("role", ["owner", "integration", "device", "invalid"])
+async def test_telemetry_requires_owner_cookie(method, outcome, role):
+    async with TestClient(TestServer(make_http_app())) as client:
+        response = await client.request(
+            method, "/api/settings/telemetry",
+            headers=owner_headers(client) if role == "owner" else {
+                **TRANSPORT_HEADERS, "Authorization": f"Bearer {role}-secret"
+            },
+            json={},
+        )
+        assert response.status == (outcome if role == "owner" else 401)
+        assert "-secret" not in await response.text()

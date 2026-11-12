@@ -1184,3 +1184,7 @@ dialog.modal.agent-diagnostics-modal[open] { height:min(720px,calc(100dvh - 24px
 .agent-guide-link { font-size:13px; line-height:1.4; }
 .agent-create-modal:has(.is-connecting) .modal-body { gap:6px; }
 .agent-create-modal .is-connecting .agent-type-choice { min-height:80px; }
+
+.telemetry-settings { min-width: 0; }
+.telemetry-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.telemetry-payload { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; font-size: 13px; }

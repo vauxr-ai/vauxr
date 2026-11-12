@@ -1,0 +1,92 @@
+{
+  "max_payload_bytes": 8192,
+  "retry_seconds": 604800,
+  "future_tolerance_seconds": 300,
+  "raw_logical_retention_seconds": 2592000,
+  "hourly_logical_retention_seconds": 2592000,
+  "max_interval_seconds": 3600,
+  "queue_max_reports": 256,
+  "queue_max_bytes": 2097152,
+  "http_timeout_seconds": 5,
+  "retry_backoff_seconds": [
+    60,
+    3600
+  ],
+  "hourly_send_jitter_seconds": [
+    0,
+    300
+  ],
+  "permanent_dimensions": [
+    "utc_date"
+  ],
+  "unique_installations": false,
+  "release_allowlist_source": "GitHub vauxr-ai/vauxr non-draft non-prerelease releases verified 2026-11-11",
+  "released_versions": [
+    "2026.8.29",
+    "2026.7.6",
+    "2026.5.24-1",
+    "2026.5.24-0",
+    "2026.4.26-0",
+    "2026.4.12-0"
+  ],
+  "provider_categories": [
+    "openai",
+    "ollama",
+    "wyoming",
+    "custom"
+  ],
+  "model_categories": [
+    "gpt-live-1",
+    "gpt-4o-mini-tts",
+    "custom"
+  ],
+  "latency_unit": "milliseconds",
+  "latency_counts": "disjoint completed-session duration buckets; sum equals sum(outcomes)",
+  "counter_limit_action": "Stop admitting completed observations when total outcomes reaches 1000000; outcome and latency bucket admitted together",
+  "queue_overflow_action": "drop oldest complete queued report, never modify retained payloads",
+  "permanent_metrics": [
+    "startup_count",
+    "sessions",
+    "features",
+    "outcomes",
+    "uptime_ms",
+    "latency_ms"
+  ],
+  "temporary_dimensions": [],
+  "wire_encoding": "UTF-8 JSON; reject duplicate keys, NaN, Infinity, booleans as integers, unknown fields and incorrect types before mutation",
+  "timestamp_rules": [
+    "All timestamps whole UTC seconds with Z suffix and valid calendar dates",
+    "created_at >= interval_end for interval or started_at for startup",
+    "0 < interval_end - interval_start <= 3600 seconds",
+    "interval_start and interval_end minus one second must share UTC hour, date and month",
+    "month equals UTC month of interval_start or started_at",
+    "created_at and interval_end or started_at must be <= receipt UTC + 300 seconds",
+    "receipt UTC - created_at <= 604800 seconds AND receipt UTC - interval_start or started_at <= 604800 seconds",
+    "Attribute interval totals to UTC date of interval_start; startup to UTC date of started_at; never receipt date"
+  ],
+  "identity_rules": [
+    "Random UUIDv4 monthly identity; no previous identity field or linking",
+    "Persist month high-water mark; on backward month discard identity and suspend collection/transmission until month reaches high-water mark",
+    "UTC month transition finalizes previous interval with previous identity; new interval gets new identity",
+    "Disable cancels in-flight requests, blocks future work and clears queue/identity; retain only nonidentifying clock high-water mark"
+  ],
+  "collection_rules": [
+    "No collection or network before authenticated notice acknowledgment; env false overrides persisted/UI enabled before startup scheduling",
+    "Default enabled preference is not consent acknowledgment",
+    "One logical startup beacon per process start only if collection gate allows; retries reuse exact serialized bytes",
+    "Split counters at UTC hour/midnight/month while collecting, not collector apportionment",
+    "No lifetime totals; atomic durable transaction seals interval, enqueues immutable payload and resets counters",
+    "Provider/model category counts are independent marginal counts, never paired dimensions; custom endpoints or unknown names map to custom",
+    "Official release version emitted only for verified official release build provenance; matching version string in custom build is insufficient"
+  ],
+  "logical_expiry_rules": [
+    "Expired raw/dedup/hourly rows excluded from queries even before asynchronous TTL deletion",
+    "Use accepted receipt UTC plus 2592000 seconds for raw/dedup expiry; hourly bucket end plus 2592000 for hourly expiry",
+    "Atomic report-ID absent insert plus daily and hourly increments; duplicate ID never increments, even if body differs"
+  ],
+  "latency_constraints": [
+    "Sum latency_ms buckets equals sum outcomes; each bucket maximum 1000000",
+    "startup_count exists only in startup; interval cannot increment startup count",
+    "uptime_ms <= interval duration milliseconds"
+  ]
+}

@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ComponentProps } from "react";
+import TelemetrySettings from "./TelemetrySettings";
 import InterfaceEditor from "./InterfaceEditor";
 import PluginsPanel from "./PluginsPanel";
 import PluginSettings from "./PluginSettings";
@@ -14,6 +15,7 @@ const screens: {
   description: string;
   icon: IconName;
 }[] = [
+  { id: "privacy", label: "Privacy & telemetry", description: "Usage reporting & opt-out", icon: "api" },
   {
     id: "stt",
     label: "Speech to text",
@@ -126,6 +128,7 @@ export default function SettingsPanel(
               <VoiceProviders key={kind} kind={kind} onDirtyChange={setDirty} />
             ),
         )}
+        {screen === "privacy" && <TelemetrySettings />}
         {screen === "models" && <ModelProviders onDirtyChange={setDirty} />}
         {screen === "plugins" && (
           <>

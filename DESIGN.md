@@ -298,6 +298,18 @@ before opening a dialog; return focus to the visible ⋯ trigger, not a hidden i
 If a close fade retains native `<details>` content, make it inert synchronously so
 invisible controls cannot catch clicks or Tab during the animation.
 
+### Privacy and telemetry
+
+Settings → Privacy & telemetry exposes an explicit first-run enable/off decision.
+Default preference never bypasses this acknowledgment: collection and startup
+transmission remain stopped until the owner chooses. Environment disable takes
+precedence. Show the AWS transport-IP limitation without claiming anonymity.
+The wrapping JSON preview displays the exact serialized startup/queued body,
+including only identifiers actually transmitted; no horizontal scroll container.
+Use existing card, button, focus and theme treatments. Keep saving/error feedback
+and a refresh path for uncertain outcomes. Label latency buckets as completed-session
+duration, not provider latency. Disabled reporting clears queue and identity.
+
 ### Tabs, switches, and popovers
 
 Use explicit selected/enabled/default states with text/icons as well as color.
