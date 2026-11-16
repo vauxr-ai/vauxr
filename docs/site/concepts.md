@@ -25,6 +25,25 @@ register a new type. Saving a model configuration does not start the model servi
 An integration can be connected without being selected as the route. Check each
 boundary independently when a conversation goes somewhere unexpected.
 
+## Manage agents in the portal
+
+In **Agents**, use **+ Add Agent** in the page heading to choose a registered
+type or connect OpenClaw. Vauxr Support has its own image in the type catalog.
+Use the pencil beside an agent's name to rename it (up to 200 characters);
+Enter or the checkmark saves, while Escape or Cancel discards the edit. The
+compact editor does not change the agent's identity.
+
+Vauxr Support can be removed like other removable agents. If it is the default,
+select another default first, then use its **Delete agent** action and confirm.
+Removal persists across server restarts; startup does not reinstall that built-in
+instance. The Support type remains available in **+ Add Agent** to create a new
+instance with its own identity and configuration.
+
+When connecting an integration, **Deny integration request** opens a confirmation
+dialog. **Cancel** leaves the request pending; **Deny request** submits the denial.
+If this confirmation is opened inside Add Agent, Escape closes only the
+confirmation and returns focus to its trigger, leaving Add Agent open.
+
 ## Authority is not routing
 
 The owner session manages server settings. An enrolled integration has scoped
