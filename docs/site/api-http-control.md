@@ -111,6 +111,11 @@ a LangChain instance (404 otherwise). 404 missing; 409 active default agent,
 non-removable bundled agent, or voice conflict. Choose another default first.
 503 partial removal/storage/transport retirement failure: refresh before retrying.
 Removal retires integration credentials and detaches routing/voice overrides.
+The built-in `vauxr-support` instance is removable after selecting another default.
+Its removal writes `{"removed":true}` to `<DATA_DIR>/support-installation.json`;
+startup checks this marker instead of reinstalling that instance. Keep this file
+with the persistent data directory. Other protected bundled agents remain
+non-removable. The Support definition remains available for creating new instances.
 
 ### GET /api/agents/{agent_id}/avatar
 ### POST /api/agents/{agent_id}/avatar

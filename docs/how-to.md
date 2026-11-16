@@ -9,6 +9,21 @@ can occur after a durable write or an external action.
 
 For a new assistant, see [How to create a custom agent](how-to-create-custom-agent.md).
 
+## Rename or remove an agent
+
+In **Agents**, use the pencil beside the name to edit it (up to 200 characters).
+Enter or the checkmark saves; Escape or Cancel discards the edit. Use **+ Add
+Agent** in the page heading to create another instance or connect OpenClaw.
+
+To remove an agent, first choose another default if necessary, then use
+**Delete agent** and confirm. Vauxr Support is removable too: its removal survives
+server restarts. Its type remains in the Add Agent catalog for creating a new
+instance, not restoring the removed instance's identity or settings.
+
+For integration enrollment, **Deny integration request** first asks for
+confirmation. Cancel leaves the request pending. Within Add Agent, Escape closes
+only this confirmation, not the outer dialog.
+
 ## Change speech without losing the working selection
 
 1. Record the current agent, device assignment, mode, provider and voice. Ensure
