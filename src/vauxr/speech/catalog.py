@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from vauxr.config import Config
 
 _LEGACY_ENV = {
-    "STT_URL": ("WHISPER_URL", "tcp://whisper:10300"),
-    "TTS_URL": ("PIPER_URL", "tcp://piper:10200"),
+    "STT_URL": ("WHISPER_URL", "tcp://127.0.0.1:10300"),
+    "TTS_URL": ("PIPER_URL", "tcp://127.0.0.1:10200"),
     "TTS_VOICE": ("PIPER_VOICE", "en_US-libritts_r-medium"),
 }
 _ADAPTERS = {

@@ -19,7 +19,8 @@ def _reset(monkeypatch: pytest.MonkeyPatch):
     cfg_mod.reset_config()
 
 
-def test_load_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_config_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("OPENCLAW_URL", raising=False)
     monkeypatch.delenv("OPENCLAW_TOKEN", raising=False)
     monkeypatch.delenv("WHISPER_URL", raising=False)
@@ -36,16 +37,18 @@ def test_load_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert c.openclaw.token == ""
     assert c.agent.ws_path == "/agent"
     assert c.device.token == "test-device-token"
-    assert c.data_dir == "/data"
-    assert c.stt.host == "whisper"
+    assert c.data_dir == "./data"
+    assert c.stt.host == "127.0.0.1"
     assert c.stt.port == 10300
-    assert c.tts.host == "piper"
+    assert c.tts.host == "127.0.0.1"
     assert c.tts.port == 10200
     assert c.tts.voice == "en_US-libritts_r-medium"
     assert c.ws.port == 8765
     assert c.http.port == 8080
     assert c.streaming_tts.idle_pause_ms == 1000
     assert c.log_level == "info"
+    assert c.realtime.enabled is True
+    assert c.realtime.stun_url == ""
 
 
 def test_load_config_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121,8 +124,8 @@ def test_empty_speech_environment_retains_defaults(monkeypatch, value):
         else:
             monkeypatch.setenv(name, value)
     cfg = cfg_mod.load_config()
-    assert cfg.stt == cfg_mod.WyomingEndpoint("whisper", 10300)
-    assert cfg.tts == cfg_mod.WyomingTTSConfig("piper", 10200, "en_US-libritts_r-medium")
+    assert cfg.stt == cfg_mod.WyomingEndpoint("127.0.0.1", 10300)
+    assert cfg.tts == cfg_mod.WyomingTTSConfig("127.0.0.1", 10200, "en_US-libritts_r-medium")
 
 
 def test_neutral_speech_environment_without_legacy_values(monkeypatch):

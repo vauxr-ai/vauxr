@@ -14,10 +14,10 @@
   built web client). No auth environment variable is required. Owner access requires an exact HTTP/HTTPS owner origin
   and explicit console setup in `docs/authz/owner-v1.md`; `DEVICE_TOKEN` grants no access. Run from the repo root —
   static file serving resolves `web-client/dist` relative to the current working directory.
-  Example: `DATA_DIR=/workspace/.data python3 -m vauxr`.
+  Example: `python3 -m vauxr` after building the client.
 - `DATA_DIR` must be writable. Server settings persist to `config.json`, routing metadata
-  to `agents.json`, and credential authority to `authz.json`. Its default is `/data`
-  (used by Docker); set a writable local path outside Docker.
+  to `agents.json`, and credential authority to `authz.json`. Its native default is
+  `./data` relative to the working directory; Compose sets `/data` in the container.
 - **Web client** (`web-client/`, React+Vite): `npm run build` emits `web-client/dist`.
   Serve that build through the backend at the exact configured owner origin. The
   cross-origin Vite development server cannot authenticate owner sessions. The browser
@@ -25,13 +25,15 @@
   verified HTTPS/WSS. There is no shared-token connection form.
 
 ### STT/TTS and realtime (not needed for control-plane work)
-- Actual voice turns need **Whisper (STT)** and **Piper (TTS)** Wyoming services on
-  `tcp://127.0.0.1:10300` / `:10200`. These come from the `rhasspy/wyoming-*` images via
-  `docker compose up` (Docker is **not** preinstalled). The WS + HTTP control plane (devices,
-  channels, static UI) runs fully without them; only voice turns fail if they're absent.
-- The WebRTC **realtime** path is opt-in (`REALTIME_ENABLED=1`, also needs `REALTIME_HOST`) and
-  requires the heavy `[realtime]` extra (pipecat/aiortc). It is off by default and its deps are
-  not installed by the update script.
+- Standard voice turns need Wyoming STT/TTS services; the native defaults are
+  `tcp://127.0.0.1:10300` / `:10200`. Compose offers optional Whisper/Piper images via
+  `--profile local-speech` (Docker is **not** preinstalled in the base VM). The WS + HTTP
+  control plane runs without speech services; voice turns fail if they're absent.
+- WebRTC is enabled by default for native runs and needs the `[realtime]` extra
+  (pipecat/aiortc). The update script does not install that extra; set
+  `REALTIME_ENABLED=0` for control-plane-only development in that VM. Native
+  installs infer the ICE host from the trusted owner origin when local; a proxy
+  origin may need an explicit `REALTIME_HOST`.
 
 ### Tests
 - Backend: `pytest -q` (config in `pyproject.toml`, `pythonpath=["src"]`).

@@ -4,6 +4,8 @@ The following files in `DATA_DIR` are authoritative. Missing files initialize a
 fresh configuration. Existing malformed files fail startup with a logged path,
 field and correction, without including secret values. Manual edits take effect
 on restart; management API edits apply to subsequent turns.
+Native runs default `DATA_DIR` to `./data` relative to the working directory;
+Compose sets it to `/data` inside the container.
 
 | File | Owns |
 | --- | --- |
@@ -37,6 +39,13 @@ corresponding environment value or built-in default.
 
 The pairing management API updates `pairing.prompts` without replacing other
 sections. Agent activation never writes this file.
+Native installs enable WebRTC by default and select the local IPv4 address
+matching the configured owner origin for ICE. With no owner origin setting,
+`http://localhost:8080` selects loopback for a browser on the same machine.
+An explicit `realtime.host` or `REALTIME_HOST` overrides ICE selection. It may
+be needed behind a proxy whose origin does not resolve to a local interface.
+The owner origin itself remains an explicit trusted security boundary for
+remote browsers and physical devices.
 
 ## Speech providers and selections
 

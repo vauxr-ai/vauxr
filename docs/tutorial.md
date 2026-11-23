@@ -8,10 +8,9 @@ control-plane session does **not** prove a microphone, provider or speaker works
 ## Before you begin
 
 Use a disposable installation, not an existing server's data directory. You need
-Git, Docker with Compose, a writable checkout, and a browser on the Docker host.
-Ports 8080, 8765, 10200 and 10300 must be available for the default stack. Compose
-uses host networking for the gateway and default speech services; check your
-Docker platform supports it. Model downloads need network access and disk space.
+Git, Python 3.12, Node.js 22, a writable checkout and a browser on the same
+machine. Ports 8080 and 8765 must be available. The native install does not
+download speech models or require Docker.
 You do not need an OpenAI key or an OpenClaw instance for this first success.
 
 Commands below are run at the repository root. Do not copy existing private
@@ -19,21 +18,13 @@ Commands below are run at the repository root. Do not copy existing private
 
 ## 1. Start and observe
 
-Follow [Quick Start](../README.md#quick-start), steps 1–2, including its
-setup-revision prerequisite. Compose initializes storage automatically. Then
-inspect the stack:
+Follow [Quick Start](../README.md#quick-start), steps 1–3. Vauxr creates local
+`./data` on first run. Watch the server terminal for startup errors.
 
-```sh
-docker compose ps
-docker compose logs --tail=60 vauxr
-```
-
-**Checkpoint:** Vauxr remains running, and the default speech services become
-healthy after their model downloads. Open `http://localhost:8080` on the host.
+**Checkpoint:** Vauxr remains running. Open `http://localhost:8080` on the host.
 You should reach owner setup/login, not an already-authorized management page.
-If a service restarts, inspect its logs before retrying. A permission error points
-to the mounted data directory; inspect the
-[initializer logs](how-to.md#automatic-storage-initialization) before retrying.
+If startup fails, inspect the terminal output. A permission error points to
+`./data`.
 Do not delete the directory to clear a startup validation error.
 
 ## 2. Claim management authority
@@ -79,10 +70,9 @@ browser-trusted HTTPS origin when your browser requires it for capture.
 
 ## Finish
 
-Stop this disposable stack with `docker compose stop` when finished. Its data
-and models remain for the next run; `docker compose up -d` resumes it. Do not use
-`down -v` as troubleshooting. For an existing installation, use the recovery
-steps in [Operate and recover](how-to.md), not this fresh-install exercise.
+Stop the native server with Ctrl-C. Its data remains in `./data` for the next
+run. For an existing installation, use the recovery steps in
+[Operate and recover](how-to.md), not this fresh-install exercise.
 
-These commands are checked against Compose and the current entrypoints. This
-tutorial is not a report of a fresh Docker/device run on every platform.
+These commands use the current native entrypoints. This tutorial is not a
+report of a physical voice-device run on every platform.

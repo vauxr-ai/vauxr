@@ -58,8 +58,8 @@ class StreamingTtsConfig:
 class RealtimeConfig:
     """WebRTC realtime (Pipecat) transport settings.
 
-    Disabled by default — the realtime path and its pipecat/aiortc dependency
-    only load when `enabled` is true, so the core WS server is unaffected.
+    Enabled by default. Install the realtime extra for a native deployment;
+    explicit opt-out keeps the control plane available without media dependencies.
     """
 
     enabled: bool
@@ -102,7 +102,7 @@ Setting = TypeVar("Setting")
 
 
 def load_config() -> Config:
-    path = Path(_optional("DATA_DIR", "/data")) / "config.json"
+    path = Path(_optional("DATA_DIR", "./data")) / "config.json"
     data = read_json(path) if path.exists() else {}
     if not isinstance(data, dict) or data.keys() - {"server", "pairing", "openclaw", "realtime"}:
         raise invalid(
@@ -191,7 +191,7 @@ def load_config() -> Config:
         ),
         agent=AgentConfig(ws_path="/agent"),
         device=DeviceConfigSection(token=_optional("DEVICE_TOKEN", "")),
-        data_dir=_optional("DATA_DIR", "/data"),
+        data_dir=_optional("DATA_DIR", "./data"),
         stt=_parse_wyoming_url(speech_env("STT_URL")),
         tts=WyomingTTSConfig(
             **_parse_wyoming_url(speech_env("TTS_URL")).__dict__,
@@ -205,16 +205,16 @@ def load_config() -> Config:
             ),
         ),
         realtime=RealtimeConfig(
-            enabled=setting(realtime, "enabled", "REALTIME_ENABLED", "0", flag),
+            enabled=setting(realtime, "enabled", "REALTIME_ENABLED", "1", flag),
             esp32_mode=setting(realtime, "esp32_mode", "REALTIME_ESP32", "1", flag),
             host=realtime.get("host", _optional("REALTIME_HOST", "")),
-            stun_url=realtime.get("stun_url", _optional("REALTIME_STUN_URL", "stun:stun.l.google.com:19302")),
+            stun_url=realtime.get("stun_url", os.environ.get("REALTIME_STUN_URL", "")),
             offer_path=realtime.get("offer_path", _optional("REALTIME_OFFER_PATH", "/api/offer")),
             output_gain_db=setting(realtime, "output_gain_db", "REALTIME_OUTPUT_GAIN_DB", "6", float),
         ),
         log_level=server.get("log_level", _optional("LOG_LEVEL", "info")).lower(),
         device_id_length=length,
-        tls=load_tls_config(_optional("DATA_DIR", "/data")),
+        tls=load_tls_config(_optional("DATA_DIR", "./data")),
     )
 
     if not 1 <= cfg.ws.port <= 65535 or not 1 <= cfg.http.port <= 65535:

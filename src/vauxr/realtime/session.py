@@ -1356,11 +1356,13 @@ class RealtimeManager:
             )
 
             cfg = get_config().realtime
+            from vauxr.realtime.host import effective_host
+
             ice = [IceServer(urls=cfg.stun_url)] if cfg.stun_url else None
             self._handler = SmallWebRTCRequestHandler(
                 ice_servers=ice,
                 esp32_mode=cfg.esp32_mode,
-                host=cfg.host or None,
+                host=effective_host(cfg.host) or None,
                 connection_mode=ConnectionMode.MULTIPLE,
             )
         return self._handler

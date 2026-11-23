@@ -17,8 +17,9 @@ records registration, evidence, consumer revisions and verification limits.
 `/api/offer` is `cfg.realtime.offer_path`, configurable with
 `REALTIME_OFFER_PATH` or persisted realtime configuration. Only
 `realtime.enabled` registers it; optional realtime dependencies must be installed.
-Advertising/arming the device WebRTC path additionally requires a configured
-`REALTIME_HOST` and compatible device policy. Disabled registration does **not**
+Advertising/arming the device WebRTC path additionally requires a usable
+ICE host (explicit `REALTIME_HOST` or a local IPv4 address matching the trusted
+owner origin) and compatible device policy. Disabled registration does **not**
 produce a promised JSON API error: the static catch-all may handle that path.
 Each GET registration also gets aiohttp's implicit HEAD route; HEAD is not a
 second supported wire protocol. Both HTTP and WS listeners serve the same app

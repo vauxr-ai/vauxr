@@ -43,8 +43,9 @@ configuration, credentials, speech and routing before serving traffic.
 
 ## Authority and persistence
 
-`DATA_DIR` defaults to `/data` and must be writable. `config.json` owns server
-settings; environment values bootstrap absent settings. `agents.json` owns routing
+`DATA_DIR` defaults to `./data` for native runs; Compose sets it to `/data`.
+It must be writable. `config.json` owns server settings; environment values
+bootstrap absent settings. `agents.json` owns routing
 metadata, while `authz.json` owns credential/enrollment authority. `speech.json`
 owns speech providers and inherited selections. Device settings and provider
 secrets have their own stores; do not treat routing metadata as credentials or
@@ -133,13 +134,14 @@ A failed delayed direct reconnect can stop retries. See the [bounded findings](d
 
 ## Run, package and verify
 
-Install the package for Python 3.12, then run `DATA_DIR=<writable-path> python3 -m vauxr`
+Install the package for Python 3.12, then run `python3 -m vauxr`
 or the installed `vauxr` command. `python3 -m server` is a pre-package command and
 is no longer the entrypoint. Build the UI with `npm --prefix web-client run build`;
 the backend resolves `web-client/dist` relative to its working directory.
 
-`pyproject.toml` packages `src/vauxr`. Realtime is an optional extra pinned to
-Pipecat 1.9.0; the Docker image installs realtime and ACME extras, builds the UI,
+`pyproject.toml` packages `src/vauxr`. Realtime is enabled by default for native
+installs using the optional extra pinned to Pipecat 1.9.0. Docker disables it on
+the bridge network; its default image installs the ACME extra and builds the UI,
 and runs as UID/GID 100:101 to preserve older volume ownership. Compose describes
 external speech services. See [README](README.md) for installation and TLS setup.
 
