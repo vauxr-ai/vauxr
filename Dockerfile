@@ -44,6 +44,7 @@ RUN case ",${VAUXR_EXTRAS}," in *,realtime,*) \
 COPY --from=web-build /app/web-client/dist ./web-client/dist
 RUN mkdir -p /data && chown vauxr:vauxr /data
 USER vauxr
+ENV REALTIME_ENABLED=0
 EXPOSE 8765
 EXPOSE 8080
 EXPOSE 8443
