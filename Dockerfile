@@ -19,33 +19,32 @@ RUN pip wheel --no-cache-dir --no-deps -w /wheels .
 
 FROM python:3.12-slim
 WORKDIR /app
+ARG VAUXR_EXTRAS=acme
 # Pin numeric uid/gid to match the Alpine `vauxr` user from the previous
 # Node image. Without this, an existing /data volume (owned by uid 100)
 # becomes unwritable after the rewrite, preventing persisted routing and
 # enrollment/lifecycle updates.
 RUN groupadd --system --gid 101 vauxr && useradd --system --uid 100 --gid vauxr vauxr
-# Pipecat's smallwebrtc path imports opencv (cv2) unconditionally, even for
-# audio-only pipelines; cv2 needs these X/GL system libs or its import fails
-# with `libxcb.so.1: cannot open shared object file`, which kills the WebRTC
-# connection callback and leaves the device hung in listening mode.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libgl1 libglib2.0-0 libxcb1 libxext6 libsm6 \
-    && rm -rf /var/lib/apt/lists/*
+# Only custom WebRTC builds need OpenCV's X/GL runtime libraries.
+RUN case ",${VAUXR_EXTRAS}," in *,realtime,*) \
+      apt-get update \
+      && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libxcb1 libxext6 libsm6 \
+      && rm -rf /var/lib/apt/lists/* ;; \
+    esac
 COPY pyproject.toml README.md ./
 COPY --from=build /wheels /wheels
-# Install the wheel with the `realtime` extra so the in-process Pipecat WebRTC
-# pipeline (aiortc + silero VAD) is available when REALTIME_ENABLED=1. The
-# acme extra provides opt-in Certbot Route53 automation in this same container.
-# Extras are applied to the built wheel path; deps resolve from the index.
-RUN pip install --no-cache-dir "$(ls /wheels/*.whl)[realtime,acme]"
-# Pre-seed NLTK punkt data into a default search path so Pipecat's sentence
-# tokenizer (used for TTS chunking) doesn't try to download at runtime and fail
-# on the read-only filesystem with a permission error.
-RUN python -m nltk.downloader -d /usr/share/nltk_data punkt punkt_tab
+# Bridge-mode Docker disables WebRTC, so its default image avoids the large
+# realtime dependency tree. A custom host-network build may supply
+# --build-arg VAUXR_EXTRAS=realtime,acme when that deployment is configured.
+RUN pip install --no-cache-dir "$(ls /wheels/*.whl)[${VAUXR_EXTRAS}]"
+# Pipecat's sentence tokenizer needs NLTK data only in realtime builds.
+RUN case ",${VAUXR_EXTRAS}," in *,realtime,*) \
+      python -m nltk.downloader -d /usr/share/nltk_data punkt punkt_tab ;; \
+    esac
 COPY --from=web-build /app/web-client/dist ./web-client/dist
 RUN mkdir -p /data && chown vauxr:vauxr /data
 USER vauxr
+ENV REALTIME_ENABLED=0
 EXPOSE 8765
 EXPOSE 8080
 EXPOSE 8443

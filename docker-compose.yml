@@ -12,11 +12,8 @@ services:
       - ./firmware:/data/firmware
 
 
-  # The WebRTC realtime transport (aiortc, in-process Pipecat) gathers ICE on
-  # ephemeral UDP ports that can't be predicted/published in Docker bridge mode,
-  # so Vauxr retains host networking, as do the existing Whisper/Piper services.
-  # Optional speech services use the Compose bridge with loopback-published ports;
-  # host-network Vauxr reaches them via 127.0.0.1, not Compose DNS names.
+  # Optional container deployment. Native Python is the primary WebRTC path.
+  # Bridge mode keeps Docker Desktop usable without host-networking enabled.
   vauxr:
     build:
       context: .
@@ -24,14 +21,13 @@ services:
     image: vauxr:latest
     container_name: vauxr
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "${VAUXR_BIND_ADDRESS:-127.0.0.1}:8080:8080"
+      - "${VAUXR_BIND_ADDRESS:-127.0.0.1}:8765:8765"
+      - "${VAUXR_BIND_ADDRESS:-127.0.0.1}:${HTTPS_PORT:-8443}:${HTTPS_PORT:-8443}"
     depends_on:
       storage-init:
         condition: service_completed_successfully
-      whisper:
-        condition: service_healthy
-      piper:
-        condition: service_healthy
     environment:
       # Bare pass-throughs preserve unset versus explicitly empty host values.
       # Presence of either TLS/proxy setting selects TLS in the owner parser.
@@ -53,8 +49,8 @@ services:
       STT_URL: ${STT_URL:-}
       TTS_URL: ${TTS_URL:-}
       TTS_VOICE: ${TTS_VOICE:-}
-      WHISPER_URL: ${WHISPER_URL:-tcp://127.0.0.1:10300}
-      PIPER_URL: ${PIPER_URL:-tcp://127.0.0.1:10200}
+      WHISPER_URL: ${WHISPER_URL:-tcp://whisper:10300}
+      PIPER_URL: ${PIPER_URL:-tcp://piper:10200}
       OPENCLAW_URL: ${OPENCLAW_URL:-}
       OPENCLAW_TOKEN: ${OPENCLAW_TOKEN:-}
       # Legacy value only; it grants no owner access. Empty is valid so a
@@ -62,16 +58,13 @@ services:
       DEVICE_TOKEN: ${DEVICE_TOKEN:-}
       PIPER_VOICE: ${PIPER_VOICE:-en_US-libritts_r-medium}
       DATA_DIR: /data
-      # Realtime WebRTC is opt-in (off by default): set REALTIME_ENABLED=1 in
-      # your .env to turn it on. When enabled, REALTIME_HOST must be the server's
-      # LAN IP/hostname — the device receives an absolute /api/offer URL built
-      # from it in the hello policy, and aiortc uses it to advertise reachable
-      # ICE candidates. (Host networking below is required only for realtime's
-      # ephemeral ICE UDP ports; it's otherwise harmless for WS-only deploys.)
+      # Bridge networking cannot publish aiortc's dynamic ICE UDP ports.
+      # Native Python enables WebRTC by default; container WebRTC remains an
+      # explicit advanced deployment pending the networking spike (#128).
       REALTIME_ENABLED: ${REALTIME_ENABLED:-0}
       REALTIME_ESP32: ${REALTIME_ESP32:-1}
       REALTIME_HOST: ${REALTIME_HOST:-}
-      REALTIME_STUN_URL: ${REALTIME_STUN_URL:-stun:stun.l.google.com:19302}
+      REALTIME_STUN_URL: ${REALTIME_STUN_URL:-}
       # GPT-Live speech is quieter than Standard-mode TTS at the same device
       # volume; this dB boost (soft-clipped) equalises them. 0 disables.
       REALTIME_OUTPUT_GAIN_DB: ${REALTIME_OUTPUT_GAIN_DB:-6}
@@ -86,13 +79,15 @@ services:
       - ./firmware:/data/firmware
 
   whisper:
+    profiles: [local-speech]
     depends_on:
       storage-init:
         condition: service_completed_successfully
     image: rhasspy/wyoming-whisper
     container_name: whisper
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "127.0.0.1:10300:10300"
     command: --model small-int8 --language en --uri tcp://0.0.0.0:10300
     volumes:
       - ./data/whisper:/data
@@ -104,13 +99,15 @@ services:
       start_period: 300s
 
   piper:
+    profiles: [local-speech]
     depends_on:
       storage-init:
         condition: service_completed_successfully
     image: rhasspy/wyoming-piper
     container_name: piper
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "127.0.0.1:10200:10200"
     command: --voice en_US-libritts_r-medium --uri tcp://0.0.0.0:10200
     volumes:
       - ./data/piper:/data

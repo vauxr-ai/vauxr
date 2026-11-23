@@ -204,20 +204,23 @@ async def _hello(ws: web.WebSocketResponse, ctx: ConnectionCtx, msg: dict[str, A
     # WebRTC needs an absolute offer URL at the device's trusted signaling origin
     # (firmware only arms realtime when offer_url shares that same origin — see
     # applyHelloPolicy's same-origin credential guard) and reliable ICE host
-    # munging (esp32 mode, driven separately by REALTIME_HOST). Without
-    # REALTIME_HOST, ICE is unreliable, so fall back to ws rather than advertise
-    # a broken policy.
+    # munging (esp32 mode, driven by the selected local ICE host). If neither
+    # the owner origin nor an explicit host selects a local interface, fall back
+    # to ws rather than advertise a broken policy.
+    from vauxr.realtime.host import effective_host
+
+    ice_host = effective_host(rt.host) if rt.enabled else ""
     mode = pipeline_mode(registry.get_config_for(ctx.device_id or ""))
     selected_transport = transport_mode(registry.get_config_for(ctx.device_id or ""))
     webrtc_ok = (
         selected_transport == "webrtc"
         and rt.enabled
         and "webrtc" in caps_list
-        and bool(rt.host)
+        and bool(ice_host)
     )
-    if selected_transport == "webrtc" and rt.enabled and "webrtc" in caps_list and not rt.host:
+    if selected_transport == "webrtc" and rt.enabled and "webrtc" in caps_list and not ice_host:
         log.warning(
-            "realtime: %s is webrtc-capable but REALTIME_HOST is unset — falling back to ws",
+            "realtime: %s is webrtc-capable but no local ICE host was found — falling back to ws",
             msg.get("device_id"),
         )
 
@@ -434,8 +437,8 @@ async def _realtime_start(
     """Arm the selected pipeline; buffer physical WS PCM while WebRTC connects."""
     device_id = ctx.device_id
     # Realtime must actually be reachable server-side before we arm pre-roll: the
-    # /api/offer endpoint only exists when REALTIME_ENABLED=1 and REALTIME_HOST is
-    # set (same gate _hello uses to advertise the webrtc policy). Arming otherwise
+    # /api/offer endpoint only exists when REALTIME_ENABLED=1. The hello policy
+    # also requires a selected local ICE host. Arming without that host
     # would strand the device in "listening" with no WebRTC path — the first
     # utterance gets buffered and never processed until it disconnects.
     from vauxr.chat import is_active
@@ -461,7 +464,9 @@ async def _realtime_start(
         explicit_live and selected_transport == "websocket"
         and get_store().lifecycle.get("bindings", {}).get(device_id, {}).get("kind") == "browser"
     )
-    if not (rt.enabled and rt.host and (selected_transport == "webrtc" or browser_live)):
+    from vauxr.realtime.host import effective_host
+
+    if not (rt.enabled and effective_host(rt.host) and (selected_transport == "webrtc" or browser_live)):
         await send_json(
             ws,
             {

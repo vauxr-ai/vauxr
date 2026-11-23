@@ -55,7 +55,11 @@ def restrict_aioice_host_candidates(host: str) -> bool:
         return False
 
     local_ipv4 = original(use_ipv4=True, use_ipv6=False)
-    selected = next((address for address in local_ipv4 if address in resolved), None)
+    selected = (
+        "127.0.0.1"
+        if "127.0.0.1" in resolved and all(address.startswith("127.") for address in resolved)
+        else next((address for address in local_ipv4 if address in resolved), None)
+    )
     if selected is None:
         log.warning(
             "REALTIME_HOST %r does not resolve to a local IPv4 address; "
@@ -221,12 +225,15 @@ def attach_realtime_routes(app: web.Application, agent_server: Any) -> None:
     from vauxr.realtime.session import get_manager
 
     cfg = get_config().realtime
-    restrict_aioice_host_candidates(cfg.host)
+    from vauxr.realtime.host import effective_host
+
+    ice_host = effective_host(cfg.host)
+    restrict_aioice_host_candidates(ice_host)
     get_manager().configure(agent_server)
     app.router.add_post(cfg.offer_path, _offer_handler)
     log.info(
         "Realtime WebRTC enabled: offer=%s esp32_mode=%s host=%r",
         cfg.offer_path,
         cfg.esp32_mode,
-        cfg.host,
+        ice_host,
     )

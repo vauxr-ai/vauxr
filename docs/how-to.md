@@ -2,6 +2,7 @@
 
 For a fresh installation, start with the [README Quick Start](../README.md#quick-start)
 or the [learning tutorial](tutorial.md). Run Compose commands from the repository
+root. For native installs, run the gateway and owner CLI from the repository
 root. Origin/TLS configuration comes before owner login; management tasks below
 assume a running instance and an authenticated owner portal at its configured origin.
 Refresh state before retrying a mutation whose response was lost: a network error
@@ -115,7 +116,7 @@ limits are collected in the [explanation](../ARCHITECTURE.md).
 ## Browser on another machine or address
 
 The default owner origin is exactly `http://localhost:8080`, so it is intended
-for a browser on the Docker host. If the browser instead uses a LAN IP,
+for a browser on the Vauxr host. If the browser instead uses a LAN IP,
 hostname, or a different external port, set `OWNER_HTTP_ORIGIN` to that exact
 browser origin before starting Vauxr. A `.env` file is one optional mechanism;
 an exported environment variable or your deployment configuration works too.
@@ -178,8 +179,8 @@ respectively, into their own `/data` directories for model caches.
 
 ## Automatic storage initialization
 
-This flow requires [automatic setup PR #123](https://github.com/vauxr-ai/vauxr/pull/123)
-until it is merged. From the repository root, run `docker compose up -d --build`.
+From the repository root, run the [Quick Start](../README.md#quick-start) command
+for your network mode.
 Compose runs the one-shot `storage-init` service before Vauxr, Piper and Whisper.
 It creates missing storage roots and speech cache directories. Only `/data`,
 `/data/recordings` and `/data/firmware` directory roots are assigned to the
@@ -194,8 +195,8 @@ unchanged. This is not a data migration or a recursive permissions repair.
 If initialization fails, dependent services are not started. Inspect
 `docker compose logs storage-init`, check that the three bind mounts are writable
 and point to directories rather than files or symbolic links, fix the mount
-permissions through your selected Docker daemon, then repeat
-`docker compose up -d --build`. Do not delete existing data to repair permissions;
+permissions through your selected Docker daemon, then repeat the same Quick
+Start command, including any bridge override flags. Do not delete existing data to repair permissions;
 for inaccessible existing files, inspect their ownership separately. With rootless
 Docker, container IDs are mapped: do not assume host `chown 100:101` is correct.
 
@@ -206,4 +207,4 @@ Migration is only needed when changing existing named volumes to the new bind mo
 1. **Find the old volumes.** Inspect the services' `/data` mounts with `docker inspect vauxr piper whisper`. If containers were already recreated, use `docker volume ls` and your previous configuration to identify the sources; don't guess between `vauxr_*` and `vauxr-local_*`.
 2. **Stop the services.** Run `docker compose stop vauxr piper whisper`, and stop any other containers sharing those volumes or data directories.
 3. **Back up and copy.** Back up any existing `./data/`, then copy the selected sources into a fresh directory with the layout above, preserving ownership and permissions. Leave the separate `./firmware/` and `./recordings/` mounts unchanged. Check that settings and model files copied successfully before replacing `./data/` with the prepared directory.
-4. **Restart and verify.** Run `docker compose up -d --force-recreate vauxr piper whisper`, then check saved devices, agents, and a voice interaction. If anything fails, stop the services and restore the backup or previous volume mounts.
+4. **Restart and verify.** Run `docker compose --profile local-speech up -d --force-recreate vauxr piper whisper`, then check saved devices, agents, and a voice interaction. If anything fails, stop the services and restore the backup or previous volume mounts.

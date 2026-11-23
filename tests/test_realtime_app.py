@@ -21,7 +21,7 @@ async def test_restrict_host_candidates_before_aioice_opens_sockets(monkeypatch)
         socket,
         "getaddrinfo",
         lambda *args, **kwargs: [
-            (socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP, "", ("127.0.0.2", 0))
+            (socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP, "", ("127.0.0.1", 0))
         ],
     )
 
@@ -31,7 +31,7 @@ async def test_restrict_host_candidates_before_aioice_opens_sockets(monkeypatch)
     try:
         await connection.gather_candidates()
         assert [(candidate.host, candidate.type) for candidate in connection.local_candidates] == [
-            ("127.0.0.2", "host")
+            ("127.0.0.1", "host")
         ]
     finally:
         await connection.close()

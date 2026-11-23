@@ -68,7 +68,6 @@ async def test_interrupted_standard_cleanup_does_not_reset_new_capture(env, monk
 @pytest.mark.parametrize("enabled,host,caps,webrtc", [
     (True, "vauxr.local", ["webrtc"], True),
     (False, "vauxr.local", ["webrtc"], False),
-    (True, "", ["webrtc"], False),
     (True, "vauxr.local", ["ws"], False),
 ])
 async def test_standard_transport_policy(env, monkeypatch, enabled, host, caps, webrtc):
@@ -82,6 +81,18 @@ async def test_standard_transport_policy(env, monkeypatch, enabled, host, caps, 
     assert hello["pipeline_mode"] == "standard"
     assert hello["realtime"]["enabled"] is webrtc
     assert hello["realtime"]["transport"] == ("webrtc" if webrtc else "ws")
+
+
+async def test_standard_transport_falls_back_when_origin_has_no_local_ice_address(env, monkeypatch):
+    from vauxr.realtime import host as ice_host
+
+    _, ws, ctx = env
+    monkeypatch.setattr(ice_host, "effective_host", lambda _: "")
+    monkeypatch.setattr(server, "get_config", lambda: SimpleNamespace(
+        realtime=SimpleNamespace(enabled=True, host="", offer_path="/api/offer", stun_url="")))
+    await server._hello(ws, ctx, {"caps": ["webrtc"]})
+    hello = json.loads(ws.send_str.call_args.args[0])
+    assert hello["realtime"] == {"enabled": False, "transport": "ws"}
 
 
 async def test_websocket_device_policy_opts_out_of_available_webrtc(env, monkeypatch):

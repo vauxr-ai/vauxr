@@ -44,6 +44,8 @@ def compose_command() -> list[str]:
     binary = os.environ.get("COMPOSE_BINARY")
     if binary:
         command = [str(Path(binary).resolve())]
+        if Path(binary).name == "docker":
+            command.append("compose")
     elif shutil.which("docker"):
         command = ["docker", "compose"]
     elif shutil.which("docker-compose"):
