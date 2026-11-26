@@ -81,7 +81,7 @@ def _validate(value: object, spec: dict) -> None:
 
 
 def serialize(body: dict) -> bytes:
-    """The preview and HTTP sender both use these exact bytes."""
+    """Reject invalid wire fields and interval accounting before encoding bytes for preview and HTTP."""
     _validate(body, SCHEMA['oneOf'][0 if body.get('kind') == 'startup' else 1])
     for key in ('report_id', 'monthly_id'):
         if UUID(body[key]).version != 4:

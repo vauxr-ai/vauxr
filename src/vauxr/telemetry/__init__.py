@@ -9,7 +9,10 @@ _pending: set[asyncio.Task] = set()
 
 def observe(kind: str, outcome: str, duration_ms: int, *, provider: str = 'custom',
             model: str = 'custom', endpoint: str = '') -> None:
-    """Never accept content, identifiers, exceptions, or arbitrary event mappings."""
+    """Schedule an observation only when telemetry is enabled.
+
+    Project inputs to allowlisted categories without storing raw provider, model, or endpoint values.
+    """
     from .contract import categories
     if _current is None or not _current.enabled or len(_pending) >= 128:
         return
@@ -32,6 +35,10 @@ def begin():
 
 
 def finish(marker, kind: str, outcome: str, **categories) -> None:
+    """Record elapsed session duration for the original runtime.
+
+    Drop the completion if the runtime changed, was disabled, or its preference generation changed.
+    """
     import time
     if marker is None:
         return
