@@ -4,4 +4,4 @@ During code review, use only the checks listed below. Comment only when the diff
 
 ## Review checks
 
-No checks configured yet.
+**Function comments and docstrings.** State what the function does and why it is needed. One sentence is enough when it covers both; keep the summary to three sentences at most. A separate brief note is optional for non-obvious behavior, such as required call ordering or an unexpected side effect. Do not ask for a comment on a self-explanatory function or flag the absence of an optional note.
