@@ -390,6 +390,9 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
 
     async def _run() -> None:
         output = _VoiceTurnOutput(ws, abort, device_id)
+        from vauxr.telemetry import begin, finish
+
+        marker = begin()
         try:
             await run_voice_turn(
                 device_id,
@@ -408,6 +411,13 @@ async def _voice_end(state: AppState, ws: web.WebSocketResponse, ctx: Connection
                     ws, {"type": "error", "code": "PIPELINE_ERROR", "message": "Pipeline error"}
                 )
         finally:
+            backend = selection.tts if selection else None
+            finish(marker, 'standard',
+                   'cancelled' if abort.is_set() or asyncio.current_task().cancelling() else
+                   'success' if output.completed else 'failure',
+                    provider=backend.adapter if backend else 'custom', model=backend.model if backend else 'custom',
+                    endpoint='https://api.openai.com' if backend and backend.host == 'api.openai.com'
+                    and backend.port == 443 else '')
             # Only the turn that still owns this connection may clear it.
             # An aborted turn can finish after a replacement has started.
             e = registry.get(device_id)

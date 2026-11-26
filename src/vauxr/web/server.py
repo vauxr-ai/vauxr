@@ -651,6 +651,8 @@ def attach_http_routes(app: web.Application) -> None:
     from vauxr.web.speech import attach_speech_routes
 
     attach_speech_routes(app, _authorize_speech_management, transport_boundary)
+    from vauxr.telemetry.http import attach_telemetry
+    attach_telemetry(app, transport_boundary)
     attach_owner(app)
     from vauxr.web.companion import attach_companion
 

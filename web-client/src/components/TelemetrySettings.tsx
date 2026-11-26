@@ -1,0 +1,63 @@
+import { useEffect, useState } from "react";
+import { jsonResponse, ownerFetch } from "../auth/api";
+import LoadingIndicator from "./LoadingIndicator";
+
+export const telemetrySummary = "Help improve Vauxr with anonymous usage statistics";
+
+type Status = {
+  enabled: boolean;
+  environment_disabled: boolean;
+  endpoint_ready: boolean;
+  payload: string | null;
+  payload_status: string | null;
+  queued: number;
+};
+export default function TelemetrySettings() {
+  const [status, setStatus] = useState<Status | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function refresh() {
+    setError("");
+    try { setStatus(await jsonResponse(await ownerFetch("/api/settings/telemetry"))); }
+    catch { setError("Telemetry status unavailable. Refresh before changing your choice."); }
+  }
+  useEffect(() => { void refresh(); }, []);
+  async function decide(enabled: boolean) {
+    setBusy(true); setError("");
+    try {
+      setStatus(await jsonResponse(await ownerFetch("/api/settings/telemetry", {
+        method: "PUT", body: JSON.stringify({ enabled, acknowledged: true }),
+      })));
+    } catch { setError("Choice could not be confirmed. Refresh before retrying."); }
+    finally { setBusy(false); }
+  }
+  return <section className="card settings-form telemetry-settings">
+    <span className="eyebrow">Privacy</span>
+    <h2>Usage telemetry</h2>
+    <p>{telemetrySummary}</p>
+    <p>No conversations, audio, prompts, responses, errors, logs, secrets, hostnames, URLs,
+      device or user names, or location are sent.</p>
+    {!status && !error && <LoadingIndicator label="Fetching telemetry status" />}
+    {error && <p role="alert">{error}</p>}
+    {status && <>
+      <p role="status">{status.environment_disabled ? "Disabled by server environment."
+        : status.enabled ? "Telemetry enabled." : "Telemetry disabled."}
+        {!status.endpoint_ready && " Collector not configured; no network sends are possible."}</p>
+      {status.environment_disabled ? <p>The server environment override takes precedence over this setting.</p>
+        : <div className="telemetry-actions">
+          <button type="button" disabled={busy} onClick={() => void decide(!status.enabled)}>
+            {busy ? "Saving choice…" : status.enabled ? "Disable telemetry" : "Enable telemetry"}
+          </button>
+        </div>}
+      <p>Disabling cancels sending and clears the retry queue and monthly identifier.</p>
+      <button type="button" disabled={busy} onClick={() => void refresh()}>Refresh status and payload</button>
+      {status.payload && <details>
+        <summary>Exact serialized payload · {status.payload_status}</summary>
+        <p>This is the actual JSON serialization used for sending, including transmitted identifiers.
+          Later reports reflect their own interval and counters. Queued reports: {status.queued}.</p>
+        <pre className="telemetry-payload">{status.payload}</pre>
+      </details>}
+    </>}
+    {!status && error && <button type="button" onClick={() => void refresh()}>Refresh status</button>}
+  </section>;
+}

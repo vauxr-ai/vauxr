@@ -31,6 +31,7 @@ acme = ["certbot>=3,<6", "certbot-dns-route53>=3,<6"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "jsonschema>=4.23",
 ]
 # Realtime WebRTC transport (in-process Pipecat pipeline). Only needed when
 # REALTIME_ENABLED=1; the core WS server runs without these.

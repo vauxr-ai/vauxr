@@ -298,6 +298,20 @@ before opening a dialog; return focus to the visible ⋯ trigger, not a hidden i
 If a close fade retains native `<details>` content, make it inert synchronously so
 invisible controls cannot catch clicks or Tab during the animation.
 
+### Privacy and telemetry
+
+Privacy & telemetry is the last section in Settings, with the summary
+“Help improve Vauxr with anonymous usage statistics” shown once. In the expanded
+view, move the summary into the card with the exclusions above the status and
+controls, without repeating it in navigation or listing report fields. Document the transport-IP limitation in the
+telemetry reference. Reporting is on by default without owner interaction. The
+opt-out persists across restarts and environment disable takes precedence.
+The wrapping JSON preview displays the exact serialized startup/queued body,
+including only identifiers actually transmitted; no horizontal scroll container.
+Use existing card, button, focus and theme treatments. Keep saving/error feedback
+and a refresh path for uncertain outcomes. Label latency buckets as completed-session
+duration, not provider latency. Disabled reporting clears queue and identity.
+
 ### Tabs, switches, and popovers
 
 Use explicit selected/enabled/default states with text/icons as well as color.

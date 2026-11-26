@@ -95,3 +95,24 @@ test('pipeline ellipsis requires the complete name in its title', async ({page})
   const good=await auditPage(page,tokens,'accessible-ellipsis');
   expect(good.filter(row=>row.rule==='overflow').every(row=>row.status==='PASS')).toBe(true);
 });
+
+
+test('settled transition state survives a pending finished promise without allowing invalid endpoints',async({page})=>{
+  await page.setContent(`<style>body{background:white;color:black}.sample{color:black;transition:color .15s}.invalid{color:red}</style><main><h1>Agents</h1><p class="sample">Status</p></main>`);
+  await page.evaluate(()=>Object.defineProperty(CSSTransition.prototype,'finished',{
+    configurable:true,get:()=>new Promise(()=>{})
+  }));
+  await page.locator('.sample').evaluate(el=>{getComputedStyle(el).color;el.classList.add('invalid');});
+  const rows=await auditPage(page,tokens,'pending-finished-promise');
+  expect(rows.find(r=>r.rule==='token-colors')?.status).toBe('FAIL');
+  expect(rows.find(r=>r.rule==='token-colors')?.evidence.some(e=>e.selector.includes('.sample')&&e.color==='rgb(255, 0, 0)')).toBe(true);
+});
+
+test('paused finite transitions fail rather than accepting an intermediate token sample',async({page})=>{
+  await page.setContent(`<style>body{background:white;color:black}.sample{color:black;transition:color .15s}.invalid{color:red}</style><main><h1>Agents</h1><p class="sample">Status</p></main>`);
+  await page.locator('.sample').evaluate(el=>{
+    getComputedStyle(el).color;el.classList.add('invalid');getComputedStyle(el).color;
+    for(const animation of el.getAnimations()) animation.pause();
+  });
+  await expect(auditPage(page,tokens,'paused-transition')).rejects.toThrow(/Timeout 2500ms exceeded/);
+});

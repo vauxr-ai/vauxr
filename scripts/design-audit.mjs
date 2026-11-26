@@ -161,10 +161,12 @@ export async function auditPage(page, tokens, label = 'page') {
     // Even a token-colored starting frame can transition to an invalid endpoint.
     // Token endpoints are the contract, not the temporary interpolated RGB values.
     // Contrast keeps its original instantaneous sample; only paint-token evidence is resampled.
-    await page.evaluate(async () => {
-      await Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition &&
-        Number(a.effect?.getComputedTiming().endTime) <= 1000).map(a => a.finished.catch(() => {})));
-    });
+    // Chromium can leave a captured finished promise pending after a theme transition
+    // already reports finished. Observe live state instead; paused/stalled transitions
+    // must still fail rather than silently accepting an intermediate paint sample.
+    await page.waitForFunction(() => !document.getAnimations().some(a => a instanceof CSSTransition &&
+      Number(a.effect?.getComputedTiming().endTime) <= 1000 &&
+      a.playState !== 'finished' && a.playState !== 'idle'), undefined, { timeout: 2500 });
     const settled = await page.evaluate(capture, tokens || {});
     for (const key of ['colorCounts','unmappedCount','unmappedValues','paletteSize','colorEvidence']) snapshot[key] = settled[key];
   }

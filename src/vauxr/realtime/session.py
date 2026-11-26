@@ -138,6 +138,8 @@ class RealtimeSession:
         # Monotonic timestamp of the last sign of life; drives the inactivity
         # backstop. Seeded when the pipeline starts.
         self._last_activity = time.monotonic()
+        from vauxr.telemetry import begin
+        self._telemetry_marker = begin()
         self._closed = False
         self._close_attempts: list[auth_connections.Teardown] | None = None
         # Set once the pipeline is built and the WebRTC client is connected.
@@ -1037,6 +1039,9 @@ class RealtimeSession:
 
     async def close(self) -> None:
         if self._close_attempts is None:
+            from vauxr.telemetry import finish
+            finish(self._telemetry_marker, 'realtime' if self._live_service is not None else 'standard',
+                   'success' if self._pipeline_ready.is_set() else 'failure')
             self._closed = True
             if self._startup is not None:
                 self._startup.close()
