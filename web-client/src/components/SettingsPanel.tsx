@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ComponentProps } from "react";
-import TelemetrySettings from "./TelemetrySettings";
+import TelemetrySettings, { telemetrySummary } from "./TelemetrySettings";
 import InterfaceEditor from "./InterfaceEditor";
 import PluginsPanel from "./PluginsPanel";
 import PluginSettings from "./PluginSettings";
@@ -72,7 +72,7 @@ const screens: {
   {
     id: "privacy",
     label: "Privacy & telemetry",
-    description: "Help improve Vauxr with anonymous usage statistics",
+    description: telemetrySummary,
     icon: "api",
   },
 ];
@@ -82,11 +82,13 @@ export default function SettingsPanel(
   const [screen, setScreen] = useState("stt");
   const [dirty, setDirty] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const previousScreen = useRef(screen);
   useLayoutEffect(() => {
     if (previousScreen.current !== screen) {
       previousScreen.current = screen;
       heading.current?.focus();
+      if (screen === "privacy") content.current?.scrollIntoView({ block: "start" });
     }
   }, [screen]);
   useEffect(() => {
@@ -118,13 +120,13 @@ export default function SettingsPanel(
             <Icon name={s.icon} />
             <span>
               <strong>{s.label}</strong>
-              <small>{s.description}</small>
+              {(s.id !== "privacy" || screen !== s.id) && <small>{s.description}</small>}
             </span>
             <Icon name="chevron-right" size={14} />
           </button>
         ))}
       </nav>
-      <div className="settings-content">
+      <div className="settings-content" ref={content}>
         <h2 ref={heading} tabIndex={-1} className="sr-only">
           {current.label} settings
         </h2>

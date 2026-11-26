@@ -302,8 +302,8 @@ invisible controls cannot catch clicks or Tab during the animation.
 
 Privacy & telemetry is the last section in Settings, with the summary
 “Help improve Vauxr with anonymous usage statistics” shown once. In the expanded
-view, keep the exclusions visible above the status and controls without repeating
-the summary or listing report fields. Document the transport-IP limitation in the
+view, move the summary into the card with the exclusions above the status and
+controls, without repeating it in navigation or listing report fields. Document the transport-IP limitation in the
 telemetry reference. Reporting is on by default without owner interaction. The
 opt-out persists across restarts and environment disable takes precedence.
 The wrapping JSON preview displays the exact serialized startup/queued body,

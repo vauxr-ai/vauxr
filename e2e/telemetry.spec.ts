@@ -12,18 +12,27 @@ for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"])
     const summary = "Help improve Vauxr with anonymous usage statistics";
     const settings = page.locator(".settings-layout");
     const panel = settings.locator(".telemetry-settings");
-    await expect(lastSection.getByText(summary, { exact: true })).toBeVisible();
+    await expect(lastSection.getByText(summary, { exact: true })).toHaveCount(0);
+    const panelSummary = panel.getByText(summary, { exact: true });
     await expect(settings.getByText(summary, { exact: true }).filter({ visible: true })).toHaveCount(1);
-    await expect(panel.getByText(
+    const exclusions = panel.getByText(
       "No conversations, audio, prompts, responses, errors, logs, secrets, hostnames, URLs, device or user names, or location are sent.",
       { exact: true },
-    )).toBeVisible();
+    );
+    for (const notice of [panelSummary, exclusions]) {
+      await expect(notice).toBeVisible();
+      await expect(notice).toBeInViewport({ ratio: 1 });
+      expect(await notice.evaluate((element) => {
+        const { left, top, width, height } = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(left + width / 2, top + height - 1));
+      })).toBe(true);
+    }
     await expect(panel.getByText(/hourly usage totals|Reports contain a random monthly identifier|AWS sees/)).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Privacy & telemetry settings" })).toBeFocused();
     await expect(page.getByText("Exact serialized payload · queued", { exact: true })).toBeVisible();
     await expect(page.locator(".telemetry-payload")).toBeHidden();
     mkdirSync("/tmp/vauxr-126-expanded-privacy", { recursive: true });
-    await settings.screenshot({ path: `/tmp/vauxr-126-expanded-privacy/${width}-${theme}-default.png` });
+    await page.screenshot({ path: `/tmp/vauxr-126-expanded-privacy/${width}-${theme}-default.png` });
     await expect(page.getByText(/Telemetry enabled/)).toBeVisible();
     await page.getByText("Exact serialized payload · queued", { exact: true }).click();
     const preview = page.locator(".telemetry-payload");

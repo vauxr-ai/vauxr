@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { jsonResponse, ownerFetch } from "../auth/api";
 import LoadingIndicator from "./LoadingIndicator";
 
+export const telemetrySummary = "Help improve Vauxr with anonymous usage statistics";
+
 type Status = {
   enabled: boolean;
   environment_disabled: boolean;
@@ -32,6 +34,7 @@ export default function TelemetrySettings() {
   return <section className="card settings-form telemetry-settings">
     <span className="eyebrow">Privacy</span>
     <h2>Usage telemetry</h2>
+    <p>{telemetrySummary}</p>
     <p>No conversations, audio, prompts, responses, errors, logs, secrets, hostnames, URLs,
       device or user names, or location are sent.</p>
     {!status && !error && <LoadingIndicator label="Fetching telemetry status" />}
