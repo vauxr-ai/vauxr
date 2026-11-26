@@ -98,6 +98,7 @@ class Telemetry:
         s['active'] = None
 
     def _advance(self, db, s, now, uptime):
+        """Seal accounting at UTC hour boundaries and rotate identity for the new month."""
         # Wall-clock rollback suspends observations and sealing until the durable
         # high-water catches up. Monotonic time alone measures runtime, never UTC.
         if now < s['high'] or timestamp(now)[:7] < s['month_high']:

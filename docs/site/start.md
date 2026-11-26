@@ -19,7 +19,9 @@ Usage reporting is on by default, without an owner login. To turn it off,
 sign in and choose **Disable telemetry** in **Privacy & telemetry**, the last
 section in Settings. Your choice survives restarts and upgrades. To start a
 server with reporting forced off, set `VAUXR_TELEMETRY_ENABLED=false` in its
-environment before launch.
+environment before launch. When a report is available, **Exact serialized payload**
+shows its JSON. An IP address is not a report field, but the AWS collector can see
+the source IP address of a network request.
 
 ## Start a disposable development server
 

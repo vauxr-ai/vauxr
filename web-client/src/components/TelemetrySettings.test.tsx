@@ -15,8 +15,9 @@ it("shows reporting enabled without a write, with an exact preview and opt-out",
   render(<TelemetrySettings />);
   expect(await screen.findByText(/Telemetry enabled/)).toBeInTheDocument();
   expect(screen.getByText(initial.payload)).toBeInTheDocument();
-  expect(screen.getByText(/AWS sees the transport IP/)).toBeInTheDocument();
-  expect(screen.getByText(/not provider latency/)).toBeInTheDocument();
+  expect(screen.getByText(
+    "No conversations, audio, prompts, responses, errors, logs, secrets, hostnames, URLs, device or user names, or location are sent.",
+  )).toBeInTheDocument();
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(fetch.mock.calls[0][1]?.method).toBeUndefined();
   fetch.mockResolvedValue(response({ ...initial, enabled: false, payload: null }));

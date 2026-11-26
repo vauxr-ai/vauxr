@@ -21,6 +21,10 @@ For a server-wide override, set `VAUXR_TELEMETRY_ENABLED=false` in the server's
 environment and restart it. This takes precedence over the saved choice. If
 the collector is not configured, no reports are sent.
 
+Use **Exact serialized payload** to inspect the JSON when a report is available.
+An IP address is not a report field, but the AWS collector can see the source IP
+address of a network request.
+
 ## Change speech without losing the working selection
 
 1. Record the current agent, device assignment, mode, provider and voice. Ensure
