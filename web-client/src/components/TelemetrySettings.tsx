@@ -32,15 +32,8 @@ export default function TelemetrySettings() {
   return <section className="card settings-form telemetry-settings">
     <span className="eyebrow">Privacy</span>
     <h2>Usage telemetry</h2>
-    <p>Help improve Vauxr with hourly usage totals and a separate startup count.
-      Reporting is on by default. You can turn it off here.</p>
-    <p>Reports contain a random monthly identifier, release category, OS and architecture,
-      bucketed device count, feature and session counts, outcomes, uptime, and completed-session
-      duration buckets—not provider latency. Custom providers and models use the custom category.</p>
     <p>No conversations, audio, prompts, responses, errors, logs, secrets, hostnames, URLs,
-      device or user names, or location are sent. AWS sees the transport IP address;
-      this is not a guarantee of anonymity. Raw reports expire logically after 30 days;
-      broad daily totals remain without identifiers or context dimensions. Retries last up to seven days.</p>
+      device or user names, or location are sent.</p>
     {!status && !error && <LoadingIndicator label="Fetching telemetry status" />}
     {error && <p role="alert">{error}</p>}
     {status && <>

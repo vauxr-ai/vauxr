@@ -1,15 +1,29 @@
 import { mkdirSync } from "node:fs";
 import { test, expect, login, openSettings } from "./auth-fixture";
 
-for (const width of [390, 1366]) for (const theme of ["light", "dark"])
+for (const width of [375, 390, 1366]) for (const theme of ["light", "dark"])
   test(`telemetry default, payload and opt-out ${width}/${theme}`, async ({ page, server }) => {
-    await page.setViewportSize({ width, height: width === 390 ? 844 : 768 });
+    await page.setViewportSize({ width, height: width === 1366 ? 768 : 844 });
     await login(page, server);
     await page.getByLabel("Appearance").selectOption(theme);
     await openSettings(page, "Privacy & telemetry");
     const lastSection = page.getByRole("navigation", { name: "Settings sections" }).getByRole("button").last();
     await expect(lastSection).toContainText("Privacy & telemetry");
-    await expect(lastSection.getByText("Help improve Vauxr with anonymous usage statistics", { exact: true })).toBeVisible();
+    const summary = "Help improve Vauxr with anonymous usage statistics";
+    const settings = page.locator(".settings-layout");
+    const panel = settings.locator(".telemetry-settings");
+    await expect(lastSection.getByText(summary, { exact: true })).toBeVisible();
+    await expect(settings.getByText(summary, { exact: true }).filter({ visible: true })).toHaveCount(1);
+    await expect(panel.getByText(
+      "No conversations, audio, prompts, responses, errors, logs, secrets, hostnames, URLs, device or user names, or location are sent.",
+      { exact: true },
+    )).toBeVisible();
+    await expect(panel.getByText(/hourly usage totals|Reports contain a random monthly identifier|AWS sees/)).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Privacy & telemetry settings" })).toBeFocused();
+    await expect(page.getByText("Exact serialized payload · queued", { exact: true })).toBeVisible();
+    await expect(page.locator(".telemetry-payload")).toBeHidden();
+    mkdirSync("/tmp/vauxr-126-expanded-privacy", { recursive: true });
+    await settings.screenshot({ path: `/tmp/vauxr-126-expanded-privacy/${width}-${theme}-default.png` });
     await expect(page.getByText(/Telemetry enabled/)).toBeVisible();
     await page.getByText("Exact serialized payload · queued", { exact: true }).click();
     const preview = page.locator(".telemetry-payload");
