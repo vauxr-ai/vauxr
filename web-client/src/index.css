@@ -870,6 +870,9 @@
 .settings-content pre,.settings-content code { overflow-wrap:anywhere; white-space:pre-wrap; }
 @media (max-width:1100px) { .settings-layout { grid-template-columns:180px minmax(0,1fr); gap:18px; } .settings-fields,.provider-grid { grid-template-columns:minmax(0,1fr); } }
 @media (max-width:760px) { .settings-layout { display:block; } .settings-nav { position:static; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; margin-bottom:26px; } .settings-nav > .eyebrow { grid-column:1/-1; padding-left:0; } .settings-nav button { padding:11px 9px; border-color:var(--line); gap:8px; } .settings-nav small,.settings-nav button > svg:last-child { display:none; } .settings-nav strong { font-size:11px; } .settings-form { padding:18px; } .settings-intro h2 { font-size:24px; } }
+@media (max-width:760px) {
+  .settings-nav .settings-nav-privacy small { display:block; }
+}
 
 .agent-detail .agent-runtime-form { display:grid; grid-template-columns:minmax(0,1fr); align-items:start; }
 .agent-runtime-form label { min-width:0; }

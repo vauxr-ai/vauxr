@@ -106,6 +106,7 @@ export default function SettingsPanel(
         {screens.map((s) => (
           <button
             key={s.id}
+            className={s.id === "privacy" ? "settings-nav-privacy" : undefined}
             aria-current={screen === s.id ? "page" : undefined}
             onClick={() => {
               if (s.id === screen) return;

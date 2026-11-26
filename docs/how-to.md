@@ -9,6 +9,18 @@ can occur after a durable write or an external action.
 
 For a new assistant, see [How to create a custom agent](how-to-create-custom-agent.md).
 
+## Turn off usage reporting
+
+Usage reporting is enabled by default, even if no one opens Settings. Sign in
+as the owner, open **Settings → Privacy & telemetry** (the last section), and
+choose **Disable telemetry**. Disabling stops collection and sends, cancels
+retries and clears queued reports and the monthly identifier. The choice
+survives restarts and upgrades.
+
+For a server-wide override, set `VAUXR_TELEMETRY_ENABLED=false` in the server's
+environment and restart it. This takes precedence over the saved choice. If
+the collector is not configured, no reports are sent.
+
 ## Change speech without losing the working selection
 
 1. Record the current agent, device assignment, mode, provider and voice. Ensure
