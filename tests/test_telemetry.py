@@ -59,7 +59,7 @@ def isolate(monkeypatch):
     telemetry._current = None
 
 
-async def test_notice_preview_and_environment_prevent_startup(tmp_path, monkeypatch):
+async def test_startup_sends_without_settings_and_environment_still_disables(tmp_path, monkeypatch):
     clock = Clock()
     sent = []
     async def sender(raw):
@@ -68,17 +68,10 @@ async def test_notice_preview_and_environment_prevent_startup(tmp_path, monkeypa
     t = runtime(tmp_path, clock, endpoint='https://collector.invalid', sender=sender)
     await t.start()
     await t.tick()
-    await t.observe('standard', 'success', 10, 'custom', 'custom')
-    assert not await t.send_once()
-    assert await rows(t) == [] and not sent
-    proposed = (await t.view())['payload']
-    assert (await state(t))['identity'] is None
-    await t.decide(True)
-    assert await rows(t) == [proposed.encode()]
-    await t.tick()
-    assert len(await rows(t)) == 1
-    await t.send_once()
-    assert sent == [proposed.encode()]
+    [startup] = await rows(t)
+    assert json.loads(startup)['kind'] == 'startup'
+    assert await t.send_once()
+    assert sent == [startup]
     await t.close()
     monkeypatch.setenv('VAUXR_TELEMETRY_ENABLED', 'false')
     off = runtime(tmp_path, clock, endpoint='https://collector.invalid', sender=sender)
@@ -216,6 +209,12 @@ async def test_disable_cancels_inflight_and_fences_scheduled_observations(tmp_pa
         await send
     assert cancelled.is_set()
     assert not await rows(t) and (await state(t))['identity'] is None
+    assert not await t.send_once()
+    restarted = runtime(tmp_path, c, endpoint='https://collector.invalid', sender=slow)
+    await restarted.start()
+    assert not restarted.enabled and not await restarted.send_once()
+    assert not await rows(restarted)
+    await restarted.close()
     await t.decide(True)
     await t.observe('standard', 'success', 100, 'custom', 'custom', old_generation)
     assert sum((await state(t))['active']['metrics']['outcomes'].values()) == 0
@@ -268,8 +267,6 @@ async def test_production_https_emission_forbidden_sentinels_and_exact_fixtures(
     try:
         await t.start()
         preview = (await t.view())['payload'].encode()
-        assert not await t.send_once() and captured == []
-        await t.decide(True)
         assert await t.send_once()
         assert captured[0] == preview
         telemetry.observe('standard', 'success', 1250, provider='openai', model=sentinel,
@@ -306,7 +303,7 @@ def test_strict_production_serializer(mutation):
         serialize(mutation(p))
 
 
-async def test_authenticated_notice_toggle_preview_csrf_and_unknown_input(tmp_path, monkeypatch):
+async def test_authenticated_toggle_preview_csrf_and_unknown_input(tmp_path, monkeypatch):
     reset_config()
     monkeypatch.setenv('DATA_DIR', str(tmp_path))
     monkeypatch.setenv('OWNER_HTTPS_ORIGIN', 'https://owner.example')
@@ -319,7 +316,7 @@ async def test_authenticated_notice_toggle_preview_csrf_and_unknown_input(tmp_pa
         headers = owner_headers(client)
         response = await client.get('/api/settings/telemetry', headers=headers)
         view = await response.json()
-        assert response.status == 200 and not view['acknowledged'] and not view['enabled']
+        assert response.status == 200 and not view['acknowledged'] and view['enabled']
         assert response.headers['Cache-Control'] == 'no-store'
         no_csrf = {k:v for k,v in headers.items() if k != 'X-CSRF-Token'}
         assert (await client.put('/api/settings/telemetry', headers=no_csrf,
@@ -415,17 +412,15 @@ def test_release_allowlist_cannot_be_claimed_by_runtime_env(monkeypatch):
     assert categories('openai', 'gpt-live-1', 'https://api.openai.com.evil') == ('custom', 'custom')
 
 
-async def test_session_consent_generation_fence(tmp_path):
+async def test_session_preference_generation_fence(tmp_path):
     c = Clock()
     t = runtime(tmp_path, c)
     telemetry._current = t
     await t.start()
-    before_notice = telemetry.begin()
-    assert before_notice is None
-    await t.decide(True)
-    telemetry.finish(before_notice, 'standard', 'success')
     marker = telemetry.begin()
+    assert marker is not None
     await t.decide(False)
+    assert telemetry.begin() is None
     await t.decide(True)
     telemetry.finish(marker, 'standard', 'success')
     assert not telemetry._pending

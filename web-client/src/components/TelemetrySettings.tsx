@@ -4,11 +4,10 @@ import LoadingIndicator from "./LoadingIndicator";
 
 type Status = {
   enabled: boolean;
-  acknowledged: boolean;
   environment_disabled: boolean;
   endpoint_ready: boolean;
   payload: string | null;
-  payload_status: string;
+  payload_status: string | null;
   queued: number;
 };
 export default function TelemetrySettings() {
@@ -34,7 +33,7 @@ export default function TelemetrySettings() {
     <span className="eyebrow">Privacy</span>
     <h2>Usage telemetry</h2>
     <p>Help improve Vauxr with hourly usage totals and a separate startup count.
-      Telemetry is enabled by default, but collection and sending wait for your choice here.</p>
+      Reporting is on by default. You can turn it off here.</p>
     <p>Reports contain a random monthly identifier, release category, OS and architecture,
       bucketed device count, feature and session counts, outcomes, uptime, and completed-session
       duration buckets—not provider latency. Custom providers and models use the custom category.</p>
@@ -46,19 +45,17 @@ export default function TelemetrySettings() {
     {error && <p role="alert">{error}</p>}
     {status && <>
       <p role="status">{status.environment_disabled ? "Disabled by server environment."
-        : !status.acknowledged ? "Awaiting your choice. Nothing has been collected or sent."
         : status.enabled ? "Telemetry enabled." : "Telemetry disabled."}
         {!status.endpoint_ready && " Collector not configured; no network sends are possible."}</p>
       {status.environment_disabled ? <p>The server environment override takes precedence over this setting.</p>
         : <div className="telemetry-actions">
-          <button type="button" className="button-primary" disabled={busy}
-            onClick={() => void decide(true)}>{busy ? "Saving choice…" : "Enable telemetry"}</button>
-          <button type="button" disabled={busy} onClick={() => void decide(false)}>
-            {status.acknowledged ? "Disable telemetry" : "Keep telemetry off"}</button>
+          <button type="button" disabled={busy} onClick={() => void decide(!status.enabled)}>
+            {busy ? "Saving choice…" : status.enabled ? "Disable telemetry" : "Enable telemetry"}
+          </button>
         </div>}
       <p>Disabling cancels sending and clears the retry queue and monthly identifier.</p>
       <button type="button" disabled={busy} onClick={() => void refresh()}>Refresh status and payload</button>
-      {status.payload && <details open={!status.acknowledged}>
+      {status.payload && <details>
         <summary>Exact serialized payload · {status.payload_status}</summary>
         <p>This is the actual JSON serialization used for sending, including transmitted identifiers.
           Later reports reflect their own interval and counters. Queued reports: {status.queued}.</p>

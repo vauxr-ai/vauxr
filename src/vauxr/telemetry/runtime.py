@@ -35,7 +35,6 @@ class Telemetry:
         self.started = int(wall())
         self.last_mono = mono()
         self.uptime_pending = 0
-        self.preview = None
         self.startup_queued = False
         self.closed = False
         self.inflight = None
@@ -142,7 +141,7 @@ class Telemetry:
     async def start(self):
         async with self.lock:
             def boot(db, s):
-                if self.environment_disabled or not s['enabled'] or not s['acknowledged']:
+                if self.environment_disabled or not s['enabled']:
                     self._clear(db, s)
                     return False
                 # Resume durable counters; monotonic uptime resets per process,
@@ -182,12 +181,8 @@ class Telemetry:
                 consumed = min(uptime, max(0, now - previous_high) * 1000)
                 if (not self.startup_queued and timestamp(self.started)[:7] == s['month_high']
                         and 0 <= now - self.started <= 604800):
-                    candidate = self.preview
-                    if candidate and candidate['monthly_id'] == s['identity']:
-                        body = candidate
-                    else:
-                        body = self._base(s, now, 'startup')
-                        body.update(started_at=timestamp(self.started), startup_count=1)
+                    body = self._base(s, now, 'startup')
+                    body.update(started_at=timestamp(self.started), startup_count=1)
                     self._insert(db, body)
                 return True, consumed, db.execute('SELECT COUNT(*) FROM queue').fetchone()[0]
             try:
@@ -233,21 +228,11 @@ class Telemetry:
         async with self.lock:
             def read(db, s):
                 row = db.execute('SELECT body FROM queue ORDER BY rowid LIMIT 1').fetchone()
-                if row and self.enabled:
-                    payload = bytes(row[0]).decode()
-                elif not s['acknowledged'] and not self.environment_disabled and not self.closed:
-                    if self.preview is None:
-                        identity = s['identity'] or str(uuid4())
-                        body = self._base({**s, 'identity': identity}, max(self.started, int(self.wall())), 'startup')
-                        body.update(started_at=timestamp(self.started), month=timestamp(self.started)[:7], startup_count=1)
-                        self.preview = body
-                    payload = serialize(self.preview).decode()
-                else:
-                    payload = None
+                payload = bytes(row[0]).decode() if row and self.enabled else None
                 return {'enabled': self.enabled, 'preference_enabled': s['enabled'],
                         'acknowledged': s['acknowledged'], 'environment_disabled': self.environment_disabled,
                         'endpoint_ready': bool(self.endpoint), 'payload': payload,
-                        'payload_status': 'queued' if row and self.enabled else 'proposed startup',
+                        'payload_status': 'queued' if payload is not None else None,
                         'queued': db.execute('SELECT COUNT(*) FROM queue').fetchone()[0]}
             return await self._db(read)
 
@@ -266,13 +251,8 @@ class Telemetry:
                 if not enabled or self.environment_disabled:
                     self._clear(db, s)
                     return False
-                if self.preview and not s['identity'] and timestamp(self.started)[:7] >= s['month_high']:
-                    s['identity'] = self.preview['monthly_id']
-                    s['month_high'] = self.preview['month']
                 return True
             self.enabled = await self._db(change) and not self.environment_disabled and not self.closed
-            if not self.enabled:
-                self.preview = None
         if self.enabled:
             await self.tick()
             self._launch()

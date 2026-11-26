@@ -300,10 +300,10 @@ invisible controls cannot catch clicks or Tab during the animation.
 
 ### Privacy and telemetry
 
-Settings → Privacy & telemetry exposes an explicit first-run enable/off decision.
-Default preference never bypasses this acknowledgment: collection and startup
-transmission remain stopped until the owner chooses. Environment disable takes
-precedence. Show the AWS transport-IP limitation without claiming anonymity.
+Privacy & telemetry is the last section in Settings, with the summary
+“Help improve Vauxr with anonymous usage statistics”. Reporting is on by default
+without owner interaction. The opt-out persists across restarts and environment
+disable takes precedence. Show the AWS transport-IP limitation without claiming anonymity.
 The wrapping JSON preview displays the exact serialized startup/queued body,
 including only identifiers actually transmitted; no horizontal scroll container.
 Use existing card, button, focus and theme treatments. Keep saving/error feedback

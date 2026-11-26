@@ -15,7 +15,6 @@ const screens: {
   description: string;
   icon: IconName;
 }[] = [
-  { id: "privacy", label: "Privacy & telemetry", description: "Usage reporting & opt-out", icon: "api" },
   {
     id: "stt",
     label: "Speech to text",
@@ -69,6 +68,12 @@ const screens: {
     label: "Access & security",
     description: "Identity lifecycle & recovery",
     icon: "rotate-key",
+  },
+  {
+    id: "privacy",
+    label: "Privacy & telemetry",
+    description: "Help improve Vauxr with anonymous usage statistics",
+    icon: "api",
   },
 ];
 export default function SettingsPanel(

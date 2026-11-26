@@ -71,7 +71,7 @@
     "Disable cancels in-flight requests, blocks future work and clears queue/identity; retain only nonidentifying clock high-water mark"
   ],
   "collection_rules": [
-    "No collection or network before authenticated notice acknowledgment; env false overrides persisted/UI enabled before startup scheduling",
+    "Reporting starts by default without interaction; persisted opt-out and env false prevent startup collection and sends",
     "Default enabled preference is not consent acknowledgment",
     "One logical startup beacon per process start only if collection gate allows; retries reuse exact serialized bytes",
     "Split counters at UTC hour/midnight/month while collecting, not collector apportionment",
